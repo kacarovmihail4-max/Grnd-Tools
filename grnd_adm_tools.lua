@@ -25168,7 +25168,7 @@ local function settingsList(ctx, x, y, w, h)
             local sel = (QR.selId == it.id) and not QR.isNew
             im.SetCursorPos(im.ImVec2(x + 6, iy + 2))
             local clicked = im.InvisibleButton("##grnd_qr_row_" .. tostring(it.id),
-                im.ImVec2(w - 12 - 52, rowH - 6))
+                im.ImVec2(w - 70, rowH - 6))   -- не залезаем под кнопки справа
             local hov = (im.IsItemHovered and im.IsItemHovered()) or false
             ctx.roundRect(ctx.dl, ctx.at(x + 6, iy + 2), ctx.at(x + w - 6, iy + rowH - 4),
                 sel and ctx.col32(ac[1], ac[2], ac[3], 32)
