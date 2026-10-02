@@ -24155,8 +24155,10 @@ end
 local function bufWrite(key, value)
     local f = QR.bufs[key]
     if not f then return end
+    -- режем и по символам, и по БАЙТАМ: ffi.copy не должен выйти за char[cap]
+    local text = byteCut(clampText(value, f.cap - 1), f.cap - 1)
     if type(grndBinderWriteCBuf) == "function" then
-        pcall(grndBinderWriteCBuf, f.buf, f.cap, clampText(value, f.cap - 1))
+        pcall(grndBinderWriteCBuf, f.buf, f.cap, text)
     end
     f.pending = false
 end
