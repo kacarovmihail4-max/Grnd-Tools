@@ -24926,6 +24926,10 @@ local function pickerDraw(ctx)
         if dl.PushClipRect then
             clip = pcall(dl.PushClipRect, dl, at(12, listY), at(W - 12, listY + listH), true)
         end
+        local iclip = false   -- клип для ВИДЖЕТОВ (ImGui), не только для рисования
+        if im.PushClipRect then
+            iclip = pcall(im.PushClipRect, at(12, listY), at(W - 12, listY + listH), true)
+        end
         if #QR.items == 0 then
             text(24, listY + 18, "Шаблонов пока нет.",
                 ctx.col32(TH.textHi[1], TH.textHi[2], TH.textHi[3], 255), 0.95)
@@ -24969,6 +24973,7 @@ local function pickerDraw(ctx)
                 end
             end
         end
+        if iclip and im.PopClipRect then pcall(im.PopClipRect) end
         if clip and dl.PopClipRect then pcall(dl.PopClipRect, dl) end
         if maxScroll > 0.5 then
             local trackX = W - 8
@@ -25110,6 +25115,10 @@ local function settingsList(ctx, x, y, w, h)
     if ctx.dl.PushClipRect then
         clip = pcall(ctx.dl.PushClipRect, ctx.dl, ctx.at(x + 2, listY), ctx.at(x + w - 2, listY + listH), true)
     end
+    local iclip = false   -- клип самих виджетов: прокрученные строки не кликаются
+    if im.PushClipRect then
+        iclip = pcall(im.PushClipRect, ctx.at(x + 2, listY), ctx.at(x + w - 2, listY + listH), true)
+    end
     if #list == 0 then
         ctx.uiText(x + 14, listY + 10,
             (QR.count() == 0) and "Пока пусто — нажмите «Новый шаблон»" or "Ничего не найдено",
@@ -25168,6 +25177,7 @@ local function settingsList(ctx, x, y, w, h)
             end
         end
     end
+    if iclip and im.PopClipRect then pcall(im.PopClipRect) end
     if clip and ctx.dl.PopClipRect then pcall(ctx.dl.PopClipRect, ctx.dl) end
     if maxScroll > 0.5 then
         local trackX = x + w - 5
