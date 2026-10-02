@@ -1,5 +1,5 @@
 script_name("grnd_adm_tools")
-script_version("1.19.00")
+script_version("1.19.01")
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
 require "lib.sampfuncs"
@@ -23911,7 +23911,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.0)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.01)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -23919,7 +23919,15 @@ end)()
 --    * кнопка «Быстрые ответы» в окне репорта открывает окно со списком:
 --      клик по шаблону отправляет его содержимое (по умолчанию — в /n,
 --      тестовый режим) и закрывает окно;
---    * редактор шаблонов — в меню: «Репорт» → вкладка «Ответы на репорт».
+--    * редактор шаблонов — в меню: «Репорт» → вкладка «Ответы на репорт»;
+--    * список шаблонов НЕ предзаполняется: пользователь создаёт свои сам
+--      (демо-набор прошлых сборок один раз вычищается при загрузке).
+--
+--  ШРИФТ. В сборке шрифт может не содержать часть символов (▲ ▼ ↵ ＋ →) —
+--  на экране они превращались в «?» или не рисовались вовсе. Поэтому
+--  стрелки и «плюс» рисуются фигурами (AddTriangleFilled/AddLine), а в
+--  подписях используются только те знаки, что уже есть в интерфейсе
+--  скрипта: «…» «—» «·» «×» ««»».
 --
 --  КОДИРОВКИ. Файл и ImGui — UTF-8; в чат SA-MP текст уходит через
 --  grndChatSend → grndAnsiText (UTF-8 → CP1251), поэтому кириллица не
@@ -24103,24 +24111,35 @@ local function clampText(s, cap)
     return s
 end
 
--- Обрезка по ширине с «…» (measure — ctx.drawnW).
-local function fit(s, maxW, measure, scale)
+-- Обрезка по ширине с «…». Возвращает СРАЗУ строку и её ширину, поэтому
+-- кнопкам и строкам списка хватает одного-двух замеров: раньше цикл мерил
+-- текст посимвольно (на длинных шаблонах это било по кадру).
+local function fitW(s, maxW, measure, scale)
     s = tostring(s or "")
-    if s == "" or type(measure) ~= "function" or not maxW or maxW <= 6 then return s end
-    local ok, w = pcall(measure, s, scale or 1)
-    if not ok or type(w) ~= "number" or w <= maxW then return s end
+    if s == "" or type(measure) ~= "function" then return s, 0 end
+    scale = scale or 1
+    local ok, w = pcall(measure, s, scale)
+    w = (ok and tonumber(w)) or 0
+    if not maxW or maxW <= 6 or w <= maxW then return s, w end
     local chars = {}
     for ch in s:gmatch("[%z\1-\127\194-\244][\128-\191]*") do chars[#chars + 1] = ch end
-    local out = {}
-    for i = 1, #chars do
-        out[#out + 1] = chars[i]
-        local ok2, w2 = pcall(measure, table.concat(out) .. "…", scale or 1)
-        if not ok2 or (type(w2) == "number" and w2 > maxW) then
-            out[#out] = nil
-            break
-        end
+    local keep = math.floor(#chars * (maxW - 10) / math.max(1, w))
+    if keep < 1 then keep = 1 end
+    if keep > #chars - 1 then keep = #chars - 1 end
+    local shown = table.concat(chars, "", 1, keep) .. "…"
+    for _ = 1, 8 do
+        local ok2, w2 = pcall(measure, shown, scale)
+        w2 = (ok2 and tonumber(w2)) or w
+        if w2 <= maxW or keep <= 1 then return shown, w2 end
+        keep = keep - 1
+        shown = table.concat(chars, "", 1, keep) .. "…"
     end
-    return table.concat(out) .. "…"
+    return shown, w
+end
+
+local function fit(s, maxW, measure, scale)
+    local shown = fitW(s, maxW, measure, scale)
+    return shown
 end
 
 -- Высота строки текста в этой сборке ImGui.
@@ -24240,14 +24259,35 @@ function QR.modeOk(v)
     return "test"
 end
 
-function QR.defaults()
-    return {
-        { name = "Приветствие", text = "Приветствую, чем могу помочь?" },
-        { name = "Принято в работу", text = "Приветствую, ваше обращение принято. Ожидайте ответа." },
-        { name = "Нарушитель наказан", text = "Приветствую, нарушитель будет наказан. Спасибо за обращение!" },
-        { name = "Нарушения нет", text = "Приветствую, в данной ситуации нарушения правил нет." },
-        { name = "Нужны доказательства", text = "Приветствую, доказательств недостаточно. Прикрепите скриншот или видео." },
-    }
+-- Демо-набор прошлых сборок. Сам он больше НЕ создаётся: список шаблонов
+-- должен начинаться пустым. Таблица нужна ровно для одного — вычистить из
+-- конфига уже сохранённые демо-шаблоны (совпадение имени И текста, чтобы
+-- не тронуть ничего своего).
+local DEMOS = {
+    { name = "Приветствие", text = "Приветствую, чем могу помочь?" },
+    { name = "Принято в работу", text = "Приветствую, ваше обращение принято. Ожидайте ответа." },
+    { name = "Нарушитель наказан", text = "Приветствую, нарушитель будет наказан. Спасибо за обращение!" },
+    { name = "Нарушения нет", text = "Приветствую, в данной ситуации нарушения правил нет." },
+    { name = "Нужны доказательства", text = "Приветствую, доказательств недостаточно. Прикрепите скриншот или видео." },
+}
+
+-- Убирает из списка ровно демо-шаблоны. Возвращает, сколько удалили.
+local function dropDemos()
+    if type(QR.items) ~= "table" or #QR.items == 0 then return 0 end
+    local keep, removed = {}, 0
+    for i = 1, #QR.items do
+        local it = QR.items[i]
+        local demo = false
+        for d = 1, #DEMOS do
+            if it.name == DEMOS[d].name and it.text == DEMOS[d].text then demo = true; break end
+        end
+        if demo then removed = removed + 1 else keep[#keep + 1] = it end
+    end
+    if removed > 0 then
+        QR.items = keep
+        if QR.selId and not QR.byId(QR.selId) then QR.selId, QR.formKey = nil, nil end
+    end
+    return removed
 end
 
 -- Приведение списка к рабочему виду: id, порядок, границы текста.
@@ -24284,7 +24324,8 @@ function QR.load()
     if QR.loaded then return true end
     QR.loaded = true
     local items, mode, nextId = {}, nil, nil
-    local hadRows = false    -- в конфиге уже что-то было: демо-шаблоны НЕ навязываем
+    local demoMark = nil     -- конфиг уже проходил чистку демо-набора
+    local hadRows = false    -- в конфиге уже что-то было (пустой список не «оживляем»)
     local ok, f = pcall(GRND_CONFIG.open, QR.path(), "r")
     if ok and f then
         local cur = nil
@@ -24304,7 +24345,8 @@ function QR.load()
                         elseif k == "text" then cur.text = unesc(v) end
                     else
                         if k == "mode" then mode = v
-                        elseif k == "nextId" then nextId = tonumber(v) end
+                        elseif k == "nextId" then nextId = tonumber(v)
+                        elseif k == "demo" then demoMark = tonumber(v) end
                     end
                 end
             end
@@ -24315,14 +24357,10 @@ function QR.load()
     if mode then QR.mode = QR.modeOk(mode) end
     if nextId then QR.nextId = nextId end
     QR.normalize()
-    if #QR.items == 0 and not hadRows then
-        -- самый первый запуск: показываем готовые шаблоны и сразу сохраняем.
-        -- Если пользователь удалил ВСЕ шаблоны сам, конфиг уже не пуст — и
-        -- демо-набор не возвращается (иначе удалённое «оживало» бы).
-        local def = QR.defaults()
-        for i = 1, #def do QR.items[i] = { id = i, name = def[i].name, text = def[i].text } end
-        QR.nextId = #def + 1
-        QR.normalize()
+    -- v1.19.01: предзаполнения больше нет. Если в конфиге остался демо-набор
+    -- прошлых сборок — убираем его один раз и запоминаем это маркером demo=1.
+    if hadRows and not demoMark then
+        dropDemos()
         pcall(QR.save)
     end
     return true
@@ -24341,6 +24379,7 @@ function QR.save()
     local escv = esc   -- grndBinderEscape, если он есть в сборке
     f:write("mode=" .. tostring(QR.mode or "test") .. "\n")
     f:write("nextId=" .. tostring(QR.nextId or 1) .. "\n")
+    f:write("demo=1\n")   -- чистка демо-набора уже выполнена
     for i = 1, #QR.items do
         local it = QR.items[i]
         f:write("---\n")
@@ -24525,7 +24564,7 @@ function QR.choose(it)
         if pid:match("^%d+$") and type(grndRepAnswer) == "function" then
             local okA, res = pcall(grndRepAnswer, pid, text)
             if okA and res ~= false then
-                QR.toast("Ответ игроку ID " .. pid .. " → «" .. utf8Cut(label, 20) .. "»", "ok", 2.6)
+                QR.toast("Ответ игроку ID " .. pid .. ": «" .. utf8Cut(label, 20) .. "»", "ok", 2.6)
                 return true
             end
         end
@@ -24540,7 +24579,7 @@ function QR.choose(it)
         QR.toast("В чат ушло начало шаблона (лимит строки чата)", "warn", 3.2)
     end
     if QR.sendChat("/n " .. line) then
-        QR.toast("В /n → «" .. utf8Cut(label, 22) .. "»", "ok", 2.6)
+        QR.toast("В /n: «" .. utf8Cut(label, 22) .. "»", "ok", 2.6)
         return true
     end
     QR.toast("Не удалось отправить шаблон в чат", "warn", 3)
@@ -24696,7 +24735,36 @@ local function field(ctx, id, key, cap, x, y, w, h, hint, multiline, initial)
     return changed
 end
 
--- Кнопка в стиле окна. opts: primary | selected | danger | muted.
+-- Треугольник средствами draw-list: символы ▲ ▼ ↵ есть не во всех шрифтах
+-- (показывались как «?» или пустое место), поэтому рисуем фигуру сами.
+-- dir: "up" | "down" | "right". Возвращает true, если что-то нарисовали.
+local function tri(dl, at, cx, cy, size, dir, col)
+    local s = tonumber(size) or 4
+    local pts
+    if dir == "up" then
+        pts = { { cx, cy - s }, { cx - s, cy + s }, { cx + s, cy + s } }
+    elseif dir == "down" then
+        pts = { { cx, cy + s }, { cx - s, cy - s }, { cx + s, cy - s } }
+    else
+        pts = { { cx + s, cy }, { cx - s, cy - s }, { cx - s, cy + s } }
+    end
+    local p1, p2, p3 = at(pts[1][1], pts[1][2]), at(pts[2][1], pts[2][2]), at(pts[3][1], pts[3][2])
+    if dl.AddTriangleFilled then
+        if pcall(dl.AddTriangleFilled, dl, p1, p2, p3, col) then return true end
+    end
+    if dl.AddTriangle then
+        if pcall(dl.AddTriangle, dl, p1, p2, p3, col, 1) then return true end
+    end
+    if dl.AddLine then
+        local a = pcall(dl.AddLine, dl, p1, p2, col, 1)
+        local b = pcall(dl.AddLine, dl, p2, p3, col, 1)
+        local c = pcall(dl.AddLine, dl, p3, p1, col, 1)
+        if a and b and c then return true end
+    end
+    return false
+end
+
+-- Кнопка в стиле окна. opts: primary | selected | danger | muted | tri = up/down/right
 local function button(ctx, id, x, y, w, h, label, opts)
     opts = opts or {}
     local im, dl, at = ctx.im, ctx.dl, ctx.at
@@ -24732,11 +24800,15 @@ local function button(ctx, id, x, y, w, h, label, opts)
     if dl.AddRect then
         pcall(dl.AddRect, dl, at(x + 0.5, y + 0.5), at(x + w - 0.5, y + h - 0.5), bd, 6, 0, 1)
     end
-    local shown = fit(label, w - 12, ctx.drawnW, 0.92)
-    local tw = 0
-    if type(ctx.drawnW) == "function" then
-        local ok, v = pcall(ctx.drawnW, shown, 0.92)
-        if ok and type(v) == "number" then tw = v end
+    if opts.tri then
+        local tc = (hov or act) and fg or bd
+        tri(dl, at, x + w / 2, y + h / 2, opts.tri == "right" and 3.6 or 4, opts.tri, tc)
+        return clicked, hov
+    end
+    local shown, tw = fitW(label, w - 12, ctx.drawnW, 0.92)
+    if not tw or tw <= 0 then
+        -- замер недоступен: грубая прикидка по числу символов
+        tw = utf8Len(shown) * 7 * 0.92
     end
     ctx.uiText(x + math.max(5, (w - tw) / 2), y + (h - lineH(ctx, 0.92)) / 2, shown, fg, 0.92)
     return clicked, hov
@@ -24933,7 +25005,7 @@ local function pickerDraw(ctx)
         if #QR.items == 0 then
             text(24, listY + 18, "Шаблонов пока нет.",
                 ctx.col32(TH.textHi[1], TH.textHi[2], TH.textHi[3], 255), 0.95)
-            text(24, listY + 40, "Создайте их в меню: Репорт → Ответы на репорт",
+            text(24, listY + 40, "Создайте их в меню «Репорт», вкладка «Ответы на репорт»",
                 ctx.col32(TH.textDim[1], TH.textDim[2], TH.textDim[3], 255), 0.86)
         elseif #list == 0 then
             text(24, listY + 24, "Ничего не найдено",
@@ -24965,7 +25037,8 @@ local function pickerDraw(ctx)
                 text(26, iy + 30, fit(oneLine(it.text or ""), nameW, ctx.drawnW, 0.84),
                     ctx.col32(TH.textMuted[1], TH.textMuted[2], TH.textMuted[3], 255), 0.84)
                 if hov or act then
-                    text(W - 40, iy + 18, "↵", ctx.col32(ac[1], ac[2], ac[3], 220), 1.0)
+                    -- стрелка «отправить» нарисована фигурой (символа ↵ в шрифте нет)
+                    tri(dl, at, W - 30, iy + 27, 4, "right", ctx.col32(ac[1], ac[2], ac[3], 220))
                 end
                 if clicked then
                     QR.choose(it)
@@ -25030,44 +25103,6 @@ local function formSync()
     return it
 end
 
-local function modeRow(ctx, x, y, w)
-    local TH = theme()
-    local modes = {
-        { id = "test", label = "/n (тест)", hint = "текст уходит командой /n — тестовый канал" },
-        { id = "input", label = "Поле ответа", hint = "текст встаёт в поле ответа окна репорта" },
-        { id = "ans", label = "/ans игроку", hint = "шаблон сразу уходит игроку: /ans ID текст" },
-    }
-    local label = "Отправка шаблона:"
-    ctx.uiText(x, y + 7, label, ctx.col32(TH.textMuted[1], TH.textMuted[2], TH.textMuted[3], 255), 0.88)
-    local lw = 130
-    if type(ctx.drawnW) == "function" then
-        local ok, v = pcall(ctx.drawnW, label, 0.88)
-        if ok and type(v) == "number" then lw = v end
-    end
-    local bx, hint = x + lw + 10, nil
-    for i = 1, #modes do
-        local m = modes[i]
-        local bw = 96
-        if type(ctx.drawnW) == "function" then
-            local ok, v = pcall(ctx.drawnW, m.label, 0.9)
-            if ok and type(v) == "number" then bw = v + 26 end
-        end
-        local sel = (QR.modeOk(QR.mode) == m.id)
-        if button(ctx, "##grnd_qr_mode_" .. m.id, bx, y, bw, 28, m.label, { selected = sel }) and not sel then
-            QR.mode = m.id
-            pcall(QR.save)
-            QR.toast("Шаблоны: отправка → " .. m.label, "info", 2.4)
-        end
-        if sel then hint = m.hint end
-        bx = bx + bw + 6
-    end
-    if hint and bx + 10 < x + w then
-        ctx.uiText(bx + 6, y + 8, "· " .. hint,
-            ctx.col32(TH.textDim[1], TH.textDim[2], TH.textDim[3], 255), 0.8)
-    end
-    return y + 36
-end
-
 local function settingsList(ctx, x, y, w, h)
     local TH = theme()
     local im = ctx.im
@@ -25121,7 +25156,7 @@ local function settingsList(ctx, x, y, w, h)
     end
     if #list == 0 then
         ctx.uiText(x + 14, listY + 10,
-            (QR.count() == 0) and "Пока пусто — нажмите «Новый шаблон»" or "Ничего не найдено",
+            (QR.count() == 0) and "Пока пусто — нажмите «+ Новый шаблон»" or "Ничего не найдено",
             ctx.col32(TH.textDim[1], TH.textDim[2], TH.textDim[3], 255), 0.86)
     end
     local ac = TH.accent
@@ -25151,18 +25186,20 @@ local function settingsList(ctx, x, y, w, h)
                 QR.selId, QR.isNew, QR.delArm = it.id, false, nil
                 QR.note = nil
             end
-            -- порядок и удаление
-            local bx = x + w - 12 - 46
-            if button(ctx, "##grnd_qr_up_" .. tostring(it.id), bx, iy + 6, 20, 16, "▲", { muted = true }) then
+            -- порядок и удаление: стрелки рисуются фигурами (▲▼ в шрифте нет)
+            local bx = x + w - 12 - 48
+            if button(ctx, "##grnd_qr_up_" .. tostring(it.id), bx, iy + 5, 22, 18, "",
+                { muted = true, tri = "up" }) then
                 QR.move(it.id, -1)
                 pcall(QR.save)
             end
-            if button(ctx, "##grnd_qr_dn_" .. tostring(it.id), bx + 22, iy + 6, 20, 16, "▼", { muted = true }) then
+            if button(ctx, "##grnd_qr_dn_" .. tostring(it.id), bx + 26, iy + 5, 22, 18, "",
+                { muted = true, tri = "down" }) then
                 QR.move(it.id, 1)
                 pcall(QR.save)
             end
             local delLabel = (QR.delArm == it.id) and "точно?" or "удал."
-            if button(ctx, "##grnd_qr_del_" .. tostring(it.id), bx, iy + 25, 44, 16, delLabel,
+            if button(ctx, "##grnd_qr_del_" .. tostring(it.id), bx, iy + 26, 48, 18, delLabel,
                 { danger = true }) then
                 if QR.delArm == it.id then
                     QR.remove(it.id)
@@ -25204,7 +25241,7 @@ local function settingsEditor(ctx, x, y, w, h)
         local muted = ctx.col32(TH.textMuted[1], TH.textMuted[2], TH.textMuted[3], 255)
         local dim = ctx.col32(TH.textDim[1], TH.textDim[2], TH.textDim[3], 255)
         ctx.uiText(x + 12, y + 38, "Выберите шаблон слева", muted, 0.92)
-        ctx.uiText(x + 12, y + 58, "или нажмите «＋ Новый шаблон».", muted, 0.92)
+        ctx.uiText(x + 12, y + 58, "или нажмите «+ Новый шаблон».", muted, 0.92)
         ctx.uiText(x + 12, y + 92, "Кнопка «Быстрые ответы» в окне репорта", dim, 0.82)
         ctx.uiText(x + 12, y + 108, "откроет этот список с поиском,", dim, 0.82)
         ctx.uiText(x + 12, y + 124, "клик по шаблону отправит текст.", dim, 0.82)
@@ -25315,7 +25352,7 @@ local function settingsDraw(ctx)
             searchX, y - 3, searchW, 28, "Поиск…", false, QR.filter)
         QR.filter = bufText("settingsSearch")
     end
-    if button(ctx, "##grnd_qr_new", x + w - newW, y - 4, newW, 30, "＋ Новый шаблон",
+    if button(ctx, "##grnd_qr_new", x + w - newW, y - 4, newW, 30, "+ Новый шаблон",
         { primary = not QR.isNew }) then
         QR.isNew, QR.selId, QR.delArm = true, nil, nil
         QR.formKey = nil
@@ -25323,10 +25360,11 @@ local function settingsDraw(ctx)
         QR.noteShow("Заполните название и текст", "ok")
     end
 
-    -- режим отправки
-    local yy = modeRow(ctx, x, y + 38, w)
+    -- (v1.19.01: строка «Отправка шаблона» убрана — режим хранится в конфиге,
+    --  сейчас это /n; сменить канал = поменять QR.mode/«mode=» в конфиге)
 
     -- список + редактор
+    local yy = y + 34
     local gap = 14
     local listW = math.floor((w - gap) * 0.36)
     if listW < 200 then listW = 200 end
@@ -25384,7 +25422,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.00"
+        local sv = "1.19.01"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -33412,7 +33450,7 @@ function grndMainBody()
                     local cx = PAD + (i - 1) * (cw + gap)
                     if repButton(cx, yChips, cw, ch, chips[i][1], chips[i][2], false, 1.0) then
                         GRND_REP.lastAction = chips[i][1]
-                        -- v1.19.0: «Быстрые ответы» — окно шаблонов поверх окна репорта
+                        -- v1.19.01: «Быстрые ответы» — окно шаблонов поверх окна репорта
                         if i == 1 then
                             if type(_G.GRND_QR) == "table" then
                                 if type(_G.GRND_QR.togglePicker) == "function" then
@@ -36589,7 +36627,7 @@ function grndMainBody()
                 if not ok then logRenderErr("report", e)
                 elseif e then wantCursor = true end
             end
-            -- v1.19.0: окно шаблонов («Быстрые ответы») рисуется поверх всего;
+            -- v1.19.01: окно шаблонов («Быстрые ответы») рисуется поверх всего;
             -- сам модуль живёт вне grndMainBody и получает помощники через ctx.
             if not gated and type(_G.grndQrPickerDraw) == "function" then
                 local ok, e = pcall(_G.grndQrPickerDraw, {
