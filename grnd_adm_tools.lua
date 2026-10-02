@@ -1,5 +1,5 @@
 script_name("grnd_adm_tools")
-script_version("1.19.01")
+script_version("1.19.02")
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
 require "lib.sampfuncs"
@@ -23911,7 +23911,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.01)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.02)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -24998,10 +24998,12 @@ local function pickerDraw(ctx)
         if dl.PushClipRect then
             clip = pcall(dl.PushClipRect, dl, at(12, listY), at(W - 12, listY + listH), true)
         end
-        local iclip = false   -- клип для ВИДЖЕТОВ (ImGui), не только для рисования
-        if im.PushClipRect then
-            iclip = pcall(im.PushClipRect, at(12, listY), at(W - 12, listY + listH), true)
-        end
+        -- ВАЖНО (v1.19.02): im.PushClipRect здесь НЕ используем — он сдвигает
+        -- window->ClipRect, а обёртка снимает его назад лишь у draw-list.
+        -- Дальше по кадру ImGui считает надписи «за пределами окна» и НЕ
+        -- рисует их (прямоугольники через draw-list при этом видны — отсюда
+        -- «пустой редактор» с рамками полей). Клипаем только список
+        -- отрисовки, а виджеты сами режем по видимой части строки.
         if #QR.items == 0 then
             text(24, listY + 18, "Шаблонов пока нет.",
                 ctx.col32(TH.textHi[1], TH.textHi[2], TH.textHi[3], 255), 0.95)
@@ -25015,10 +25017,18 @@ local function pickerDraw(ctx)
         for i = first + 1, math.min(#list, first + rows + 1) do
             local it = list[i]
             local iy = listY + (i - 1) * 56 - (QR.pickScroll or 0)
-            if iy + 52 >= listY - 4 and iy <= listY + listH + 4 then
-                im.SetCursorPos(im.ImVec2(12, iy + 2))
-                local clicked = im.InvisibleButton("##grnd_qr_t_" .. tostring(it.id),
-                    im.ImVec2(W - 24, 50))
+            if iy + 56 >= listY and iy <= listY + listH then
+                -- кликаем только по ВИДИМОЙ части строки: за пределами
+                -- списка кнопки не должно быть вовсе (иначе прокрученная
+                -- строка ловит клики в шапке или подвале окна)
+                local wy = math.max(iy + 2, listY)
+                local wh = math.min(iy + 52, listY + listH) - wy
+                local clicked = false
+                if wh > 6 then
+                    im.SetCursorPos(im.ImVec2(12, wy))
+                    clicked = im.InvisibleButton("##grnd_qr_t_" .. tostring(it.id),
+                        im.ImVec2(W - 24, wh)) and true or false
+                end
                 local hov = (im.IsItemHovered and im.IsItemHovered()) or false
                 local act = (im.IsItemActive and im.IsItemActive()) or false
                 local ac = TH.accent
@@ -25046,7 +25056,6 @@ local function pickerDraw(ctx)
                 end
             end
         end
-        if iclip and im.PopClipRect then pcall(im.PopClipRect) end
         if clip and dl.PopClipRect then pcall(dl.PopClipRect, dl) end
         if maxScroll > 0.5 then
             local trackX = W - 8
@@ -25150,10 +25159,9 @@ local function settingsList(ctx, x, y, w, h)
     if ctx.dl.PushClipRect then
         clip = pcall(ctx.dl.PushClipRect, ctx.dl, ctx.at(x + 2, listY), ctx.at(x + w - 2, listY + listH), true)
     end
-    local iclip = false   -- клип самих виджетов: прокрученные строки не кликаются
-    if im.PushClipRect then
-        iclip = pcall(im.PushClipRect, ctx.at(x + 2, listY), ctx.at(x + w - 2, listY + listH), true)
-    end
+    -- Клип только у списка отрисовки (см. комментарий в модуле): im-клип
+    -- сдвигает window->ClipRect и «съедает» ВЕСЬ текст после него — именно
+    -- так пропал редактор шаблона (v1.19.01), см. v1.19.02.
     if #list == 0 then
         ctx.uiText(x + 14, listY + 10,
             (QR.count() == 0) and "Пока пусто — нажмите «+ Новый шаблон»" or "Ничего не найдено",
@@ -25164,11 +25172,19 @@ local function settingsList(ctx, x, y, w, h)
     for i = first + 1, math.min(#list, first + math.ceil(listH / rowH) + 1) do
         local it = list[i]
         local iy = listY + (i - 1) * rowH - (QR.listScroll or 0)
-        if iy + rowH >= listY - 4 and iy <= listY + listH + 4 then
+        if iy + rowH >= listY and iy <= listY + listH then
             local sel = (QR.selId == it.id) and not QR.isNew
-            im.SetCursorPos(im.ImVec2(x + 6, iy + 2))
-            local clicked = im.InvisibleButton("##grnd_qr_row_" .. tostring(it.id),
-                im.ImVec2(w - 70, rowH - 6))   -- не залезаем под кнопки справа
+            local fully = (iy >= listY - 0.5) and (iy + rowH <= listY + listH + 0.5)
+            -- «тело» строки — кнопка только на видимой части (в список
+            -- отрисовки мы упираемся клипом, а виджеты ImGui клипом не режем)
+            local wy = math.max(iy + 2, listY + 1)
+            local wh = math.min(iy + rowH - 4, listY + listH - 1) - wy
+            local clicked = false
+            if wh > 6 then
+                im.SetCursorPos(im.ImVec2(x + 6, wy))
+                clicked = im.InvisibleButton("##grnd_qr_row_" .. tostring(it.id),
+                    im.ImVec2(w - 70, wh)) and true or false
+            end
             local hov = (im.IsItemHovered and im.IsItemHovered()) or false
             ctx.roundRect(ctx.dl, ctx.at(x + 6, iy + 2), ctx.at(x + w - 6, iy + rowH - 4),
                 sel and ctx.col32(ac[1], ac[2], ac[3], 32)
@@ -25186,20 +25202,25 @@ local function settingsList(ctx, x, y, w, h)
                 QR.selId, QR.isNew, QR.delArm = it.id, false, nil
                 QR.note = nil
             end
-            -- порядок и удаление: стрелки рисуются фигурами (▲▼ в шрифте нет)
+            -- порядок и удаление: стрелки рисуются фигурами (▲▼ в шрифте нет).
+            -- Рисуем и создаём их только для полностью видимой строки.
             local bx = x + w - 12 - 48
-            if button(ctx, "##grnd_qr_up_" .. tostring(it.id), bx, iy + 5, 22, 18, "",
+            if fully and button(ctx, "##grnd_qr_up_" .. tostring(it.id), bx, iy + 5, 22, 18, "",
                 { muted = true, tri = "up" }) then
                 QR.move(it.id, -1)
                 pcall(QR.save)
+            elseif not fully then
+                tri(ctx.dl, ctx.at, bx + 11, iy + 14, 4, "up", ctx.col32(255, 255, 255, 60))
             end
-            if button(ctx, "##grnd_qr_dn_" .. tostring(it.id), bx + 26, iy + 5, 22, 18, "",
+            if fully and button(ctx, "##grnd_qr_dn_" .. tostring(it.id), bx + 26, iy + 5, 22, 18, "",
                 { muted = true, tri = "down" }) then
                 QR.move(it.id, 1)
                 pcall(QR.save)
+            elseif not fully then
+                tri(ctx.dl, ctx.at, bx + 37, iy + 14, 4, "down", ctx.col32(255, 255, 255, 60))
             end
             local delLabel = (QR.delArm == it.id) and "точно?" or "удал."
-            if button(ctx, "##grnd_qr_del_" .. tostring(it.id), bx, iy + 26, 48, 18, delLabel,
+            if fully and button(ctx, "##grnd_qr_del_" .. tostring(it.id), bx, iy + 26, 48, 18, delLabel,
                 { danger = true }) then
                 if QR.delArm == it.id then
                     QR.remove(it.id)
@@ -25214,7 +25235,6 @@ local function settingsList(ctx, x, y, w, h)
             end
         end
     end
-    if iclip and im.PopClipRect then pcall(im.PopClipRect) end
     if clip and ctx.dl.PopClipRect then pcall(ctx.dl.PopClipRect, ctx.dl) end
     if maxScroll > 0.5 then
         local trackX = x + w - 5
@@ -25422,7 +25442,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.01"
+        local sv = "1.19.02"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
