@@ -1,5 +1,8 @@
 script_name("grnd_adm_tools")
-script_version("1.19.06")
+-- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
+-- переменная одна на весь файл — не нужно искать строки по коду.
+GRND_SCRIPT_VERSION = "1.19.07"
+script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
 require "lib.sampfuncs"
@@ -19910,6 +19913,10 @@ function grndUiButton(ctx, id, x, y, w, h, label, opts)
     im.SetCursorPos(im.ImVec2(x, y))
     local clicked = im.InvisibleButton(id, im.ImVec2(w, h)) and true or false
     local hov = (im.IsItemHovered and im.IsItemHovered()) or false
+    -- opts.hover = true: вызывающий сам знает, что курсор на кнопке (своя
+    -- проверка мыши). Тогда заливка здесь и слой подсветки у вызывающего
+    -- берут ОДНО значение, и кнопка не мигает между двумя состояниями.
+    if opts.hover == true then hov = true end
     local act = (im.IsItemActive and im.IsItemActive()) or false
     local ac = TH.accent or { 0, 214, 170, 255 }
     local bg, border
@@ -22856,6 +22863,25 @@ local function mpPushVarF(im, idx, val)
     return false
 end
 
+-- Снять ровно n цветов/переменных стиля. Снимаем ПО ОДНОМУ: в части сборок
+-- PopStyleColor(n) молча снимает только один элемент и стек ImGui утекает —
+-- тогда цвета во всём меню начинают «дёргаться» и мигать. Одиночный вызов
+-- работает одинаково везде, а если он не принимает аргумент — есть фолбэк.
+local function mpPopCols(im, n)
+    n = tonumber(n) or 0
+    if not im or n <= 0 then return end
+    for _ = 1, n do
+        if not pcall(im.PopStyleColor, 1) then pcall(im.PopStyleColor) end
+    end
+end
+local function mpPopVars(im, n)
+    n = tonumber(n) or 0
+    if not im or n <= 0 then return end
+    for _ = 1, n do
+        if not pcall(im.PopStyleVar, 1) then pcall(im.PopStyleVar) end
+    end
+end
+
 -- Поле ввода.
 -- v1.19.05: выглядит как поле «Название» в «Репорт → Ответы на репорт»:
 -- тёмная заливка, отступ текста 9 px, тонкая рамка (белая — спокойно,
@@ -22981,16 +23007,10 @@ local function textInput(ctx, key, id, cap, value, x, y, w, h, hint, onChange)
         FIELD_H = rh
     end
 
-    if nCol > 0 and im.PopStyleColor then
-        if not pcall(im.PopStyleColor, nCol) then
-            for _ = 1, nCol do pcall(im.PopStyleColor) end
-        end
-    end
-    if (padN + borderN) > 0 and im.PopStyleVar then
-        if not pcall(im.PopStyleVar, padN + borderN) then
-            for _ = 1, padN + borderN do pcall(im.PopStyleVar) end
-        end
-    end
+    -- снимаем по одному: счётная форма в части сборок снимает только один
+    -- элемент, и стек стилей утекал (от этого «дёргались» цвета в меню)
+    if nCol > 0 and im.PopStyleColor then mpPopCols(im, nCol) end
+    if (padN + borderN) > 0 and im.PopStyleVar then mpPopVars(im, padN + borderN) end
     if pushedWidth and im.PopItemWidth then pcall(im.PopItemWidth) end
 
     -- Рамка по фактическим габаритам поля — как у «Название»: спокойная
@@ -23084,6 +23104,18 @@ local function gearIcon(ctx, cx, cy, col)
         pcall(dl.AddCircleFilled, dl, at(cx, cy), 2.0,
             col32(18, 17, 23, 255), 12)
     end
+end
+
+-- Наведение для слоя подсветки и для заливки кнопки должно приходить из
+-- ОДНОГО источника на кадр. Раньше заливку выбирал ImGui (IsItemHovered),
+-- а слой подсветки — наша проверка курсора: значения могли разойтись на
+-- кадр, и кнопка мигала («дёргалась») между спокойным и подсвеченным видом.
+local MP_HOVER = { id = nil, frame = -99 }
+local function mpWindowHovered(im)
+    if not (im and im.IsWindowHovered) then return true end
+    local ok, over = pcall(im.IsWindowHovered)
+    if not ok then return true end
+    return over and true or false
 end
 
 -- слой подсветки при наведении: рисуем поверх кнопки, поэтому работает
@@ -23180,15 +23212,33 @@ local function button(ctx, id, x, y, w, h, label, opts)
         return polledMouseClick()
     end
 
+    -- Наведение считаем один раз и отдаём его и заливке, и слою подсветки.
+    local frame = tonumber(_G.GRND_UIFRAME) or 0
+    local own = ownMouseInside() and mpWindowHovered(ctx.im) or false
+    -- одиночный «провал» наведения гасим: глаз читает его как мигание
+    local function settle(hov)
+        if hov then
+            MP_HOVER.id, MP_HOVER.frame = full, frame
+            return true
+        end
+        if MP_HOVER.id == full and (frame - (MP_HOVER.frame or -99)) <= 1 then
+            return true
+        end
+        return false
+    end
+
     local fn = _G.grndUiButton
     if type(fn) == "function" then
-        local ok, clicked = pcall(fn, ctx, full, x, y, w, h, label, opts)
+        local args = opts
+        if own and not opts.hover then
+            args = {}
+            for k, v in pairs(opts) do args[k] = v end
+            args.hover = true
+        end
+        local ok, clicked, hov = pcall(fn, ctx, full, x, y, w, h, label, args)
         if ok then
-            local him = ctx.im
-            local hov = false
-            if him.IsItemHovered then pcall(function() hov = him.IsItemHovered() and true or false end) end
-            if not hov then hov = ownMouseInside() end
-            if hov then hoverLayer(ctx, x, y, w, h, opts) end
+            if not hov and own then hov = true end
+            if settle(hov) then hoverLayer(ctx, x, y, w, h, opts) end
             if clicked then return true end
             if ownMouseClick() then
                 _G.GRND_MOUSE.clicked = false
@@ -23202,7 +23252,8 @@ local function button(ctx, id, x, y, w, h, label, opts)
     im.SetCursorPos(ctx.pos(x, y))
     local clicked = im.InvisibleButton(full, im.ImVec2(w, h)) and true or false
     local hov = (im.IsItemHovered and im.IsItemHovered()) or false
-    if not hov then hov = ownMouseInside() end
+    if not hov then hov = own end
+    hov = settle(hov)
     if not clicked and ownMouseClick() then
         _G.GRND_MOUSE.clicked = false
         clicked = true
@@ -23489,6 +23540,13 @@ function MP.draw(raw)
     MP.drawError = tostring(err)
     local fn = _G.grndUiErrLog
     if type(fn) == "function" then pcall(fn, "панель МП", err) end
+    -- один раз на текст ошибки — и в чат: лог-файл не всегда получается
+    -- переслать, а строку из чата можно просто скопировать
+    MP.errSaid = MP.errSaid or {}
+    if not MP.errSaid[MP.drawError] then
+        MP.errSaid[MP.drawError] = true
+        pcall(say, "панель МП: ошибка — " .. tostring(err):sub(1, 140) .. " (подробности: /mp diag)", "error")
+    end
     local im = _G.GRND_IM
     if im then
         local okPos, pos = pcall(im.GetWindowPos)
@@ -23499,7 +23557,7 @@ function MP.draw(raw)
                 im.SetCursorPos(im.ImVec2(x, y))
                 im.TextUnformatted("Ошибка панели МП: " .. tostring(err))
                 im.SetCursorPos(im.ImVec2(x, y + 20))
-                im.TextUnformatted("подробности в resource/grnd/logs/grnd_err.log")
+                im.TextUnformatted("подробности: /mp diag (или resource/grnd/logs/grnd_err.log)")
             end)
         end
     end
@@ -23551,6 +23609,11 @@ function MP.drawInner(raw)
     local cy = (raw and raw.y or 0) + 14
     local cw = math.max(280, (raw and raw.w or 640) + 20)
     local ch = math.max(160, (raw and raw.h or 480))
+
+    -- диагностика (/mp diag): где панель, сколько кадров её рисовали и как
+    -- давно. Координаты — экранные, в той же системе, что и мышь.
+    MP.drawFrames = (MP.drawFrames or 0) + 1
+    MP.diag = { x = px + cx, y = py + cy, cw = cw, ch = ch, at = now() }
 
     local maxScroll = math.max(0, (MP.totalH or 0) - ch)
     MP.scroll = math.max(0, math.min(maxScroll, MP.scroll or 0))
@@ -23890,6 +23953,90 @@ do
     end
 end
 
+-- ---------------------------------------------------------------------
+--  /mp diag — диагностика панели БЕЗ файлов.
+--  Лог resource/grnd/logs/grnd_err.log не всегда получается прислать,
+--  поэтому всё нужное печатается прямо в чат короткими строками: версия,
+--  ошибка отрисовки панели, возможности сборки ImGui и координаты мыши
+--  (ImGui против WM — по ним видно, почему кнопки ведут себя странно).
+-- ---------------------------------------------------------------------
+local function mpDiag()
+    local im = _G.GRND_IM
+    local function yn(v) return v and "да" or "нет" end
+    -- «нет» — возможности в сборке нет, «ошибка» — есть, но вызов падает
+    local function apiState(has, fn)
+        if not has then return "нет" end
+        local ok, res = pcall(fn)
+        if not ok or res == false then return "ошибка" end
+        if res == nil then return "нет" end
+        return "да"
+    end
+    say("=== Панель МП: диагностика ===", "info")
+    say("версия " .. tostring(GRND_SCRIPT_VERSION or _G.GRND_SCRIPT_VERSION or "?")
+        .. " · кадров ImGui: " .. tostring(_G.GRND_UIFRAME or 0)
+        .. " · кадров панели: " .. tostring(MP.drawFrames or 0), "info")
+    if MP.diag and MP.diag.at then
+        say(("панель: x=%s y=%s ш=%s в=%s · кадр %.1f с назад")
+            :format(tostring(math.floor(MP.diag.x or 0)), tostring(math.floor(MP.diag.y or 0)),
+                tostring(math.floor(MP.diag.cw or 0)), tostring(math.floor(MP.diag.ch or 0)),
+                math.max(0, now() - (MP.diag.at or 0))), "info")
+    else
+        say("панель ещё ни разу не рисовалась (вкладка не открывалась?)", "warn")
+    end
+    if MP.drawError then
+        say("ОШИБКА ОТРИСОВКИ: " .. tostring(MP.drawError):sub(1, 200), "error")
+    else
+        say("ошибок отрисовки панели нет", "ok")
+    end
+    if im then
+        local mx, my = nil, nil
+        if type(im.GetIO) == "function" then
+            local okIO, io = pcall(im.GetIO)
+            if okIO and io and io.MousePos then
+                mx, my = tonumber(io.MousePos.x), tonumber(io.MousePos.y)
+            end
+        end
+        say("мышь ImGui: " .. (mx and (tostring(math.floor(mx)) .. "," .. tostring(math.floor(my))) or "нет")
+            .. " · мышь WM: " .. (function()
+                local m = _G.GRND_MOUSE
+                if type(m) ~= "table" or not tonumber(m.x) then return "нет" end
+                return tostring(math.floor(tonumber(m.x))) .. "," .. tostring(math.floor(tonumber(m.y)))
+            end)(), "info")
+        -- проверяем push/pop цвета парой: заодно видно, что стек снимается
+        local pushOk
+        if im.PushStyleColor and im.ImVec4 and im.Col and im.Col.Text then
+            pushOk = mpPushCol(im, im.Col.Text, 255, 255, 255, 255) and true or false
+            if pushOk then mpPopCols(im, 1) end
+        end
+        say("ImVec2=" .. apiState(im.ImVec2 ~= nil, function() return pcall(im.ImVec2, 0, 0) end)
+            .. " ImVec4=" .. apiState(im.ImVec4 ~= nil, function() return pcall(im.ImVec4, 0, 0, 0, 1) end)
+            .. " Push/PopStyleColor=" .. (pushOk == nil and "нет" or (pushOk and "да" or "ошибка"))
+            .. " IsWindowHovered=" .. yn(im.IsWindowHovered ~= nil)
+            .. " InputTextWithHint=" .. yn(im.InputTextWithHint ~= nil)
+            .. " InputTextMultiline=" .. yn(im.InputTextMultiline ~= nil), "info")
+    else
+        say("ImGui недоступен (_G.GRND_IM = nil)", "error")
+    end
+    -- хвост журнала ошибок отрисовки (первые строки файла: where/error)
+    local n = 0
+    if type(grndUiErrLogPath) == "function" then
+        local okF, f = pcall(io.open, grndUiErrLogPath(), "r")
+        if okF and f then
+            for _ = 1, 4 do
+                local line = f:read("*l")
+                if not line then break end
+                if line ~= "" then
+                    n = n + 1
+                    say("лог: " .. tostring(line):sub(1, 180), "warn")
+                end
+            end
+            pcall(f.close, f)
+        end
+    end
+    if n == 0 then say("журнал ошибок пуст", "ok") end
+    say("пришлите эти строки текстом — по ним видно причину", "info")
+end
+
 -- Команда /mp: состояние, старт/стоп, заготовки, список команд.
 -- Тестовых команд здесь нет: проверка идёт настоящим репортом
 -- "Nik_Name[ID]: текст [К-во репорта: N]".
@@ -23919,6 +24066,8 @@ if type(sampRegisterChatCommand) == "function" then
             MP.hookOk = okHook
             say("перехват чата: " .. (okHook and "установлен" or "НЕ установлен"),
                 okHook and "ok" or "error")
+        elseif a == "diag" or a == "лог" or a == "log" then
+            pcall(mpDiag)
         elseif a == "save" then
             local good, msg = MP.savePreset(rest)
             say(msg, good and "ok" or "warn")
@@ -23948,7 +24097,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.06)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.07)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -25444,7 +25593,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.06"
+        local sv = "1.19.07"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
