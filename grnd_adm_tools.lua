@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.08"
+GRND_SCRIPT_VERSION = "1.19.09"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24243,7 +24243,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.08)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.09)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -25306,11 +25306,7 @@ local function pickerDraw(ctx)
         box(4, 5, W - 4, H - 5, ctx.col32(0, 0, 0, 90), 12)
         box(0, 0, W, H, ctx.col32(12, 13, 19, 250), 12)
         frame(0, 0, W, H, ctx.col32(255, 255, 255, 30), 12)
-        if ctx.gradRect then
-            ctx.gradRect(dl, at(12, 1), at(W - 12, 4),
-                ctx.col32(acC[1], acC[2], acC[3], 240),
-                ctx.col32(TH.accent2[1], TH.accent2[2], TH.accent2[3], 240), 2)
-        end
+        -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
 
         -- колесо мыши: шаблонов может быть много, полоса остаётся низкой
         local mx, my = mouse(im)
@@ -25739,7 +25735,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.08"
+        local sv = "1.19.09"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -30171,7 +30167,7 @@ function grndMainBody()
                     -- фон, градиентная полоса, шапка
                     box(0, 0, W, H, c32(TH.bg), 12)
                     frame(0, 0, W, H, col32(255, 255, 255, 16), 12)
-                    gradRect(dl2, eat(14, 0), eat(W - 14, 3), c32(TH.accent), c32(TH.accent2), 2)
+                    -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
                     local title = "Наказание: " .. it.id
                     uiText((W - drawnW(title, 1.05)) / 2, 13, title, c4(TH.textHi), 1.05)
 
@@ -32588,7 +32584,7 @@ function grndMainBody()
 
                 pcall(dl.AddRect, dl, at(0.5, 0.5), at(W - 0.5, H - 0.5),
                     c32(TH.line), 10, 0, 1.4)
-                dl:AddRectFilled(at(12, 0), at(W - 12, 3), c32(TH.accent))
+                -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
 
                 local title = (scoreboard.server ~= "" and scoreboard.server) or "GRND"
                 local tw = grndTextW(title)
@@ -33374,7 +33370,7 @@ function grndMainBody()
                 -- фон, градиентная полоса, шапка
                 box(0, 0, W, H, c32(TH.bg), 10)
                 frame(0, 0, W, H, col32(255, 255, 255, 14), 10)
-                gradRect(dl, at(14, 0), at(W - 14, 3), c32(TH.accent), c32(TH.accent2), 2)
+                -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
                 box(0, 3, W, 31, c32(TH.sidebar), 0)
                 box(0, 34, W, 1, c32(TH.line), 0)
                 text(PAD, 10, "Репорт", c4(TH.textHi), 1.06)
@@ -33860,7 +33856,7 @@ function grndMainBody()
                 local function at(x, y) return im.ImVec2(pos.x + x, pos.y + y) end
                 roundRect(dl, at(0, 0), at(W, H), c32(TH.bg), 10)
                 if dl.AddRect then pcall(dl.AddRect, dl, at(0, 0), at(W, H), col32(255, 255, 255, 16), 10, 0, 1.0) end
-                gradRect(dl, at(12, 0), at(W - 12, 3), c32(TH.accent), c32(TH.accent2), 2)
+                -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
 
                 -- спиннер: дуга из отрезков, вращается по времени
                 local cx, cy, r = 26, 31, 11
@@ -33989,7 +33985,7 @@ function grndMainBody()
                 roundRect(dl, at(4, 4), at(FW + 4, FH + 4), col32(0, 0, 0, 82), 10)
                 roundRect(dl, at(0, 0), at(FW, FH), col32(11, 16, 24, 248), 10)
                 if dl.AddRect then pcall(dl.AddRect, dl, at(0.5, 0.5), at(FW - 0.5, FH - 0.5), col32(255, 255, 255, 28), 10, 0, 1.0) end
-                gradRect(dl, at(12, 1), at(FW - 12, 4), col32(TH.accent[1], TH.accent[2], TH.accent[3], 240), col32(TH.accent2[1], TH.accent2[2], TH.accent2[3], 240), 2)
+                -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
 
                 -- Короткая шапка не заходит под кнопку закрытия и ручку перетаскивания.
                 local headerText = "Форма от: " .. grndUtf8Text(form.adminNick)
@@ -34187,9 +34183,7 @@ function grndMainBody()
                     pcall(dl.AddRect, dl, at(0.5, 0.5), at(FW - 0.5, FH - 0.5),
                         col32(255, 255, 255, 28), 10, 0, 1.0)
                 end
-                gradRect(dl, at(12, 1), at(FW - 12, 4),
-                    col32(TH.accent[1], TH.accent[2], TH.accent[3], 240),
-                    col32(TH.accent2[1], TH.accent2[2], TH.accent2[3], 240), 2)
+                -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
 
                 -- Заголовок
                 uiText(14, 9, "Принять гос.волну?", c4(TH.textHi), 0.94)
@@ -34367,9 +34361,7 @@ function grndMainBody()
                     pcall(dl.AddRect, dl, at(0.5, 0.5), at(FW - 0.5, FH - 0.5),
                         col32(255, 255, 255, 25), 12, 0, 1.0)
                 end
-                gradRect(dl, at(14, 1), at(FW - 14, 4),
-                    col32(TH.accent[1], TH.accent[2], TH.accent[3], 240),
-                    col32(TH.accent2[1], TH.accent2[2], TH.accent2[3], 240), 2)
+                -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
 
                 local who = tostring(P.nick or "")
                 if who == "" then who = "ID " .. tostring(pid) end
@@ -35836,9 +35828,7 @@ function grndMainBody()
                 fill(5, 6, W - 5, H - 5, col32(0, 0, 0, 85), 13)
                 fill(0, 0, W, H, col32(10, 15, 20, 247), 13)
                 frame(0.5, 0.5, W - 1, H - 1, col32(255, 255, 255, 25), 13)
-                gradRect(dl, at(14, 1), at(W - 14, 4),
-                    col32(TH.accent[1], TH.accent[2], TH.accent[3], 240),
-                    col32(TH.accent2[1], TH.accent2[2], TH.accent2[3], 240), 2)
+                -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
 
                 -- Шапка: без «не в стриме», большая кнопка копирования справа.
                 local avatar = nick:match("^[%z\1-\127\194-\244][\128-\191]*") or "?"
@@ -36059,9 +36049,7 @@ function grndMainBody()
                             bfill(5, 6, BW2 - 5, HB - 5, col32(0, 0, 0, 85), 13)
                             bfill(0, 0, BW2, HB, col32(10, 15, 20, 247), 13)
                             bframe(0.5, 0.5, BW2 - 1, HB - 1, col32(255, 255, 255, 25), 13)
-                            gradRect(bdl, bat(14, 1), bat(BW2 - 14, 4),
-                                col32(TH.accent[1], TH.accent[2], TH.accent[3], 240),
-                                col32(TH.accent2[1], TH.accent2[2], TH.accent2[3], 240), 2)
+                            -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
                             -- шапка: только «Наказания»
                             uiText(BP2 + 2, 11, "Наказания", c4(TH.textHi), 0.95)
                             bdl:AddRectFilled(bat(BP2, HEAD2 - 5), bat(BW2 - BP2, HEAD2 - 4),
@@ -36584,9 +36572,7 @@ function grndMainBody()
                         afill(5, 6, AW - 5, AH - 5, col32(0, 0, 0, 85), 13)
                         afill(0, 0, AW, AH, col32(10, 15, 20, 247), 13)
                         aframe(0.5, 0.5, AW - 1, AH - 1, col32(255, 255, 255, 25), 13)
-                        gradRect(adl, aat(14, 1), aat(AW - 14, 4),
-                            col32(TH.accent[1], TH.accent[2], TH.accent[3], 240),
-                            col32(TH.accent2[1], TH.accent2[2], TH.accent2[3], 240), 2)
+                        -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
 
                         -- Шапка: название с ником / ID игрока
                         uiText(AH_PAD + 2, 10, targetTitle, c4(TH.textHi), 0.95)
@@ -36864,7 +36850,7 @@ function grndMainBody()
             end
             box(4, 5, W, H, 0x60000000)
             box(0, 0, W, H, 0xE60B0F16)
-            box(0, 0, W, 3, 0xFF00D6AA)
+            -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
             drawText("GRND  /  RECON", 16, 12, 0xFF00D6AA)
             drawText(val("id", RC.id and ("ID " .. tostring(RC.id)) or "ID —"), 236, 12, 0xFFDDE8F2)
             drawText(reconUtf(RC.nick or "Игрок"), 16, 34, 0xFFFFFFFF)
