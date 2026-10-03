@@ -16,12 +16,27 @@ SERV = { spec = false, typing = false, failAns = false, failQueue = false }
 os = { clock = function() return NOW end, date = os.date }
 
 function grndStoragePath() return "/tmp/harness_auto.json" end
+-- Домены конфига — ровно как в GRND_CONFIG.sources игры. Если файла тут нет,
+-- open() бросает ошибку: именно так ловится забытая секция (настройки молча
+-- не сохраняются).
+local SOURCES = {
+    grnd_settings = "settings", grnd_ui = "ui", grnd_killlist = "killlist",
+    grnd_admins = "admins", grnd_binder = "binder", grnd_ring = "ring",
+    grnd_char = "character", grnd_punish = "punishments", grnd_chat = "legacyFont",
+    grnd_repquick = "reportTemplates", grnd_reppunish = "reportPunish",
+    grnd_repauto = "reportAuto",
+}
 GRND_CONFIG = {
+    sources = SOURCES,
     ensure = function() return {} end,
     warn = function() end,
     setting = nil,
     flush = function() return true end,
     open = function(path, mode)
+        local base = tostring(path):match('([^/\\]+)%.cfg$')
+        if not SOURCES[base] then
+            error('Unknown configuration domain: ' .. tostring(path))
+        end
         if mode and mode:sub(1, 1) == "r" then
             local body = FILES[path]
             if not body then return nil, "section not present" end
@@ -34,6 +49,13 @@ GRND_CONFIG = {
                         local last = body:find("\n", cursor, true) or (#body + 1)
                         local line = body:sub(cursor, last - 1)
                         cursor = last + 1
+                        -- как scalar() в игре: числовые значения — числами,
+                        -- кроме name/text (там строки)
+                        local k, v = line:match("^([%w_]+)=(.*)$")
+                        if k and k ~= "name" and k ~= "text" and v:match("^%-?%d+%.?%d*$") then
+                            local n = tonumber(v)
+                            if n then line = k .. "=" .. tostring(n) end
+                        end
                         return line
                     end
                 end,

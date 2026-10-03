@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.26"
+GRND_SCRIPT_VERSION = "1.19.27"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -76,7 +76,10 @@ GRND_CONFIG = {schema=1, sources={
     grnd_settings="settings", grnd_ui="ui", grnd_killlist="killlist",
     grnd_admins="admins", grnd_binder="binder", grnd_ring="ring",
     grnd_char="character", grnd_punish="punishments", grnd_chat="legacyFont",
-    grnd_repquick="reportTemplates", grnd_reppunish="reportPunish"
+    grnd_repquick="reportTemplates", grnd_reppunish="reportPunish",
+    -- v1.19.27: настройки автопилота. Без этой строки open() бросал
+    -- «Unknown configuration domain» и раздел вообще ничего не сохранял.
+    grnd_repauto="reportAuto"
 }}
 do
     local C=GRND_CONFIG
@@ -24347,7 +24350,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.26)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.27)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -26917,7 +26920,7 @@ do
 end
 
 -- =====================================================================
---  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.26) — «Репорт» → «Автопилот»
+--  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.27) — «Репорт» → «Автопилот»
 -- =====================================================================
 --  Вкладки (до 15): в каждой — ОДИН триггер, свой текст ответа и своя команда
 --  после ответа. Пришёл репорт — ищем триггер по всем вкладкам; срабатывает
@@ -26943,9 +26946,11 @@ end
 --      админ-бота «Ник(ID): текст») — обычная болтовня в чате не считается;
 --    * текст репорта должен быть ровно триггером — без других слов;
 --
---  Конфиг: grnd_repauto.cfg (on / sel / count / t1_trigger / t1_answer /
---  t1_command / …). Файл старого формата (один trigger=…) читается как
---  первая вкладка, ничего не теряется.
+--  Конфиг — общий config.json, секция reportAuto (домен grnd_repauto в
+--  GRND_CONFIG.sources): on / sel / t1_trigger / t1_answer / t1_command / …
+--  Вкладки пишутся по порядку, ключи читаются по одному — лишнего счётчика
+--  в файле нет. Секция старого формата (один trigger=…) читается как первая
+--  вкладка, ничего не теряется.
 --
 --  Локальные имена живут в do-блоке: у Lua в функции не больше 200 локальных.
 --  Отладка: QR.auto.lastCheck и QR.auto.err; ошибки отрисовки — в /mp diag.
@@ -27189,6 +27194,9 @@ do
                 -- k может быть nil: сначала строка, потом разбор — «k and
                 -- k:match()» вернул бы только первый захват
                 local idx, field = tostring(k or ""):match("^t(%d+)_(%a+)$")
+                -- в config.json числа хранятся числами (scalar() превращает
+                -- «1» в 1), поэтому всё сравниваем как строки
+                if v ~= nil then v = tostring(v) end
                 if idx then
                     local n = tonumber(idx)
                     if n and n >= 1 and n <= MAX_TABS then
@@ -27229,7 +27237,6 @@ do
         if not ok or not f then return false end
         f:write("on=" .. (A.on and "1" or "0") .. "\n")
         f:write("sel=" .. tostring(A.sel or 1) .. "\n")
-        f:write("count=" .. tostring(#A.tabs) .. "\n")
         for i = 1, #A.tabs do
             local t = A.tabs[i]
             f:write("t" .. i .. "_trigger=" .. esc(t.trigger or "") .. "\n")
@@ -27799,7 +27806,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.26"
+        local sv = "1.19.27"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -33834,6 +33841,7 @@ function grndMainBody()
                         -- v1.19.24: триггер совпадает с репортом целиком.
                         -- v1.19.25: вкладок до 15, срабатывают все совпавшие.
                         -- v1.19.26: слежка и мероприятие — пауза, а не выключение.
+                        -- v1.19.27: настройки автопилота реально пишутся в config.json.
                         local topY = cardY + 16
                         local topBtnH = 34
                         local b1X = cardX + 20
@@ -34121,7 +34129,7 @@ function grndMainBody()
                             end
                         else
                             -- =========================================
-                            --  ПОД-ВКЛАДКИ «РЕПОРТА» (v1.19.26): «Ответы на
+                            --  ПОД-ВКЛАДКИ «РЕПОРТА» (v1.19.27): «Ответы на
                             --  репорт», «Наказания» и «Автопилот» — все три
                             --  рисуются своими модулями внутри GRND_QR.
                             -- =========================================
@@ -34164,6 +34172,7 @@ function grndMainBody()
                                 -- v1.19.25: вкладок до 15, срабатывают все,
                                 -- у кого триггер совпал.
                                 -- v1.19.26: слежка/мероприятие — авто-пауза.
+                                -- v1.19.27: секция reportAuto в config.json.
                                 if type(_G.grndQrAutoDraw) == "function" then
                                     local okAu = pcall(_G.grndQrAutoDraw, {
                                         im = im, dl = dl, at = at,

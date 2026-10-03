@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.26"' in s, 'версия не 1.19.26')
+need('GRND_SCRIPT_VERSION = "1.19.27"' in s, 'версия не 1.19.27')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -260,6 +260,12 @@ need('return "этому игроку уже отвечали"' in s, 'нет а
 need('return "лимит " .. tostring(AUTO_PER_MIN) .. " в минуту"' in s, 'нет лимита срабатываний')
 # конфиг автопилота — отдельный файл, правки пишутся с задержкой
 need('function QR.autoPath()' in s and 'grnd_repauto.cfg' in s, 'нет своего файла настроек автопилота')
+# v1.19.27: секция автопилота объявлена в доменах конфига — иначе open() падает
+# («Unknown configuration domain») и настройки вообще не сохраняются
+need('grnd_repauto="reportAuto"' in s, 'секция reportAuto не объявлена в GRND_CONFIG.sources')
+need('if v ~= nil then v = tostring(v) end' in s,
+     'значения из config.json не приводятся к строке (числа ломают on/sel)')
+absent('"count=" .. tostring(#A.tabs)', 'в файл снова пишется лишний счётчик вкладок')
 need('function QR.autoLoad()' in s and 'function QR.autoSave()' in s, 'настройки автопилота не сохраняются')
 need('function QR.autoTick()' in s, 'нет тика автопилота')
 need('pcall(_G.grndQrAutoTick)' in s, 'тик автопилота не вызывается из цикла')

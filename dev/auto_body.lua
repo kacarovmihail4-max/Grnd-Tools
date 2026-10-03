@@ -414,9 +414,10 @@ Q.autoTabs()[2].command = "sp"
 HPRINT("«без команды»: уходит только ответ игроку")
 
 -- ===== 15. конфиг: вкладки записаны и прочитаны =====
-Q.autoSave()
+check(Q.autoSave() == true, "сохранение не прошло (домен конфига не объявлен?)")
 local body = FILES[Q.autoPath()] or ""
-check(body:find("count=2", 1, true) ~= nil, "в файле нет count: " .. body)
+check(body:find("count=", 1, true) == nil, "в файле лишний счётчик вкладок: " .. body)
+check(body:find("sel=", 1, true) ~= nil, "в файле нет выбранной вкладки: " .. body)
 check(body:find("t1_trigger=Помогите", 1, true) ~= nil, "в файле нет триггера 1-й вкладки")
 check(body:find("t2_trigger=дм", 1, true) ~= nil, "в файле нет триггера 2-й вкладки")
 check(body:find("t1_command=goto", 1, true) ~= nil, "в файле нет команды 1-й вкладки")
