@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.22"
+GRND_SCRIPT_VERSION = "1.19.23"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24347,7 +24347,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.22)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.23)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -24425,7 +24425,6 @@ local QR = {
         on = false,        -- включён ли
         tabs = nil,        -- вкладки: { {trigger=, answer=, command=}, … }
         sel = 1,           -- выбранная вкладка
-        delArm = false,    -- кнопка «Удалить» ждёт подтверждения
         listOpen = false,  -- открыт выпадающий список команд
         offReason = nil,   -- почему выключен («слежка» и т.п.)
         fired = 0,         -- сколько раз сработал
@@ -26933,7 +26932,7 @@ do
 end
 
 -- =====================================================================
---  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.22) — «Репорт» → «Автопилот»
+--  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.23) — «Репорт» → «Автопилот»
 -- =====================================================================
 --  Вкладки: в каждой — ОДИН триггер, свой текст ответа и своя команда после
 --  ответа. Пришёл репорт — ищем триггер по вкладкам по порядку; первая
@@ -27074,7 +27073,6 @@ do
         end
         tabs[#tabs + 1] = QR.autoNewTab()
         QR.auto.sel = #tabs
-        QR.auto.delArm = false
         QR.auto.listOpen = false
         pcall(QR.autoSave)
         return QR.auto.sel
@@ -27093,7 +27091,6 @@ do
             table.remove(tabs, i)
             if QR.auto.sel > #tabs then QR.auto.sel = #tabs end
         end
-        QR.auto.delArm = false
         QR.auto.listOpen = false
         -- буферы полей привязаны к номеру вкладки — после сдвига их надо
         -- перечитать из модели
@@ -27469,16 +27466,8 @@ do
         local warnC = ctx.col32(255, 176, 96, 255)
         local okC   = ctx.col32(120, 220, 160, 255)
 
-        -- ---------- шапка: название, счётчик, тумблер ----------
+        -- ---------- шапка: название и состояние, справа тумблер ----------
         ctx.uiText(x, y + 1, "Автопилот", hi, 1.0)
-        local tw = 0
-        if type(ctx.drawnW) == "function" then
-            local okM, v = pcall(ctx.drawnW, "Автопилот", 1.0)
-            if okM and type(v) == "number" then tw = v end
-        end
-        if tw <= 0 then tw = 74 end
-        chip(ctx, x + tw + 10, y - 2, "вкладок: " .. tostring(#tabs) ..
-            " · срабатываний: " .. tostring(A.fired or 0))
 
         local on = A.on and true or false
         local stY = y + 30
@@ -27486,20 +27475,15 @@ do
         ctx.dl:AddCircleFilled(ctx.at(x + 8, stY + 12), 5, dotC)
         ctx.uiText(x + 22, stY + 2, on and "включён" or "выключен",
             on and hi or dim, 0.95)
-        local note
+        -- подпись — только когда автопилот работает или выключился сам
+        local note, noteCol
         if on then
-            note = "при репорте: ответ игроку и команда выбранной вкладки"
+            note, noteCol = "при репорте: ответ игроку и команда выбранной вкладки", mut
         elseif A.offReason == "слежка" then
-            note = "выключен сам: активна слежка, после выхода включите заново"
-        else
-            note = "репорты проходят мимо — включите тумблером"
+            note, noteCol = "выключен сам: активна слежка, после выхода включите заново", warnC
         end
-        if type(ctx.drawnW) == "function" then
-            local okM, v = pcall(ctx.drawnW, note, 0.86)
-            if okM and type(v) == "number" then
-                ctx.uiText(x + 96, stY + 4, fit(note, w - 96 - 70, ctx.drawnW, 0.86),
-                    A.offReason == "слежка" and warnC or mut, 0.86)
-            end
+        if note and type(ctx.drawnW) == "function" then
+            ctx.uiText(x + 96, stY + 4, fit(note, w - 96 - 70, ctx.drawnW, 0.86), noteCol, 0.86)
         end
         if autoSwitch(ctx, x + w - 56, stY, on, "##grnd_qr_auto_on") then
             QR.autoSet(not on)
@@ -27509,18 +27493,41 @@ do
         -- Каждая вкладка — один триггер со своим ответом и командой. Вкладок
         -- может быть много, поэтому полоса переносится на след. строку, а не
         -- вылезает за окно.
-        local tabH, tgap = 30, 6
+        -- Крестик и плюс рисуем линиями: символы «×» и «＋» есть не во всех
+        -- шрифтах (показывались как «?» либо пустое место).
+        local function autoCross(cx, cy, r, col)
+            if not ctx.dl.AddLine then return false end
+            local a = pcall(ctx.dl.AddLine, ctx.dl, ctx.at(cx - r, cy - r), ctx.at(cx + r, cy + r), col, 1.4)
+            local b = pcall(ctx.dl.AddLine, ctx.dl, ctx.at(cx + r, cy - r), ctx.at(cx - r, cy + r), col, 1.4)
+            return a and b
+        end
+        local function autoPlus(cx, cy, r, col)
+            if not ctx.dl.AddLine then return false end
+            local a = pcall(ctx.dl.AddLine, ctx.dl, ctx.at(cx - r, cy), ctx.at(cx + r, cy), col, 1.6)
+            local b = pcall(ctx.dl.AddLine, ctx.dl, ctx.at(cx, cy - r), ctx.at(cx, cy + r), col, 1.6)
+            return a and b
+        end
+
+        local tabH, tgap, tcw = 30, 6, 26     -- tcw — полоска крестика справа
         local tabW = math.floor((w - tgap * (#tabs - 1)) / #tabs)
         if tabW > 190 then tabW = 190 end
-        if tabW < 88 then tabW = 88 end
+        if tabW < 96 then tabW = 96 end
         local tx, ty = x, stY + 32
+        local pendingDel = nil
         for i = 1, #tabs do
             if tx + tabW > x + w + 0.5 then tx, ty = x, ty + tabH + tgap end
             local sel = (i == A.sel)
+            -- вкладка и крестик — две отдельные зоны, поэтому «удалить» не
+            -- срабатывает при выборе вкладки (и наоборот)
             im.SetCursorPos(im.ImVec2(tx, ty))
-            local clicked = im.InvisibleButton("##grnd_qr_auto_tab_" .. i,
-                im.ImVec2(tabW, tabH)) and true or false
-            local hov = (im.IsItemHovered and im.IsItemHovered()) or false
+            local tabClick = im.InvisibleButton("##grnd_qr_auto_tab_" .. i,
+                im.ImVec2(tabW - tcw, tabH)) and true or false
+            local tabHov = (im.IsItemHovered and im.IsItemHovered()) or false
+            im.SetCursorPos(im.ImVec2(tx + tabW - tcw, ty))
+            local crossClick = im.InvisibleButton("##grnd_qr_auto_tabc_" .. i,
+                im.ImVec2(tcw, tabH)) and true or false
+            local crossHov = (im.IsItemHovered and im.IsItemHovered()) or false
+            local hov = tabHov or crossHov
             ctx.roundRect(ctx.dl, ctx.at(tx, ty), ctx.at(tx + tabW, ty + tabH),
                 sel and ctx.col32(ac[1], ac[2], ac[3], 52)
                     or (hov and ctx.col32(255, 255, 255, 22) or ctx.col32(255, 255, 255, 12)), 6)
@@ -27530,59 +27537,48 @@ do
                     sel and ctx.col32(ac[1], ac[2], ac[3], 170) or ctx.col32(255, 255, 255, 46),
                     6, 0, 1)
             end
-            local lbl = fit(QR.autoLabel(i), tabW - 18, ctx.drawnW, 0.88)
+            local lbl = fit(QR.autoLabel(i), tabW - tcw - 12, ctx.drawnW, 0.88)
             local lw = 0
             if type(ctx.drawnW) == "function" then
                 local okM, v = pcall(ctx.drawnW, lbl, 0.88)
                 if okM and type(v) == "number" then lw = v end
             end
-            ctx.uiText(tx + math.floor((tabW - lw) / 2), ty + (tabH - lineH(ctx, 0.88)) / 2,
+            ctx.uiText(tx + math.floor((tabW - tcw - lw) / 2), ty + (tabH - lineH(ctx, 0.88)) / 2,
                 lbl, sel and hi or dim, 0.88)
-            if clicked and not sel then
+            local crossCol = crossHov and ctx.col32(255, 140, 140, 255) or ctx.col32(255, 255, 255, 110)
+            if not autoCross(tx + tabW - tcw / 2, ty + tabH / 2, 4, crossCol) then
+                ctx.uiText(tx + tabW - tcw / 2 - 3, ty + (tabH - lineH(ctx, 0.8)) / 2, "x",
+                    crossCol, 0.8)
+            end
+            if crossClick then
+                pendingDel = i
+            elseif tabClick and not sel then
                 A.sel = i
-                A.delArm = false
                 A.listOpen = false
             end
             tx = tx + tabW + tgap
         end
-        -- кнопки «добавить» и «удалить» — сразу после последней вкладки.
-        -- «Удалить» видна всегда: когда вкладка одна, она просто очищается.
-        local addW, delW = 128, 118
-        local need = addW + delW + tgap
-        if tx + need > x + w + 0.5 then tx, ty = x, ty + tabH + tgap end
+        -- плюс в круглом фоне — сразу после последней вкладки
+        local plusD = tabH
+        if tx + plusD > x + w + 0.5 then tx, ty = x, ty + tabH + tgap end
         im.SetCursorPos(im.ImVec2(tx, ty))
-        local addClick = im.InvisibleButton("##grnd_qr_auto_add", im.ImVec2(addW, tabH)) and true or false
-        local addHov = (im.IsItemHovered and im.IsItemHovered()) or false
-        ctx.roundRect(ctx.dl, ctx.at(tx, ty), ctx.at(tx + addW, ty + tabH),
-            addHov and ctx.col32(ac[1], ac[2], ac[3], 46) or ctx.col32(ac[1], ac[2], ac[3], 22), 6)
-        if ctx.dl.AddRect then
-            pcall(ctx.dl.AddRect, ctx.dl, ctx.at(tx + 0.5, ty + 0.5),
-                ctx.at(tx + addW - 0.5, ty + tabH - 0.5), ctx.col32(ac[1], ac[2], ac[3], 150), 6, 0, 1)
+        local plusClick = im.InvisibleButton("##grnd_qr_auto_add", im.ImVec2(plusD, plusD)) and true or false
+        local plusHov = (im.IsItemHovered and im.IsItemHovered()) or false
+        local pcx, pcy = tx + plusD / 2, ty + plusD / 2
+        ctx.dl:AddCircleFilled(ctx.at(pcx, pcy), plusD / 2,
+            ctx.col32(ac[1], ac[2], ac[3], plusHov and 90 or 46))
+        -- светлое кольцо: два круга (AddCircle есть не во всех сборках)
+        ctx.dl:AddCircleFilled(ctx.at(pcx, pcy), plusD / 2 - 1.5,
+            ctx.col32(18, 17, 23, plusHov and 150 or 90))
+        if not autoPlus(pcx, pcy, 6,
+            plusHov and ctx.col32(255, 255, 255, 255) or ctx.col32(ac[1], ac[2], ac[3], 235)) then
+            ctx.uiText(pcx - 4, pcy - lineH(ctx, 1.0) / 2, "+",
+                plusHov and hi or acC, 1.0)
         end
-        ctx.uiText(tx + 12, ty + (tabH - lineH(ctx, 0.88)) / 2, "Добавить вкладку",
-            addHov and hi or acC, 0.88)
-        if addClick then QR.autoAdd() end
-        do
-            tx = tx + addW + tgap
-            im.SetCursorPos(im.ImVec2(tx, ty))
-            local delClick = im.InvisibleButton("##grnd_qr_auto_del", im.ImVec2(delW, tabH)) and true or false
-            local delHov = (im.IsItemHovered and im.IsItemHovered()) or false
-            ctx.roundRect(ctx.dl, ctx.at(tx, ty), ctx.at(tx + delW, ty + tabH),
-                A.delArm and ctx.col32(255, 96, 96, 60)
-                    or (delHov and ctx.col32(255, 96, 96, 26) or ctx.col32(255, 255, 255, 10)), 6)
-            if ctx.dl.AddRect then
-                pcall(ctx.dl.AddRect, ctx.dl, ctx.at(tx + 0.5, ty + 0.5),
-                    ctx.at(tx + delW - 0.5, ty + tabH - 0.5),
-                    A.delArm and ctx.col32(255, 110, 110, 200) or ctx.col32(255, 255, 255, 40),
-                    6, 0, 1)
-            end
-            ctx.uiText(tx + 12, ty + (tabH - lineH(ctx, 0.86)) / 2,
-                A.delArm and "Точно удалить?" or ("Удалить (" .. QR.autoLabel(A.sel) .. ")"),
-                A.delArm and ctx.col32(255, 150, 150, 255) or mut, 0.86)
-            if delClick then
-                if A.delArm then QR.autoDel(A.sel) else A.delArm = true end
-            end
-        end
+        -- действие применяем после отрисовки: список вкладок в этом кадре
+        -- остаётся целым, а на следующем кадре рисуется уже новый
+        if plusClick then QR.autoAdd() end
+        if pendingDel then QR.autoDel(pendingDel) end
 
         -- ---------- поля выбранной вкладки ----------
         local yy = ty + tabH + 14
@@ -27593,12 +27589,10 @@ do
         local hintTxt, hintCol
         if shortTrig then
             hintTxt, hintCol = "слишком короткий — сработает почти на всё", warnC
-        elseif #QR.autoTriggers(sel2) == 0 then
-            hintTxt, hintCol = "пусто — вкладка молчит", warnC
-        else
+        elseif #QR.autoTriggers(sel2) > 0 then
             hintTxt, hintCol = "регистр не важен", mut
         end
-        if type(ctx.drawnW) == "function" then
+        if hintTxt and type(ctx.drawnW) == "function" then
             local okM, v = pcall(ctx.drawnW, hintTxt, 0.8)
             if okM and type(v) == "number" then
                 ctx.uiText(x + math.max(0, iw - v), yy + 2, hintTxt, hintCol, 0.8)
@@ -27616,13 +27610,6 @@ do
         yy = yy + 40
 
         ctx.uiText(x, yy, "Ответ игроку", dim, 0.84)
-        local ahint = "{ник} и {ид} подставятся сами"
-        if type(ctx.drawnW) == "function" then
-            local okM, v = pcall(ctx.drawnW, ahint, 0.8)
-            if okM and type(v) == "number" then
-                ctx.uiText(x + math.max(0, iw - v), yy + 2, ahint, mut, 0.8)
-            end
-        end
         yy = yy + 17
         local ansH = 92
         local akey, aid = "autoAnswer" .. A.sel, "##grnd_qr_auto_answer"
@@ -27768,7 +27755,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.22"
+        local sv = "1.19.23"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -33799,6 +33786,7 @@ function grndMainBody()
                         -- v1.19.21: «Автопилот» — вкладки, в каждой свой
                         -- триггер, ответ /ans ID и команда /sp или /goto.
                         -- v1.19.22: вкладок может быть сколько нужно.
+                        -- v1.19.23: у вкладки крестик удаления, добавление — «+».
                         local topY = cardY + 16
                         local topBtnH = 34
                         local b1X = cardX + 20
@@ -34086,7 +34074,7 @@ function grndMainBody()
                             end
                         else
                             -- =========================================
-                            --  ПОД-ВКЛАДКИ «РЕПОРТА» (v1.19.22): «Ответы на
+                            --  ПОД-ВКЛАДКИ «РЕПОРТА» (v1.19.23): «Ответы на
                             --  репорт», «Наказания» и «Автопилот» — все три
                             --  рисуются своими модулями внутри GRND_QR.
                             -- =========================================
@@ -34123,6 +34111,8 @@ function grndMainBody()
                                 -- v1.19.21: настройка автопилота — свой модуль в
                                 -- GRND_QR. v1.19.22: вкладки, в каждой свой
                                 -- триггер, ответ /ans ID и команда после него.
+                                -- v1.19.23: добавление «+», удаление — крестик
+                                -- вкладки; подписи раздела — без лишнего.
                                 if type(_G.grndQrAutoDraw) == "function" then
                                     local okAu = pcall(_G.grndQrAutoDraw, {
                                         im = im, dl = dl, at = at,
