@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.15"
+GRND_SCRIPT_VERSION = "1.19.16"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -76,7 +76,7 @@ GRND_CONFIG = {schema=1, sources={
     grnd_settings="settings", grnd_ui="ui", grnd_killlist="killlist",
     grnd_admins="admins", grnd_binder="binder", grnd_ring="ring",
     grnd_char="character", grnd_punish="punishments", grnd_chat="legacyFont",
-    grnd_repquick="reportTemplates"
+    grnd_repquick="reportTemplates", grnd_reppunish="reportPunish"
 }}
 do
     local C=GRND_CONFIG
@@ -234,7 +234,7 @@ do
         local result={};local current=result
         if section=='binder' or section=='character' then result.items=C.array() end
         if section=='ring' then result.slots=C.array() end
-        if section=='reportTemplates' then result.items=C.array() end
+        if section=='reportTemplates' or section=='reportPunish' then result.items=C.array() end
         for line in (body..'\n'):gmatch('([^\n]*)\n') do
             line=line:gsub('\r$','')
             if line=='---' and result.items then
@@ -24243,7 +24243,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.14)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» И ШАБЛОНЫ НАКАЗАНИЙ (v1.19.16)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -24270,7 +24270,8 @@ end)()
 --  локальных переменных в функции у Lua не больше 200: модуль обёрнут в
 --  (function() … end)() и НИ ОДНОЙ локальной переменной на верхнем уровне
 --  не создаёт (как панель МП). Наружу — только _G.GRND_QR,
---  _G.grndQrPickerDraw, _G.grndQrSettingsDraw и _G.grndQrOnEsc.
+--  _G.grndQrPickerDraw, _G.grndQrSettingsDraw, _G.grndQrPunPickerDraw,
+--  _G.grndQrPunishDraw и _G.grndQrOnEsc.
 -- =====================================================================
 
 _G.GRND_QR = (function()
@@ -24296,12 +24297,31 @@ local QR = {
     drawErr = nil,         -- последняя ошибка отрисовки (диагностика)
     left = 0,              -- сколько раз рисовали окно выбора
     chats = 0,             -- сколько раз уходило в чат
+    -- v1.19.16: шаблоны наказаний (вкладка «Репорт» → «Наказания»)
+    pun = {
+        loaded = false,    -- файл наказаний прочитан
+        items = nil,       -- { id, name, text, cmd, time, reason }
+        nextId = 1,
+        selId = nil, isNew = false, delArm = nil,
+        filter = "",       -- поиск в списке наказаний
+        formKey = nil,     -- что открыто в редакторе: none | new | id:N
+        cmdSync = nil,     -- какому formKey соответствует буфер команды
+        listScroll = 0,
+        comboOpen = false, -- открыт выпадающий список команд
+        comboScroll = 0,
+        pickOpen = false,  -- полоса наказаний в окне репорта
+        pickScroll = 0,
+        pickFocus = false,
+        left = 0,          -- сколько раз рисовали полосу
+    },
 }
 
 local MAX_TEXT = 512       -- символов в тексте шаблона
 local MAX_NAME = 48        -- символов в названии
 local MAX_CHAT = 118       -- символов на одну строку чата (/n …): у SA-MP лимит 128
 local MAX_BUF  = 244       -- байт для поля ответа окна репорта (буфер char[256])
+local MAX_PTIME = 8        -- символов в поле «Время» шаблона наказания
+local MAX_PREASON = 96     -- символов в «Причине» шаблона наказания
 
 -- КООРДИНАТЫ. В этом скрипте есть два пространства:
 --   * ctx.at(x, y) — ЭКРАННЫЕ координаты (pos окна + локальные) — только
@@ -24866,6 +24886,7 @@ function QR.closeReport()
         R.focused = false
     end
     QR.pickOpen, QR.pickFocus = false, false
+    if type(QR.pun) == "table" then QR.pun.pickOpen, QR.pun.pickFocus = false, false end
     return true
 end
 
@@ -24941,6 +24962,7 @@ function QR.openPicker()
         QR.toast("Шаблонов пока нет — создайте их в меню «Репорт», вкладка «Ответы на репорт»", "warn", 3.5)
         return false
     end
+    if type(QR.pun) == "table" then QR.pun.pickOpen, QR.pun.pickFocus = false, false end
     QR.pickOpen, QR.pickFocus = true, true
     QR.pickScroll = 0
     return true
@@ -24963,6 +24985,17 @@ end
 function _G.grndQrOnEsc()
     local Q = _G.GRND_QR
     if type(Q) ~= "table" then return false end
+    local P = Q.pun
+    if type(P) == "table" then
+        if P.comboOpen then            -- открыт список команд — закрываем его
+            P.comboOpen = false
+            return true
+        end
+        if P.pickOpen then             -- открыта полоса наказаний
+            P.pickOpen, P.pickFocus = false, false
+            return true
+        end
+    end
     if Q.pickOpen then
         Q.pickOpen, Q.pickFocus = false, false
         return true
@@ -25212,7 +25245,7 @@ local PICK_SCREEN_GAP = 10            -- зазор до нижнего края
 
 -- Раскладка: ширина кнопки — по длине названия, перенос по строкам.
 -- Возвращает строки кнопок и ширину самой широкой строки.
-local function pickerLayout(ctx, availW)
+local function pickerLayoutItems(ctx, availW, items)
     local measure = ctx.drawnW
     local function mw(str)
         if type(measure) == "function" then
@@ -25221,9 +25254,10 @@ local function pickerLayout(ctx, availW)
         end
         return utf8Len(str) * 7 * 0.94
     end
+    items = (type(items) == "table") and items or QR.items
     local rows, cur, curW = {}, {}, 0
-    for i = 1, #QR.items do
-        local item = QR.items[i]
+    for i = 1, #items do
+        local item = items[i]
         local label = trim(tostring(item.name or ""))
         if label == "" then label = "шаблон" end
         local bw = math.floor(mw(label) + 28)
@@ -25245,6 +25279,10 @@ local function pickerLayout(ctx, availW)
         if sum > winW then winW = sum end
     end
     return rows, winW
+end
+
+local function pickerLayout(ctx, availW)
+    return pickerLayoutItems(ctx, availW, QR.items)
 end
 
 local function pickerDraw(ctx)
@@ -25445,6 +25483,529 @@ _G.grndQrPickerDraw = function(ctx)
     QR.drawErr = tostring(res)
     print("{FF6666}[GRND]{FFFFFF} быстрые ответы: " .. tostring(res))
     return false
+end
+-- =====================================================================
+--  ШАБЛОНЫ НАКАЗАНИЙ (v1.19.16) — вкладка «Репорт» → «Наказания»
+-- =====================================================================
+--  Настройка — как у шаблонов ответа, плюс своё:
+--    * селектор команды наказания (/ban, /mute, /rmute, /jail, /kick, /warn)
+--      с выпадающим списком;
+--    * «Время» появляется только у команд со сроком (бан — дни, мут — минуты),
+--      «Причина» — у команд, которым она нужна;
+--    * кнопка «Наказание» в окне репорта открывает ТАКУЮ ЖЕ полосу, как
+--      «Быстрые ответы», только по центру окна репорта;
+--    * тестовый режим: команда уходит в /n (проверка), боевой — как есть,
+--      а игроку уходит «Ответ на репорт».
+--  Локальные имена живут в do-блоке: у Lua в функции не больше 200 активных
+--  локальных переменных, а модуль и без того большой (см. шапку модуля).
+-- =====================================================================
+do
+    -- Команды наказаний для селектора. time — нужен срок, reason — причина,
+    -- unit — как подписывать поле «Время».
+    local punCmds = {
+        { id = "ban",   time = true,  unit = "дней",  reason = true },
+        { id = "mute",  time = true,  unit = "минут", reason = true },
+        { id = "rmute", time = true,  unit = "минут", reason = true },
+        { id = "jail",  time = true,  unit = "минут", reason = true },
+        { id = "kick",  time = false, unit = nil,     reason = true },
+        { id = "warn",  time = false, unit = nil,     reason = true },
+    }
+    local punById = {}
+    for i = 1, #punCmds do punById[punCmds[i].id] = punCmds[i] end
+    QR.punCmds = punCmds          -- список для интерфейса и стендов
+
+    function QR.punDef(id)
+        return punById[tostring(id or ""):lower()]
+    end
+
+    -- Файл шаблонов наказаний лежит рядом с файлом шаблонов ответов
+    -- (секция reportPunish в config.json — см. GRND_CONFIG.sources).
+    function QR.punPath()
+        local base = tostring(QR.path() or "")
+        local replaced = base:gsub("grnd_repquick%.cfg$", "grnd_reppunish.cfg")
+        if replaced ~= base then return replaced end
+        local dir = base:match("^(.*[/\\])")
+        if dir then return dir .. "grnd_reppunish.cfg" end
+        return "grnd_reppunish.cfg"
+    end
+
+    local unitShort = { ["дней"] = "д", ["минут"] = "мин" }
+
+    -- Строка-подпись для списка: «/mute · 60 мин · флуд».
+    function QR.punPreview(it)
+        if type(it) ~= "table" then return "" end
+        local def = QR.punDef(it.cmd)
+        if not def then return "команда не выбрана" end
+        local out = "/" .. def.id
+        if def.time and trim(it.time or "") ~= "" then
+            out = out .. " · " .. trim(it.time) .. " " .. (unitShort[def.unit or ""] or (def.unit or ""))
+        end
+        if def.reason and trim(it.reason or "") ~= "" then
+            out = out .. " · " .. oneLine(it.reason)
+        end
+        return out
+    end
+
+    -- ---------- список наказаний: хранение ----------
+
+    function QR.punNormalize()
+        local P = QR.pun
+        if type(P.items) ~= "table" then P.items = {} end
+        local seen, out, maxId = {}, {}, 0
+        for i = 1, #P.items do
+            local it = P.items[i]
+            if type(it) == "table" then
+                local id = math.floor(tonumber(it.id) or 0)
+                if id <= 0 or seen[id] then
+                    id = 0
+                    repeat id = id + 1 until not seen[id]
+                end
+                local cmd = tostring(it.cmd or ""):lower():gsub("[^%a]", "")
+                if punById[cmd] then           -- чужая команда в шаблон не попадает
+                    local name = clampText(trim(utf(it.name or "")), MAX_NAME)
+                    local text = clampText(cleanText(utf(it.text or "")), MAX_TEXT)
+                    local time = clampText((trim(utf(it.time or "")):gsub("%D", "")), MAX_PTIME)
+                    local reason = clampText(oneLine(utf(it.reason or "")), MAX_PREASON)
+                    if name == "" then name = utf8Cut(QR.punPreview({ cmd = cmd, time = time, reason = reason }), 28) end
+                    if name == "" then name = "/" .. cmd end
+                    seen[id] = true
+                    if id > maxId then maxId = id end
+                    out[#out + 1] = { id = id, name = name, text = text,
+                                      cmd = cmd, time = time, reason = reason }
+                end
+            end
+        end
+        P.items = out
+        P.nextId = math.max(math.floor(tonumber(P.nextId) or 1), maxId + 1)
+        if P.selId and not seen[math.floor(tonumber(P.selId) or 0)] then P.selId = nil end
+        return out
+    end
+
+    function QR.punLoad()
+        local P = QR.pun
+        if P.loaded then return true end
+        P.loaded = true
+        local items, nextId = {}, nil
+        local ok, f = pcall(GRND_CONFIG.open, QR.punPath(), "r")
+        if ok and f then
+            local cur = nil
+            for line in f:lines() do
+                line = tostring(line or "")
+                if line == "---" then
+                    cur = {}
+                    items[#items + 1] = cur
+                else
+                    local k, v = line:match("^([%w_]+)=(.*)$")
+                    if k then
+                        if cur then
+                            if k == "id" then cur.id = tonumber(v)
+                            elseif k == "name" then cur.name = unesc(v)
+                            elseif k == "text" then cur.text = unesc(v)
+                            elseif k == "cmd" then cur.cmd = v
+                            elseif k == "time" then cur.time = v
+                            elseif k == "reason" then cur.reason = v end
+                        elseif k == "nextId" then nextId = tonumber(v) end
+                    end
+                end
+            end
+            pcall(f.close, f)
+        end
+        P.items = items
+        if nextId then P.nextId = nextId end
+        QR.punNormalize()
+        return true
+    end
+
+    function QR.punEnsure()
+        local P = QR.pun
+        if not P.loaded then pcall(QR.punLoad) end
+        if type(P.items) ~= "table" then pcall(QR.punNormalize) end
+        return P
+    end
+
+    function QR.punSave()
+        local P = QR.pun
+        QR.punNormalize()
+        local ok, f = pcall(GRND_CONFIG.open, QR.punPath(), "w")
+        if not ok or not f then return false end
+        local escv = esc
+        f:write("nextId=" .. tostring(P.nextId or 1) .. "\n")
+        for i = 1, #P.items do
+            local it = P.items[i]
+            f:write("---\n")
+            f:write("id=" .. tostring(it.id or 0) .. "\n")
+            f:write("name=" .. escv(tostring(it.name or "")) .. "\n")
+            f:write("text=" .. escv(tostring(it.text or "")) .. "\n")
+            f:write("cmd=" .. tostring(it.cmd or "") .. "\n")
+            f:write("time=" .. tostring(it.time or "") .. "\n")
+            f:write("reason=" .. tostring(it.reason or "") .. "\n")
+        end
+        pcall(f.close, f)
+        if GRND_CONFIG and type(GRND_CONFIG.flush) == "function" then
+            pcall(GRND_CONFIG.flush)
+        end
+        return true
+    end
+
+    -- ---------- список наказаний: операции ----------
+
+    function QR.punById(id)
+        local P = QR.pun
+        id = math.floor(tonumber(id) or 0)
+        if type(P.items) ~= "table" then return nil, nil end
+        for i = 1, #P.items do
+            if P.items[i].id == id then return P.items[i], i end
+        end
+        return nil, nil
+    end
+
+    function QR.punCount()
+        local P = QR.pun
+        return (type(P.items) == "table") and #P.items or 0
+    end
+
+    function QR.punAdd(name, text, cmd, time, reason)
+        local P = QR.pun
+        QR.punEnsure()
+        local id = math.max(1, math.floor(tonumber(P.nextId) or 1))
+        P.nextId = id + 1
+        local it = { id = id, cmd = tostring(cmd or ""):lower(), time = tostring(time or ""),
+                     reason = tostring(reason or ""), name = name, text = text }
+        P.items[#P.items + 1] = it
+        QR.punNormalize()
+        return QR.punById(id)
+    end
+
+    function QR.punUpdate(id, name, text, cmd, time, reason)
+        local it = QR.punById(id)
+        if not it then return false end
+        it.name, it.text = name, text
+        it.cmd, it.time, it.reason = tostring(cmd or ""):lower(), tostring(time or ""), tostring(reason or "")
+        QR.punNormalize()
+        return true
+    end
+
+    function QR.punRemove(id)
+        local P = QR.pun
+        id = math.floor(tonumber(id) or 0)
+        if type(P.items) ~= "table" then return false end
+        for i = 1, #P.items do
+            if P.items[i].id == id then
+                table.remove(P.items, i)
+                if P.selId == id then P.selId, P.formKey = nil, nil end
+                return true
+            end
+        end
+        return false
+    end
+
+    function QR.punMove(id, dir)
+        local P = QR.pun
+        local it, idx = QR.punById(id)
+        if not it then return false end
+        local other = idx + ((dir or 0) < 0 and -1 or 1)
+        if other < 1 or other > #P.items then return false end
+        P.items[idx], P.items[other] = P.items[other], P.items[idx]
+        return true
+    end
+
+    -- ---------- команда и отправка ----------
+
+    -- «/mute 25 60 флуд» — с теми же подстановками, что и текст шаблона.
+    function QR.punCommand(it, rep)
+        if type(it) ~= "table" then return "" end
+        local def = QR.punDef(it.cmd)
+        if not def then return "" end
+        rep = (type(rep) == "table") and rep or {}
+        local pid = tostring(rep.id or rep.playerId or "")
+        local out = "/" .. def.id .. " " .. pid
+        if def.time then
+            local t = tostring(it.time or ""):gsub("%D", "")
+            if t ~= "" then out = out .. " " .. t end
+        end
+        if def.reason then
+            local r = oneLine(QR.apply(it.reason or "", rep))
+            if r ~= "" then out = out .. " " .. r end
+        end
+        return out
+    end
+
+    -- Выбор наказания из полосы: /n в тестовом режиме, реальная команда в боевом.
+    function QR.punChoose(it)
+        if type(it) ~= "table" then return false end
+        QR.punEnsure()
+        local P = QR.pun
+        local rep = QR.repInfo()
+        local pid = tostring(rep.id or "")
+        local label = tostring(it.name or ("/" .. tostring(it.cmd or "")))
+        if pid:match("^%d+$") == nil then
+            QR.toast("ID игрока не распознан — наказание не отправлено", "warn", 3)
+            return false
+        end
+        local cmd = QR.punCommand(it, rep)
+        if cmd == "" then
+            QR.toast("В шаблоне не выбрана команда наказания", "warn", 3)
+            return false
+        end
+        if utf8Len(cmd) > MAX_CHAT then
+            cmd = utf8Cut(cmd, MAX_CHAT - 1) .. "…"
+            QR.toast("Команда обрезана под лимит строки чата", "warn", 3)
+        end
+        local text = trim(QR.apply(it.text or "", rep))
+        local mode = QR.modeOk(QR.mode)
+        P.pickOpen, P.pickFocus = false, false
+
+        -- «в поле ответа»: текст уходит в поле, команда пока проверяется в /n
+        if mode == "input" then
+            local R = _G.GRND_REP
+            local buf = R and R.answer
+            if buf and type(grndBinderWriteCBuf) == "function" and oneLine(text) ~= "" then
+                pcall(grndBinderWriteCBuf, buf, 256, byteCut(oneLine(text), MAX_BUF))
+                if R then R.focused = false end
+            end
+            if QR.sendChat("/n " .. cmd) then
+                QR.toast("Проверка: в /n — «" .. utf8Cut(cmd, 56) .. "»", "warn", 3.6)
+                return true
+            end
+            QR.toast("Не удалось отправить команду в чат", "warn", 3)
+            return false
+        end
+
+        -- боевой режим: команда уходит как есть, игроку — ответ на репорт
+        if mode == "ans" then
+            if QR.sendChat(cmd) then
+                if oneLine(text) ~= "" and type(grndRepAnswer) == "function" then
+                    pcall(grndRepAnswer, pid, text)
+                end
+                QR.toast("Наказание «" .. utf8Cut(label, 20) .. "» по ID " .. pid, "ok", 3)
+                QR.closeReport()
+                return true
+            end
+            QR.toast("Не удалось отправить команду наказания", "warn", 3)
+            return false
+        end
+
+        -- тестовый режим: команда уходит в /n, чтобы проверить шаблон
+        if QR.sendChat("/n " .. cmd) then
+            QR.toast("Проверка: в /n — «" .. utf8Cut(cmd, 56) .. "»", "warn", 3.6)
+            QR.closeReport()
+            return true
+        end
+        QR.toast("Не удалось отправить команду в /n", "warn", 3)
+        return false
+    end
+
+    -- ---------- полоса выбора наказания (окно репорта) ----------
+
+    function QR.openPunPicker()
+        QR.punEnsure()
+        local P = QR.pun
+        if QR.punCount() == 0 then
+            P.pickOpen, P.pickFocus = false, false
+            QR.toast("Шаблонов наказаний нет — создайте их в меню «Репорт», вкладка «Наказания»", "warn", 3.6)
+            return false
+        end
+        QR.pickOpen, QR.pickFocus = false, false    -- полосы не показываем вместе
+        P.pickOpen, P.pickFocus = true, true
+        P.pickScroll = 0
+        return true
+    end
+
+    function QR.togglePunPicker()
+        if QR.pun.pickOpen then
+            QR.closePunPicker()
+        else
+            QR.openPunPicker()
+        end
+    end
+
+    function QR.closePunPicker()
+        QR.pun.pickOpen, QR.pun.pickFocus = false, false
+    end
+
+    local function punPickerDraw(ctx)
+        if type(ctx) ~= "table" then return false end
+        local im = ctx.im
+        if not (im and ctx.begin and ctx.uiText and ctx.roundRect and ctx.col32 and ctx.rgba) then
+            return false
+        end
+        local P = QR.pun
+        if not P.pickOpen then return false end
+        -- окно репорта закрылось (ESC, ответ, действие) — полосу убираем
+        if not (_G.GRND_REP and _G.GRND_REP.open) then
+            P.pickOpen, P.pickFocus = false, false
+            return false
+        end
+        QR.punEnsure()
+        if QR.punCount() == 0 then
+            P.pickOpen, P.pickFocus = false, false
+            QR.toast("Шаблонов наказаний нет — создайте их в меню «Репорт», вкладка «Наказания»", "warn", 3.6)
+            return false
+        end
+        P.left = (P.left or 0) + 1
+        local TH = theme()
+        local acC = TH.accent or { 164, 112, 224, 255 }
+
+        local resX, resY = getScreenResolution()
+        resX, resY = tonumber(resX) or 1920, tonumber(resY) or 1080
+        local rowH = PICK_BH + PICK_GAP
+        local R = _G.GRND_REP
+        local repX, repW, repBottom
+        if type(R) == "table" then
+            repX, repW = tonumber(R.winX), tonumber(R.winW)
+            local repY, repH = tonumber(R.winY), tonumber(R.winH)
+            if repY and repH and repH > 0 then repBottom = repY + repH end
+        end
+        if not repW or repW <= 0 then repW = 600 end
+        repW = math.max(240, math.min(repW, resX - 40))
+        if not repX then repX = math.floor((resX - repW) / 2) end
+
+        -- ширина — не больше окна репорта: лишние кнопки переносятся вниз
+        local maxW = math.min(920, math.max(240, resX - 80), repW)
+        local rows, contentW = pickerLayoutItems(ctx, maxW - PICK_PADX * 2, P.items)
+        local rowsH = math.max(rowH, #rows * rowH - PICK_GAP)
+        local minH = PICK_PADY * 2 + rowH
+        local y
+        if repBottom then
+            y = repBottom + PICK_ATTACH
+        else
+            y = math.floor(resY * 0.62)
+        end
+        y = math.max(16, math.min(resY - minH - PICK_SCREEN_GAP, y))
+        local maxViewH = math.max(rowH, math.floor(resY - y - PICK_SCREEN_GAP) - PICK_PADY * 2)
+        local viewH = math.min(rowsH, maxViewH)
+        local W = math.max(184, math.min(maxW, contentW + PICK_PADX * 2))
+        local H = PICK_PADY + viewH + PICK_PADY
+        -- v1.19.16: полоса наказаний — ПОСРЕДИНЕ окна репорта (быстрые ответы
+        -- прижаты к его левому краю, а эта центрируется).
+        local x = repX + math.floor((repW - W) / 2)
+        x = math.max(10, math.min(math.max(10, resX - W - 10), x))
+
+        pcall(im.SetNextWindowPos, im.ImVec2(x, y), ctx.always or 2)
+        pcall(im.SetNextWindowSize, im.ImVec2(W, H), ctx.always or 2)
+        if P.pickFocus and im.SetNextWindowFocus then pcall(im.SetNextWindowFocus) end
+
+        local flags = ctx.wf("NoTitleBar", "NoResize", "NoMove", "NoScrollbar",
+            "NoCollapse", "NoScrollWithMouse", "NoSavedSettings")
+        local nStyle, nCol = 0, 0
+        if ctx.pushVarF and im.StyleVar and im.StyleVar.WindowRounding then
+            if ctx.pushVarF(im.StyleVar.WindowRounding, 12) then nStyle = nStyle + 1 end
+        end
+        if ctx.pushVarV2 and im.StyleVar and im.StyleVar.WindowPadding then
+            if ctx.pushVarV2(im.StyleVar.WindowPadding, 0, 0) then nStyle = nStyle + 1 end
+        end
+        if ctx.pushCol and im.Col then
+            if im.Col.WindowBg and ctx.pushCol(im.Col.WindowBg, ctx.rgba(0, 0, 0, 0)) then nCol = nCol + 1 end
+            if im.Col.Border and ctx.pushCol(im.Col.Border, ctx.rgba(0, 0, 0, 0)) then nCol = nCol + 1 end
+        end
+
+        local drawn = false
+        if ctx.begin("##grnd_qr_pun_picker", flags) then
+            drawn = true
+            P.pickFocus = false
+            local pos = im.GetWindowPos()
+            local dl = im.GetWindowDrawList()
+            local function at(dx, dy) return im.ImVec2(pos.x + dx, pos.y + dy) end
+            local function box(bx, by, bw, bh, col, r)
+                ctx.roundRect(dl, at(bx, by), at(bx + bw, by + bh), col, r or 0)
+            end
+            local function frame(bx, by, bw, bh, col, r)
+                if dl.AddRect then
+                    pcall(dl.AddRect, dl, at(bx + 0.5, by + 0.5),
+                        at(bx + bw - 0.5, by + bh - 0.5), col, r or 0, 0, 1)
+                end
+            end
+            local function text(tx, ty, str, col, sc)
+                ctx.uiText(tx, ty, str, col, sc)
+            end
+
+            -- карточка: тень, фон, рамка (акцентной полоски сверху нет — v1.19.09)
+            box(4, 5, W - 4, H - 5, ctx.col32(0, 0, 0, 90), 12)
+            box(0, 0, W, H, ctx.col32(12, 13, 19, 250), 12)
+            frame(0, 0, W, H, ctx.col32(255, 255, 255, 30), 12)
+
+            local mx, my = mouse(im)
+            local maxScroll = math.max(0, rowsH - viewH)
+            P.pickScroll = scrollWheel(im, mx, my, x + PICK_PADX, y + PICK_PADY,
+                W - PICK_PADX * 2, viewH, tonumber(P.pickScroll) or 0, maxScroll, 42)
+            local scroll = math.max(0, math.min(maxScroll, tonumber(P.pickScroll) or 0))
+
+            local clip = false
+            if dl.PushClipRect then
+                clip = pcall(dl.PushClipRect, dl, at(PICK_PADX - 4, PICK_PADY - 3),
+                    at(W - PICK_PADX + 4, PICK_PADY + viewH + 3), true)
+            end
+
+            local hoverIt, chooseIt = nil, nil
+            local firstRow = math.max(1, math.floor(scroll / rowH))
+            for r = firstRow, #rows do
+                local ry = PICK_PADY + (r - 1) * rowH - scroll
+                if ry >= PICK_PADY + viewH then break end
+                local bx = PICK_PADX
+                for i = 1, #rows[r] do
+                    local cell = rows[r][i]
+                    local top = math.max(ry, PICK_PADY)
+                    local bottom = math.min(ry + PICK_BH, PICK_PADY + viewH)
+                    if bottom - top > 8 then
+                        im.SetCursorPos(im.ImVec2(bx, top))
+                        local clicked = im.InvisibleButton("##grnd_qr_pun_q_" .. tostring(cell.it.id),
+                            im.ImVec2(cell.w, bottom - top)) and true or false
+                        local hov = (im.IsItemHovered and im.IsItemHovered()) or false
+                        local act = (im.IsItemActive and im.IsItemActive()) or false
+                        local bg = act and ctx.col32(acC[1], acC[2], acC[3], 62)
+                            or (hov and ctx.col32(acC[1], acC[2], acC[3], 38)
+                                or ctx.col32(255, 255, 255, 24))
+                        local bd = (hov or act) and ctx.col32(acC[1], acC[2], acC[3], 155)
+                            or ctx.col32(255, 255, 255, 46)
+                        box(bx, ry, cell.w, PICK_BH, bg, 7)
+                        frame(bx, ry, cell.w, PICK_BH, bd, 7)
+                        if hov or act then
+                            box(bx, ry + 5, 2, PICK_BH - 10, ctx.col32(acC[1], acC[2], acC[3], 255), 1)
+                        end
+                        local shown, lw = fitW(cell.label, cell.w - 18, ctx.drawnW, 0.94)
+                        if not lw or lw <= 0 then lw = utf8Len(shown) * 7 * 0.94 end
+                        text(bx + math.max(7, (cell.w - lw) / 2),
+                            ry + (PICK_BH - lineH(ctx, 0.94)) / 2, shown,
+                            ctx.col32(250, 248, 255, 255), 0.94)
+                        if hov then hoverIt = cell.it end
+                        if clicked then chooseIt = cell.it end
+                    end
+                    bx = bx + cell.w + PICK_GAP
+                end
+            end
+            if clip and dl.PopClipRect then pcall(dl.PopClipRect, dl) end
+
+            if maxScroll > 0.5 then
+                box(W - 6, PICK_PADY, 3, viewH, ctx.col32(255, 255, 255, 18), 2)
+                local barH = math.max(16, viewH * (viewH / rowsH))
+                local barY = PICK_PADY + (scroll / maxScroll) * (viewH - barH)
+                box(W - 6, barY, 3, barH, ctx.col32(acC[1], acC[2], acC[3], 200), 2)
+            end
+
+            -- под кнопками строк нет (как у быстрых ответов): готовая команда
+            -- показывается всплывающей подсказкой — её и проверяем в /n
+            if hoverIt and type(im.SetTooltip) == "function" then
+                local line = QR.punCommand(hoverIt, QR.repInfo())
+                local body = oneLine(hoverIt.text or "")
+                if body ~= "" then line = line .. " · " .. utf8Cut(body, 40) end
+                pcall(im.SetTooltip, line)
+            end
+
+            if chooseIt then QR.punChoose(chooseIt) end
+        end
+
+        if ctx.popCol and nCol > 0 then ctx.popCol(nCol) end
+        if ctx.popVar and nStyle > 0 then ctx.popVar(nStyle) end
+        return drawn
+    end
+
+    _G.grndQrPunPickerDraw = function(ctx)
+        local ok, res = pcall(punPickerDraw, ctx)
+        if ok then return res end
+        QR.punDrawErr = tostring(res)
+        print("{FF6666}[GRND]{FFFFFF} шаблоны наказаний: " .. tostring(res))
+        return false
+    end
 end
 
 -- =====================================================================
@@ -25742,6 +26303,463 @@ _G.grndQrSettingsDraw = function(ctx)
     return false
 end
 
+-- =====================================================================
+--  НАСТРОЙКА НАКАЗАНИЙ (v1.19.16): список слева, редактор справа
+--  Редактор — как у шаблонов ответа, только «Ответ на репорт» ниже, есть
+--  селектор команды наказания с выпадающим списком и, по команде, поля
+--  «Время» и «Причина». Локальные имена — в do-блоке (лимит 200 локальных).
+-- =====================================================================
+do
+    local PUN_TEXT_H = 68      -- «Ответ на репорт» — намеренно ниже, чем в ответах
+    local PUN_ROW_H = 28       -- строка выпадающего списка команд
+    local PUN_SEL_H = 28       -- высота селектора команды
+
+    -- Пере-заполнение буферов формы при смене шаблона (аналог formSync).
+    local function punFormSync()
+        local P = QR.pun
+        local it = (not P.isNew) and P.selId and QR.punById(P.selId) or nil
+        local key = P.isNew and "new" or (it and ("id:" .. tostring(it.id)) or "none")
+        if P.formKey ~= key then
+            P.formKey = key
+            bufReload("punName")
+            bufReload("punText")
+            bufReload("punTime")
+            bufReload("punReason")
+        end
+        return it
+    end
+
+    -- Закрыть выпадающий список, если кликнули вне него (в игре есть «сырой»
+    -- клик и позиция мыши; в стендах этих глобальных нет — тогда не закрываем).
+    local function punOutsideClick(ddX, ddY, ddW, ddH, selY, selH)
+        local alive = _G and _G.grndClickAlive
+        if type(alive) ~= "function" then return false end
+        local ok, hit = pcall(alive)
+        if not (ok and hit) then return false end
+        local M = _G and _G.GRND_MOUSE
+        if type(M) ~= "table" then return false end
+        local mx, my = tonumber(M.x) or -1, tonumber(M.y) or -1
+        if mx >= ddX and mx <= ddX + ddW and my >= ddY and my <= ddY + ddH then return false end
+        if mx >= ddX and mx <= ddX + ddW and my >= selY and my <= selY + selH then return false end
+        return true
+    end
+
+    -- Список наказаний (левая колонка) — как список шаблонов ответа.
+    local function punListDraw(ctx, x, y, w, h)
+        local TH = theme()
+        local im = ctx.im
+        local P = QR.pun
+        ctx.roundRect(ctx.dl, ctx.at(x, y), ctx.at(x + w, y + h), ctx.col32(255, 255, 255, 10), 10)
+        if ctx.dl.AddRect then
+            pcall(ctx.dl.AddRect, ctx.dl, ctx.at(x + 0.5, y + 0.5), ctx.at(x + w - 0.5, y + h - 0.5),
+                ctx.col32(255, 255, 255, 22), 10, 0, 1)
+        end
+        local headH = 32
+        ctx.uiText(x + 12, y + 9, "Список наказаний",
+            ctx.col32(TH.textHi[1], TH.textHi[2], TH.textHi[3], 255), 0.9)
+        local q = trim(lower(P.filter))
+        local list = {}
+        for i = 1, #P.items do
+            local it = P.items[i]
+            local hay = lower(tostring(it.name or "") .. " " .. tostring(it.cmd or "") .. " "
+                .. tostring(it.reason or "") .. " " .. tostring(it.text or ""))
+            if q == "" or hay:find(q, 1, true) then list[#list + 1] = it end
+        end
+        local cnt = tostring(#list)
+        if q ~= "" then cnt = cnt .. " / " .. tostring(QR.punCount()) end
+        local cw = 30
+        if type(ctx.drawnW) == "function" then
+            local ok, v = pcall(ctx.drawnW, cnt, 0.82)
+            if ok and type(v) == "number" then cw = v end
+        end
+        ctx.roundRect(ctx.dl, ctx.at(x + w - 14 - cw - 8, y + 8), ctx.at(x + w - 14, y + 26),
+            ctx.col32(TH.accent[1], TH.accent[2], TH.accent[3], 34), 9)
+        ctx.uiText(x + w - 14 - cw - 4, y + 10, cnt,
+            ctx.col32(TH.accent[1], TH.accent[2], TH.accent[3], 255), 0.82)
+
+        local listY = y + headH
+        local listH = h - headH - 6
+        if listH < 40 then return end
+        local rowH = 48
+        local maxScroll = math.max(0, #list * rowH - listH)
+        local mx, my = mouse(im)
+        local wp = im.GetWindowPos()
+        if wp and wp.x then
+            P.listScroll = scrollWheel(im, mx, my, wp.x + x + 2, wp.y + listY, w - 4, listH,
+                tonumber(P.listScroll) or 0, maxScroll, 42)
+        end
+        P.listScroll = math.max(0, math.min(maxScroll, tonumber(P.listScroll) or 0))
+        local clip = false
+        if ctx.dl.PushClipRect then
+            clip = pcall(ctx.dl.PushClipRect, ctx.dl, ctx.at(x + 2, listY), ctx.at(x + w - 2, listY + listH), true)
+        end
+        if #list == 0 then
+            ctx.uiText(x + 14, listY + 10,
+                (QR.punCount() == 0) and "Пока пусто — нажмите «+ Новый шаблон»" or "Ничего не найдено",
+                ctx.col32(TH.textDim[1], TH.textDim[2], TH.textDim[3], 255), 0.86)
+        end
+        local ac = TH.accent or { 164, 112, 224, 255 }
+        for i = 1, #list do
+            local it = list[i]
+            local iy = listY + (i - 1) * rowH - (P.listScroll or 0)
+            local fully = (iy >= listY + 1) and (iy + rowH - 4 <= listY + listH)
+            if iy + rowH >= listY and iy <= listY + listH then
+                local sel = (P.selId == it.id)
+                -- клик — только по видимой части строки
+                local wy = math.max(iy + 2, listY + 1)
+                local wh = math.min(iy + rowH - 4, listY + listH - 1) - wy
+                local clicked = false
+                if wh > 6 then
+                    im.SetCursorPos(im.ImVec2(x + 6, wy))
+                    clicked = im.InvisibleButton("##grnd_qr_pun_row_" .. tostring(it.id),
+                        im.ImVec2(w - 70, wh)) and true or false
+                end
+                local hov = (im.IsItemHovered and im.IsItemHovered()) or false
+                ctx.roundRect(ctx.dl, ctx.at(x + 6, iy + 2), ctx.at(x + w - 6, iy + rowH - 4),
+                    sel and ctx.col32(ac[1], ac[2], ac[3], 32)
+                        or (hov and ctx.col32(255, 255, 255, 13) or ctx.col32(255, 255, 255, 5)), 8)
+                if sel then
+                    ctx.roundRect(ctx.dl, ctx.at(x + 6, iy + 9), ctx.at(x + 9, iy + rowH - 11),
+                        ctx.col32(ac[1], ac[2], ac[3], 255), 2)
+                end
+                local tW = w - 12 - 52 - 18
+                ctx.uiText(x + 18, iy + 7, fit(it.name or "", tW, ctx.drawnW, 0.94),
+                    ctx.col32(TH.textHi[1], TH.textHi[2], TH.textHi[3], 255), 0.94)
+                ctx.uiText(x + 18, iy + 25, fit(QR.punPreview(it), tW, ctx.drawnW, 0.78),
+                    ctx.col32(TH.textMuted[1], TH.textMuted[2], TH.textMuted[3], 255), 0.78)
+                if clicked then
+                    P.selId, P.isNew, P.delArm = it.id, false, nil
+                    P.comboOpen = false
+                end
+                -- порядок задаётся стрелками (фигурами: ▲▼ в шрифте может не быть)
+                local bx = x + w - 12 - 48
+                local by = iy + math.floor((rowH - 6 - 24) / 2) + 3
+                if fully and button(ctx, "##grnd_qr_pun_up_" .. tostring(it.id), bx, by, 22, 24, "",
+                    { muted = true, tri = "up" }) then
+                    QR.punMove(it.id, -1)
+                    pcall(QR.punSave)
+                elseif not fully then
+                    tri(ctx.dl, ctx.at, bx + 11, iy + 20, 4, "up", ctx.col32(255, 255, 255, 60))
+                end
+                if fully and button(ctx, "##grnd_qr_pun_dn_" .. tostring(it.id), bx + 26, by, 22, 24, "",
+                    { muted = true, tri = "down" }) then
+                    QR.punMove(it.id, 1)
+                    pcall(QR.punSave)
+                elseif not fully then
+                    tri(ctx.dl, ctx.at, bx + 37, iy + 20, 4, "down", ctx.col32(255, 255, 255, 60))
+                end
+            end
+        end
+        if clip and ctx.dl.PopClipRect then pcall(ctx.dl.PopClipRect, ctx.dl) end
+        if maxScroll > 0.5 then
+            local trackX = x + w - 5
+            ctx.roundRect(ctx.dl, ctx.at(trackX, listY), ctx.at(trackX + 3, listY + listH),
+                ctx.col32(255, 255, 255, 18), 2)
+            local barH = math.max(18, listH * (listH / (#list * rowH)))
+            local barY = listY + ((P.listScroll or 0) / maxScroll) * (listH - barH)
+            ctx.roundRect(ctx.dl, ctx.at(trackX, barY), ctx.at(trackX + 3, barY + barH),
+                ctx.col32(ac[1], ac[2], ac[3], 200), 2)
+        end
+    end
+
+    -- Редактор наказания (правая колонка).
+    local function punEditorDraw(ctx, x, y, w, h)
+        local TH = theme()
+        local im = ctx.im
+        local P = QR.pun
+        local it = punFormSync()
+        ctx.roundRect(ctx.dl, ctx.at(x, y), ctx.at(x + w, y + h), ctx.col32(255, 255, 255, 10), 10)
+        if ctx.dl.AddRect then
+            pcall(ctx.dl.AddRect, ctx.dl, ctx.at(x + 0.5, y + 0.5), ctx.at(x + w - 0.5, y + h - 0.5),
+                ctx.col32(255, 255, 255, 22), 10, 0, 1)
+        end
+        local title = P.isNew and "Новое наказание" or "Редактор наказания"
+        ctx.uiText(x + 12, y + 9, title, ctx.col32(TH.textHi[1], TH.textHi[2], TH.textHi[3], 255), 0.9)
+        local dim = ctx.col32(TH.textDim[1], TH.textDim[2], TH.textDim[3], 255)
+        local muted = ctx.col32(TH.textMuted[1], TH.textMuted[2], TH.textMuted[3], 255)
+        if not it and not P.isNew then
+            ctx.uiText(x + 12, y + 38, "Выберите наказание слева", muted, 0.92)
+            ctx.uiText(x + 12, y + 58, "или нажмите «+ Новый шаблон».", muted, 0.92)
+            ctx.uiText(x + 12, y + 92, "Кнопка «Наказание» в окне репорта", dim, 0.82)
+            ctx.uiText(x + 12, y + 108, "откроет этот список по центру окна,", dim, 0.82)
+            ctx.uiText(x + 12, y + 124, "клик по шаблону отправит наказание.", dim, 0.82)
+            return
+        end
+        local pad = 12
+        local ix, iw = x + pad, w - pad * 2
+        local btnH, footH = 32, 12
+        local by = y + h - btnH - 6          -- ряд кнопок (нужен и выпадающему списку)
+        local yy = y + 32
+        ctx.uiText(ix, yy, "Название", dim, 0.82)
+        yy = yy + 17
+        field(ctx, "##grnd_qr_pun_name", "punName", 64,
+            ix, yy, iw, 28, "Например: Мут 60 минут", false, it and it.name or "")
+        yy = yy + 36
+        ctx.uiText(ix, yy, "Ответ на репорт", dim, 0.82)
+        yy = yy + 17
+        field(ctx, "##grnd_qr_pun_text", "punText", 2048,
+            ix, yy, iw, PUN_TEXT_H, "Текст, который уйдёт игроку…", true, it and it.text or "")
+        yy = yy + PUN_TEXT_H + 10
+
+        -- ---------- селектор команды наказания ----------
+        local cmdBuf = bufGet(im, "punCmd", 16)
+        if not cmdBuf then
+            ctx.uiText(ix, yy, "Команда наказания: поле недоступно", dim, 0.85)
+            return
+        end
+        -- при смене шаблона подставляем его команду в буфер селектора
+        if P.cmdSync ~= P.formKey then
+            P.cmdSync = P.formKey
+            bufWrite("punCmd", it and it.cmd or "")
+        end
+        local curCmd = trim(bufText("punCmd")):lower()
+        local def = QR.punDef(curCmd)
+        ctx.uiText(ix, yy, "Команда наказания", dim, 0.82)
+        yy = yy + 17
+        local selY = yy
+        local ac = TH.accent or { 164, 112, 224, 255 }
+        im.SetCursorPos(im.ImVec2(ix, selY))
+        local selClicked = im.InvisibleButton("##grnd_qr_pun_cmd", im.ImVec2(iw, PUN_SEL_H)) and true or false
+        local selHov = (im.IsItemHovered and im.IsItemHovered()) or false
+        ctx.roundRect(ctx.dl, ctx.at(ix, selY), ctx.at(ix + iw, selY + PUN_SEL_H),
+            (selHov or P.comboOpen) and ctx.col32(255, 255, 255, 26) or ctx.col32(255, 255, 255, 12), 6)
+        if ctx.dl.AddRect then
+            pcall(ctx.dl.AddRect, ctx.dl, ctx.at(ix + 0.5, selY + 0.5), ctx.at(ix + iw - 0.5, selY + PUN_SEL_H - 0.5),
+                (selHov or P.comboOpen) and ctx.col32(ac[1], ac[2], ac[3], 150)
+                    or ctx.col32(255, 255, 255, 46), 6, 0, 1)
+        end
+        local curLabel = def and ("/" .. def.id) or "Выберите команду"
+        ctx.uiText(ix + 10, selY + (PUN_SEL_H - lineH(ctx, 0.9)) / 2, curLabel,
+            def and ctx.col32(240, 236, 250, 255) or muted, 0.9)
+        tri(ctx.dl, ctx.at, ix + iw - 14, selY + PUN_SEL_H / 2, 4, "down",
+            (selHov or P.comboOpen) and ctx.col32(ac[1], ac[2], ac[3], 235) or muted)
+        if selClicked and QR.punCmds then
+            P.comboOpen = not P.comboOpen
+            P.comboScroll = 0
+        end
+
+        if P.comboOpen and QR.punCmds then
+            -- Выпадающий список рисуем ВМЕСТО полей «Время» и «Причина» (они и
+            -- оказались бы под ним): так нет наложения виджетов и клики
+            -- всегда попадают туда, куда нацелены.
+            local ddX, ddY, ddW = ix, selY + PUN_SEL_H + 4, iw
+            local ddAvail = math.max(PUN_ROW_H, (by - 8) - ddY)
+            local step = PUN_ROW_H + 2
+            local maxRows = math.max(1, math.floor((ddAvail - 8) / step))
+            local rowsN = math.min(#QR.punCmds, maxRows)
+            local viewH = rowsN * step - 2
+            local maxScroll = math.max(0, #QR.punCmds * step - 2 - viewH)
+            local mx2, my2 = mouse(im)
+            local winPos = im.GetWindowPos()
+            local scx, scy = (winPos and winPos.x or 0) + ddX, (winPos and winPos.y or 0) + ddY
+            P.comboScroll = scrollWheel(im, mx2, my2, scx, scy, ddW, viewH,
+                tonumber(P.comboScroll) or 0, maxScroll, step)
+            local scroll = math.max(0, math.min(maxScroll, tonumber(P.comboScroll) or 0))
+            ctx.roundRect(ctx.dl, ctx.at(ddX - 2, ddY - 2), ctx.at(ddX + ddW + 2, ddY + viewH + 2),
+                ctx.col32(16, 17, 24, 252), 8)
+            if ctx.dl.AddRect then
+                pcall(ctx.dl.AddRect, ctx.dl, ctx.at(ddX - 1.5, ddY - 1.5), ctx.at(ddX + ddW + 1.5, ddY + viewH + 1.5),
+                    ctx.col32(255, 255, 255, 34), 8, 0, 1)
+            end
+            local clipDD = false
+            if ctx.dl.PushClipRect then
+                clipDD = pcall(ctx.dl.PushClipRect, ctx.dl, ctx.at(ddX, ddY), ctx.at(ddX + ddW, ddY + viewH), true)
+            end
+            local firstRow = math.max(1, math.floor(scroll / step) + 1)
+            for i = firstRow, #QR.punCmds do
+                local d = QR.punCmds[i]
+                local ry = ddY + (i - 1) * step - scroll
+                if ry >= ddY + viewH then break end
+                local top = math.max(ry, ddY)
+                local bottom = math.min(ry + PUN_ROW_H, ddY + viewH)
+                if bottom - top > 6 then
+                    im.SetCursorPos(im.ImVec2(ddX, top))
+                    local clicked = im.InvisibleButton("##grnd_qr_pun_cmd_" .. d.id,
+                        im.ImVec2(ddW, bottom - top)) and true or false
+                    local hov = (im.IsItemHovered and im.IsItemHovered()) or false
+                    local sel = (d.id == curCmd)
+                    ctx.roundRect(ctx.dl, ctx.at(ddX, ry), ctx.at(ddX + ddW, ry + PUN_ROW_H),
+                        sel and ctx.col32(ac[1], ac[2], ac[3], 46)
+                            or (hov and ctx.col32(255, 255, 255, 20) or ctx.col32(255, 255, 255, 0)), 6)
+                    if sel then
+                        ctx.roundRect(ctx.dl, ctx.at(ddX + 4, ry + 7), ctx.at(ddX + 7, ry + PUN_ROW_H - 7),
+                            ctx.col32(ac[1], ac[2], ac[3], 255), 2)
+                    end
+                    ctx.uiText(ddX + 14, ry + (PUN_ROW_H - lineH(ctx, 0.9)) / 2, "/" .. d.id,
+                        sel and ctx.col32(250, 248, 255, 255)
+                            or (hov and ctx.col32(240, 236, 250, 255) or ctx.col32(206, 200, 226, 255)), 0.9)
+                    -- подсказка про поля этой команды — справа в строке
+                    local hint = d.time and (d.unit or "") or "без срока"
+                    if d.reason and d.time then hint = hint .. " · причина"
+                    elseif d.reason then hint = "причина" end
+                    local hw = 0
+                    if type(ctx.drawnW) == "function" then
+                        local ok, v = pcall(ctx.drawnW, hint, 0.78)
+                        if ok and type(v) == "number" then hw = v end
+                    end
+                    ctx.uiText(ddX + ddW - 12 - hw, ry + (PUN_ROW_H - lineH(ctx, 0.78)) / 2, hint,
+                        ctx.col32(150, 145, 172, 255), 0.78)
+                    if clicked then
+                        bufWrite("punCmd", d.id)
+                        P.comboOpen = false
+                    end
+                end
+            end
+            if clipDD and ctx.dl.PopClipRect then pcall(ctx.dl.PopClipRect, ctx.dl) end
+            if maxScroll > 0.5 then
+                ctx.roundRect(ctx.dl, ctx.at(ddX + ddW - 4, ddY + 2), ctx.at(ddX + ddW - 2, ddY + viewH - 2),
+                    ctx.col32(255, 255, 255, 18), 2)
+                local barH = math.max(14, (viewH - 4) * viewH / (#QR.punCmds * step - 2))
+                local barY = ddY + 2 + (scroll / maxScroll) * (viewH - 4 - barH)
+                ctx.roundRect(ctx.dl, ctx.at(ddX + ddW - 4, barY), ctx.at(ddX + ddW - 2, barY + barH),
+                    ctx.col32(ac[1], ac[2], ac[3], 200), 2)
+            end
+            -- клик мимо списка — просто закрываем его
+            local winP = im.GetWindowPos()
+            if punOutsideClick((winP and winP.x or 0) + ddX, (winP and winP.y or 0) + ddY, ddW, viewH,
+                    (winP and winP.x or 0) + ix, (winP and winP.y or 0) + selY, PUN_SEL_H) then
+                P.comboOpen = false
+            end
+        else
+            -- поля, зависящие от команды: «Время» и «Причина»
+            yy = selY + PUN_SEL_H + 8
+            if def and def.time then
+                ctx.uiText(ix, yy, "Время, " .. tostring(def.unit or ""), dim, 0.82)
+                yy = yy + 17
+                field(ctx, "##grnd_qr_pun_time", "punTime", 16,
+                    ix, yy, math.min(160, iw), 28, "Только число", false, it and it.time or "")
+                yy = yy + 36
+            end
+            if def and def.reason then
+                ctx.uiText(ix, yy, "Причина", dim, 0.82)
+                yy = yy + 17
+                field(ctx, "##grnd_qr_pun_reason", "punReason", 256,
+                    ix, yy, iw, 28, "Например: флуд в чате", false, it and it.reason or "")
+                yy = yy + 36
+            end
+        end
+
+        -- ---------- кнопки ----------
+        local bw1 = math.min(146, math.floor(iw * 0.4))
+        if button(ctx, "##grnd_qr_pun_save", ix, by, bw1, btnH, "Сохранить", { primary = true }) then
+            local name = trim(bufText("punName"))
+            local text = cleanText(bufText("punText"))
+            local cmd = trim(bufText("punCmd")):lower()
+            local tdef = QR.punDef(cmd)
+            local time = (trim(bufText("punTime")):gsub("%D", ""))
+            local reason = oneLine(bufText("punReason"))
+            if not tdef then
+                QR.toast("Выберите команду наказания", "warn", 2.8)
+            elseif tdef.time and time == "" then
+                QR.toast("Введите время наказания (только число)", "warn", 2.8)
+            elseif tdef.reason and reason == "" then
+                QR.toast("Введите причину наказания", "warn", 2.8)
+            else
+                if P.isNew then
+                    local created = QR.punAdd(name, text, cmd, time, reason)
+                    P.isNew = false
+                    P.selId = created and created.id or nil
+                else
+                    QR.punUpdate(P.selId, name, text, cmd, time, reason)
+                end
+                P.formKey, P.cmdSync = nil, nil
+                punFormSync()
+                bufReload("punName")
+                bufReload("punText")
+                bufReload("punTime")
+                bufReload("punReason")
+                pcall(QR.punSave)
+                QR.toast("Наказание сохранено", "ok", 2.2)
+            end
+        end
+        local bx = ix + bw1 + 8
+        local bw2 = math.min(112, math.floor(iw * 0.28))
+        if button(ctx, "##grnd_qr_pun_cancel", bx, by, bw2, btnH, "Отмена", {}) then
+            P.isNew, P.delArm, P.formKey, P.cmdSync = false, nil, nil, nil
+            P.comboOpen = false
+            punFormSync()
+            QR.toast("Изменения отменены", "ok", 2.0)
+        end
+        if not P.isNew and it then
+            local bx2 = bx + bw2 + 8
+            local bw3 = iw - (bx2 - ix)
+            if bw3 >= 90 then
+                local label = (P.delArm == it.id) and "Точно удалить?" or "Удалить"
+                if button(ctx, "##grnd_qr_pun_remove", bx2, by, bw3, btnH, label, { danger = true }) then
+                    if P.delArm == it.id then
+                        QR.punRemove(it.id)
+                        P.delArm, P.formKey, P.cmdSync = nil, nil, nil
+                        punFormSync()
+                        pcall(QR.punSave)
+                        QR.toast("Наказание удалено", "ok", 2.2)
+                    else
+                        P.delArm = it.id
+                    end
+                end
+            end
+        end
+    end
+
+    local function punSettingsDraw(ctx)
+        if type(ctx) ~= "table" then return false end
+        local im = ctx.im
+        if not (im and ctx.uiText and ctx.roundRect and ctx.col32 and ctx.rgba and ctx.at) then
+            return false
+        end
+        local TH = theme()
+        QR.punEnsure()
+        local P = QR.pun
+        local x, y, w, h = ctx.x, ctx.y, ctx.w, ctx.h
+        if not (x and y and w and h) or w < 240 or h < 140 then return false end
+
+        -- шапка: заголовок, счётчик, поиск, «Новый шаблон»
+        ctx.uiText(x, y + 1, "Шаблоны наказаний",
+            ctx.col32(TH.textHi[1], TH.textHi[2], TH.textHi[3], 255), 1.0)
+        local tw = 220
+        if type(ctx.drawnW) == "function" then
+            local ok, v = pcall(ctx.drawnW, "Шаблоны наказаний", 1.0)
+            if ok and type(v) == "number" then tw = v end
+        end
+        chip(ctx, x + tw + 10, y - 2, "шаблонов: " .. tostring(QR.punCount()))
+
+        local newW = 148
+        local searchW = math.min(190, math.max(118, math.floor(w * 0.24)))
+        local searchX = x + w - newW - searchW - 10
+        if searchX > x + tw + 110 then
+            field(ctx, "##grnd_qr_pun_search", "punSearch", 64,
+                searchX, y - 3, searchW, 28, "Поиск…", false, P.filter)
+            P.filter = bufText("punSearch")
+        end
+        if button(ctx, "##grnd_qr_pun_new", x + w - newW, y - 4, newW, 30, "+ Новый шаблон",
+            { primary = P.isNew }) then
+            P.isNew, P.selId, P.delArm = true, nil, nil
+            P.formKey, P.cmdSync, P.comboOpen = nil, nil, false
+            punFormSync()
+            QR.toast("Выберите команду наказания и заполните поля", "ok", 2.6)
+        end
+
+        -- список + редактор (пропорции — как в шаблонах ответов)
+        local yy = y + 34
+        local gap = 14
+        local listW = math.floor((w - gap) * 0.36)
+        if listW < 200 then listW = 200 end
+        if listW > 300 then listW = 300 end
+        local contentH = (y + h) - yy
+        if contentH < 120 then contentH = 120 end
+        punListDraw(ctx, x, yy, listW, contentH)
+        punEditorDraw(ctx, x + listW + gap, yy, w - listW - gap, contentH)
+        return true
+    end
+
+    _G.grndQrPunishDraw = function(ctx)
+        local ok, res = pcall(punSettingsDraw, ctx)
+        if ok then return res end
+        QR.punDrawErr = tostring(res)
+        print("{FF6666}[GRND]{FFFFFF} шаблоны наказаний: " .. tostring(res))
+        return false
+    end
+end
+
 -- ---------- самопроверка логики (без файлов и ImGui) ----------
 function QR.selfTest()
     local fails = {}
@@ -25780,7 +26798,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.15"
+        local sv = "1.19.16"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -32117,8 +33135,33 @@ function grndMainBody()
                             end
                             local rt = menu.reportTab
                             if rt == "punish" then
-                                soonCard("Наказания",
-                                    "Здесь будут шаблоны наказаний и готовые причины для формы.")
+                                -- v1.19.16: шаблоны наказаний — та же настройка,
+                                -- что у ответов (список слева, редактор справа),
+                                -- плюс селектор команды и поля «Время»/«Причина»
+                                if type(_G.grndQrPunishDraw) == "function" then
+                                    local okPn = pcall(_G.grndQrPunishDraw, {
+                                        im = im, dl = dl, at = at,
+                                        x = cardX + 20, y = secY,
+                                        w = cardW - 40,
+                                        h = (cardY + cardH) - secY - 14,
+                                        uiText = uiText, roundRect = roundRect,
+                                        col32 = col32, c4 = c4, rgba = rgba,
+                                        gradRect = gradRect, tsize = tsize,
+                                        drawnW = drawnWb, menuToggle = menuToggle,
+                                        pushCol = grndPushCol, popCol = grndPopCol,
+                                        pushVarF = grndPushStyleF,
+                                        pushVarV2 = grndPushStyleV2,
+                                        popVar = grndPopStyle,
+                                    })
+                                    if not okPn then
+                                        uiText(cardX + 20, secY + 6,
+                                            "Наказания: ошибка отрисовки раздела",
+                                            c4({ 255, 120, 120, 255 }), 0.95)
+                                    end
+                                else
+                                    uiText(cardX + 20, secY + 6,
+                                        "Модуль наказаний не загружен", c4(TH.textDim), 0.95)
+                                end
                             else
                                 soonCard("Автопилот",
                                     "Здесь будут авто-действия: ответы шаблоном, передача в /a, отчёты.")
@@ -33902,6 +34945,16 @@ function grndMainBody()
                                     pcall(_G.GRND_QR.openPicker)
                                 end
                             end
+                        elseif i == 2 then
+                            -- v1.19.16: «Наказание» — такая же полоса, как
+                            -- «Быстрые ответы», только по центру окна репорта
+                            if type(_G.GRND_QR) == "table" then
+                                if type(_G.GRND_QR.togglePunPicker) == "function" then
+                                    pcall(_G.GRND_QR.togglePunPicker)
+                                elseif type(_G.GRND_QR.openPunPicker) == "function" then
+                                    pcall(_G.GRND_QR.openPunPicker)
+                                end
+                            end
                         elseif i == 3 then
                             local qtxt = tostring(GRND_REP.question or "")
                             qtxt = qtxt:gsub("^%s+", ""):gsub("%s+$", "")
@@ -33931,7 +34984,11 @@ function grndMainBody()
             if pendingClose then
                 GRND_REP.open = false
                 GRND_REP.focused = false
-                if type(_G.GRND_QR) == "table" then _G.GRND_QR.pickOpen = false end
+                if type(_G.GRND_QR) == "table" then
+                    _G.GRND_QR.pickOpen = false
+                    local P = _G.GRND_QR.pun
+                    if type(P) == "table" then P.pickOpen = false end
+                end
             end
             return wantCursor
         end
@@ -36976,7 +38033,10 @@ function grndMainBody()
                     GRND_GATE.suppressed = (GRND_GATE.suppressed or 0) + 1
                     -- окно репорта не могло быть настоящим (мы ещё не в игре)
                     if _G.GRND_REP then _G.GRND_REP.open = false end
-                    if _G.GRND_QR then _G.GRND_QR.pickOpen = false end
+                    if _G.GRND_QR then
+                        _G.GRND_QR.pickOpen = false
+                        if type(_G.GRND_QR.pun) == "table" then _G.GRND_QR.pun.pickOpen = false end
+                    end
                 end
             end
             local wantCursor = false
@@ -37045,16 +38105,23 @@ function grndMainBody()
             -- v1.19.01: окно шаблонов («Быстрые ответы») рисуется поверх всего;
             -- сам модуль живёт вне grndMainBody и получает помощники через ctx.
             if not gated and type(_G.grndQrPickerDraw) == "function" then
-                local ok, e = pcall(_G.grndQrPickerDraw, {
+                local qrCtx = {
                     im = im, always = COND_ALWAYS, wf = wf, begin = grndBegin,
                     uiText = uiText, roundRect = roundRect, col32 = col32,
                     rgba = rgba, c4 = c4, gradRect = gradRect, drawnW = drawnWb,
                     pushCol = grndPushCol, popCol = grndPopCol,
                     pushVarF = grndPushStyleF, pushVarV2 = grndPushStyleV2,
                     popVar = grndPopStyle,
-                })
+                }
+                local ok, e = pcall(_G.grndQrPickerDraw, qrCtx)
                 if not ok then logRenderErr("quick_reply", e)
                 elseif e then wantCursor = true end
+                -- v1.19.16: полоса шаблонов наказаний (по центру окна репорта)
+                if type(_G.grndQrPunPickerDraw) == "function" then
+                    local okP, eP = pcall(_G.grndQrPunPickerDraw, qrCtx)
+                    if not okP then logRenderErr("punish_reply", eP)
+                    elseif eP then wantCursor = true end
+                end
             end
             if _G.GRND_FORMS and _G.GRND_FORMS.active then
                 local ok, e = pcall(drawFormPopup)
