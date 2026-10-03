@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.13"
+GRND_SCRIPT_VERSION = "1.19.14"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24243,7 +24243,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.13)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.14)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -25618,19 +25618,16 @@ local function settingsEditor(ctx, x, y, w, h)
     yy = yy + 36
     ctx.uiText(ix, yy, "Текст ответа", ctx.col32(TH.textDim[1], TH.textDim[2], TH.textDim[3], 255), 0.82)
     yy = yy + 17
-    local btnH, footH = 32, 40
+    local btnH, footH = 32, 12
     local textH = (y + h) - yy - btnH - footH - 10
     if textH < 56 then textH = 56 end
     field(ctx, "##grnd_qr_edit_text", "editText", 2048,
         ix, yy, iw, textH, "Текст, который уйдёт игроку…", true, it and it.text or "")
     yy = yy + textH + 5
-    ctx.uiText(ix, yy, "Переменные: {ник} · {ид} · {время} · {мой_ник}",
-        ctx.col32(TH.textDim[1], TH.textDim[2], TH.textDim[3], 255), 0.8)
-    if QR.note and (os.clock() - (QR.noteAt or 0)) < 6 then
-        local col = (QR.noteKind == "warn") and ctx.col32(255, 194, 120, 255)
-            or ctx.col32(TH.accent[1], TH.accent[2], TH.accent[3], 255)
-        ctx.uiText(ix, yy + 16, tostring(QR.note), col, 0.82)
-    end
+    -- v1.19.14: строки «Переменные: {ник} · …» и внутренней заметки-подсказки
+    -- («Нажмите «Точно удалить?»…» и пр.) внизу редактора больше нет — по
+    -- просьбе заказчика. Все сообщения уходят обычными уведомлениями (тостами),
+    -- а освободившееся место отдано полю «Текст ответа».
 
     local by = y + h - btnH - 6
     local bw1 = math.min(146, math.floor(iw * 0.4))
@@ -25638,7 +25635,7 @@ local function settingsEditor(ctx, x, y, w, h)
         local name = trim(bufText("editName"))
         local text = cleanText(bufText("editText"))
         if text == "" then
-            QR.noteShow("Введите текст ответа", "warn")
+            QR.toast("Введите текст ответа", "warn", 2.6)
         else
             if QR.isNew then
                 local created = QR.add(name, text)
@@ -25652,7 +25649,6 @@ local function settingsEditor(ctx, x, y, w, h)
             bufReload("editName")
             bufReload("editText")
             pcall(QR.save)
-            QR.noteShow("Шаблон сохранён", "ok")
             QR.toast("Шаблон сохранён", "ok", 2.2)
         end
     end
@@ -25661,7 +25657,7 @@ local function settingsEditor(ctx, x, y, w, h)
     if button(ctx, "##grnd_qr_cancel", bx, by, bw2, btnH, "Отмена", {}) then
         QR.isNew, QR.delArm, QR.formKey = false, nil, nil
         formSync()
-        QR.noteShow("Изменения отменены", "ok")
+        QR.toast("Изменения отменены", "ok", 2.0)
     end
     if not QR.isNew and it then
         local bx2 = bx + bw2 + 8
@@ -25674,10 +25670,11 @@ local function settingsEditor(ctx, x, y, w, h)
                     QR.delArm, QR.formKey = nil, nil
                     formSync()
                     pcall(QR.save)
-                    QR.noteShow("Шаблон удалён", "ok")
+                    QR.toast("Шаблон удалён", "ok", 2.2)
                 else
+                    -- v1.19.14: подтверждение спрашивает сама кнопка («Точно
+                    -- удалить?»), отдельной строки-подсказки в окне нет.
                     QR.delArm = it.id
-                    QR.noteShow("Нажмите «Точно удалить?» для удаления", "warn")
                 end
             end
         end
@@ -25718,7 +25715,7 @@ local function settingsDraw(ctx)
         QR.isNew, QR.selId, QR.delArm = true, nil, nil
         QR.formKey = nil
         formSync()
-        QR.noteShow("Заполните название и текст", "ok")
+        QR.toast("Заполните название и текст", "ok", 2.4)
     end
 
     -- (v1.19.01: строка «Отправка шаблона» убрана — режим хранится в конфиге,
@@ -25783,7 +25780,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.13"
+        local sv = "1.19.14"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end

@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.13"' in s, 'версия не 1.19.13')
+need('GRND_SCRIPT_VERSION = "1.19.14"' in s, 'версия не 1.19.14')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -116,6 +116,15 @@ need('pcall(im.SetTooltip, oneLine(hoverIt.text or ""))' in s,
 need('repW = tonumber(R.winW)' in s, 'полоса не читает ширину окна репорта')
 need('local maxW = math.min(920, math.max(240, resX - 80), repW)' in s,
      'полоса не ограничена шириной окна репорта')
+
+# v1.19.14: в редакторе шаблона нет нижних строк — «Переменные» и заметки-подсказки
+absent('Переменные: {ник} · {ид} · {время} · {мой_ник}', 'вернулась строка «Переменные» в редакторе')
+absent('Нажмите «Точно удалить?» для удаления', 'вернулась строка-подсказка при нажатии «Удалить»')
+need('if QR.note and (os.clock() - (QR.noteAt or 0)) < 6 then' not in s,
+     'вернулась отрисовка внутренней заметки в редакторе')
+need('local btnH, footH = 32, 12' in s, 'место нижних строк не отдано полю «Текст ответа»')
+need('QR.toast("Шаблон удалён", "ok", 2.2)' in s, 'удаление шаблона не сообщается тостом')
+need("QR.toast(\"Введите текст ответа\", \"warn\", 2.6)" in s, 'предупреждение редактора не ушло в тост')
 absent('local rows, contentW = pickerLayout(ctx, math.min(920, math.max(240, resX - 80)) - PICK_PADX * 2)',
        'раскладка полосы считается по старой ширине')
 absent('local y = math.max(16, math.min(resY - H - 40, math.floor((resY - H) * 0.72)))',
