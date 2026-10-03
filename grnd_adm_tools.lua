@@ -23118,6 +23118,36 @@ local function mpWindowHovered(im)
     return over and true or false
 end
 
+-- Дополнительный предохранитель к «своему» клику панели (см. ownMouseClick).
+-- ImGui не во всех сборках отдаёт ItemHovered для кнопок внутри вкладки,
+-- поэтому клик там считается по координате мыши. Координата может прийти
+-- раньше, чем ImGui обновит курсор (WM-сообщение «забегает вперёд»), и тогда
+-- нажимается соседняя ячейка — со стороны это выглядит как «кнопка пропала,
+-- а потом появилась». Если сборка умеет сказать, что ввод готов
+-- (onClickReady/onInputReady) — уважаем ответ; если функции нет, поведение
+-- прежнее, а один раз в консоль уходит пояснение.
+local CLICK_GATE_MISS = 0
+local function onClickReady()
+    local fns = { _G.onClickReady, _G.grndOnClickReady, _G.onInputReady }
+    local seen = false
+    for i = 1, #fns do
+        local f = fns[i]
+        if type(f) == "function" then
+            seen = true
+            local ok, ready = pcall(f)
+            if ok and ready == false then return false end
+        end
+    end
+    if not seen then
+        CLICK_GATE_MISS = CLICK_GATE_MISS + 1
+        if CLICK_GATE_MISS == 1 then
+            pcall(print, "{FFCC66}[GRND]{FFFFFF} панель МП: сборка не сообщает готовность ввода"
+                .. " (onClickReady) — резервный клик по координате мыши")
+        end
+    end
+    return true
+end
+
 -- слой подсветки при наведении: рисуем поверх кнопки, поэтому работает
 -- и с хелпером основного скрипта, и с запасной отрисовкой
 local function hoverLayer(ctx, x, y, w, h, opts)
@@ -23209,6 +23239,8 @@ local function button(ctx, id, x, y, w, h, label, opts)
         if type(_G.grndClickAlive) == "function" and _G.grndClickAlive() then
             if _G.GRND_MOUSE and _G.GRND_MOUSE.clicked then return true end
         end
+        -- дальше — только резервные пути (опроса нет готовности ввода)
+        if not onClickReady() then return false end
         return polledMouseClick()
     end
 
@@ -23572,6 +23604,25 @@ function MP.drawInner(raw)
     local dl = im.GetWindowDrawList()
     if not dl then return end
 
+    -- Защита от «побитого» конфига: если в файле окажется не таблица (ручная
+    -- правка, обрыв записи), панель падала в середине отрисовки — часть
+    -- содержимого исчезала, а сверху висело сообщение об ошибке.
+    if type(MP.form) ~= "table" then MP.form = {} end
+    if type(MP.form.messages) ~= "table" then MP.form.messages = { "" } end
+    if type(MP.give) ~= "table" then MP.give = {} end
+    if type(MP.take) ~= "table" then MP.take = {} end
+    if type(MP.presets) ~= "table" then MP.presets = {} end
+    if type(MP.fields) ~= "table" then MP.fields = {} end
+    for i = 1, #GIVE_CATS do
+        local G = MP.give[GIVE_CATS[i].key]
+        if type(G) ~= "table" then G = {} MP.give[GIVE_CATS[i].key] = G end
+        if type(G.rows) ~= "table" then G.rows = { "" } end
+        G.on = G.on and true or false
+    end
+    for i = 1, #TAKE_CATS do
+        MP.take[TAKE_CATS[i].key] = MP.take[TAKE_CATS[i].key] and true or false
+    end
+
     local TH = theme()
     -- rawget, а не _G.x: значение может быть и не функцией (заглушка)
     local fnText = rawget(_G, "grndUiText")
@@ -23864,7 +23915,10 @@ local function bindTab()
     if type(tabs) ~= "table" then return false end
     for i = 1, #tabs do
         if type(tabs[i]) == "table" and tabs[i].id == "mppanel" then
-            tabs[i].draw = function(ctx) MP.draw(ctx) end
+            -- pcall: у вкладки не должно быть ЛЮБОЙ возможности показать
+            -- «Ошибка отрисовки раздела» ВМЕСТО панели. MP.draw сам ловит
+            -- свои ошибки и рисует строку с причиной прямо в карточке.
+            tabs[i].draw = function(ctx) pcall(MP.draw, ctx) end
             tabBound = true
             return true
         end
@@ -23942,14 +23996,14 @@ do
     local bound = false
     for i = 1, #MENU_TABS do
         if type(MENU_TABS[i]) == "table" and MENU_TABS[i].id == "mppanel" then
-            MENU_TABS[i].draw = function(ctx) MP.draw(ctx) end
+            MENU_TABS[i].draw = function(ctx) pcall(MP.draw, ctx) end
             bound = true
             break
         end
     end
     if not bound then
         MENU_TABS[#MENU_TABS + 1] = { id = "mppanel", name = "Панель МП" }
-        MENU_TABS[#MENU_TABS].draw = function(ctx) MP.draw(ctx) end
+        MENU_TABS[#MENU_TABS].draw = function(ctx) pcall(MP.draw, ctx) end
     end
 end
 
