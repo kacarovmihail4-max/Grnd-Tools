@@ -23623,6 +23623,10 @@ function MP.drawInner(raw)
         MP.take[TAKE_CATS[i].key] = MP.take[TAKE_CATS[i].key] and true or false
     end
 
+    -- причина сбоя ТЕКУЩЕГО кадра: собираем в одном месте, чтобы удачный
+    -- блок не затирал ошибку соседнего
+    local frameErr = nil
+
     local TH = theme()
     -- rawget, а не _G.x: значение может быть и не функцией (заглушка)
     local fnText = rawget(_G, "grndUiText")
@@ -23701,7 +23705,7 @@ function MP.drawInner(raw)
     -- =================================================================
     --  СОЗДАТЬ МП + ВЫДАЧА В РАДИУСЕ
     -- =================================================================
-    do
+    local function drawTopButtons(y)
         -- Две верхние кнопки — равные по ширине: правая не должна
         -- выглядеть узкой относительно «Создать МП».
         local mw = math.floor((cw - 8) / 2)
@@ -23723,8 +23727,17 @@ function MP.drawInner(raw)
             MP.scroll = 0
             flash("Выдача в радиусе (в разработке)", "info")
         end
+        return y + M_ROW + 16
     end
-    y = y + M_ROW + 16
+    -- верхние кнопки — тоже в песочнице: их сбой не должен лишать панель
+    -- содержимого и кнопки «Начать»
+    local okT, resT = pcall(drawTopButtons, y)
+    if okT and tonumber(resT) then
+        y = tonumber(resT)
+    else
+        frameErr = frameErr or tostring(resT)
+        y = y + M_ROW + 16
+    end
 
     if MP.view == "radius" then
         y = drawRadiusView(ctx, cx, y, cw)
@@ -23733,138 +23746,166 @@ function MP.drawInner(raw)
         return
     end
 
-    -- =================================================================
-    --  ОБЪЯВЛЕНИЯ
-    -- =================================================================
-    y = section(ctx, cx, y, cw, "ОБЪЯВЛЕНИЯ В /MSG")
-    local msgDel                                   -- индекс удаляемой строки
-    local msgW = math.min(cw - 30, MP_FIELD_MAX_W)
-    for i = 1, #MP.form.messages do
-        textInput(ctx, "msg:" .. i, "##mp_msg_" .. i, 140, MP.form.messages[i] or "",
-            cx, y, msgW, BIG_ROW, "текст объявления",
-            function(v) MP.form.messages[i] = v end)
-        iconButton(ctx, "msgdel_" .. i, cx + msgW + 4, y, trashIcon,
-            function() msgDel = i end, BIG_ROW)
-        y = y + BIG_ROW + 6
-    end
-    if button(ctx, "msgadd", cx, y, msgW, M_ROW, "+ Добавить", {}) then
-        if #MP.form.messages < MAX_MSG then
-            table.insert(MP.form.messages, "")
-            MP.touch()
+    -- -----------------------------------------------------------------
+    --  Содержимое панели рисуется в отдельной «песочнице» (pcall).
+    --  Раньше сбой в середине формы уносил с собой ВСЁ, что ниже, — а в
+    --  самом низу рисуется кнопка «Начать». Отсюда и жалоба «кнопка
+    --  пропадает, потом появляется». Теперь причина ошибки пишется
+    --  строкой на месте содержимого, а кнопка «Начать» рисуется ПОСЛЕ
+    --  песочницы и видна всегда.
+    -- -----------------------------------------------------------------
+    local contentStart = y
+    local function drawContent(y)
+        -- =================================================================
+        --  ОБЪЯВЛЕНИЯ
+        -- =================================================================
+        y = section(ctx, cx, y, cw, "ОБЪЯВЛЕНИЯ В /MSG")
+        local msgDel                                   -- индекс удаляемой строки
+        local msgW = math.min(cw - 30, MP_FIELD_MAX_W)
+        for i = 1, #MP.form.messages do
+            textInput(ctx, "msg:" .. i, "##mp_msg_" .. i, 140, MP.form.messages[i] or "",
+                cx, y, msgW, BIG_ROW, "текст объявления",
+                function(v) MP.form.messages[i] = v end)
+            iconButton(ctx, "msgdel_" .. i, cx + msgW + 4, y, trashIcon,
+                function() msgDel = i end, BIG_ROW)
+            y = y + BIG_ROW + 6
         end
-    end
-    -- список правим только после того, как он весь отрисован
-    if msgDel and MP.form.messages[msgDel] ~= nil then
-        table.remove(MP.form.messages, msgDel)
-        dropFields("msg:")
-        MP.touch()
-    end
-    y = y + M_ROW + 10
-
-    -- =================================================================
-    --  ТРИГГЕР И УСЛОВИЯ
-    -- =================================================================
-    y = section(ctx, cx, y, cw, "ТРИГГЕР И УСЛОВИЯ")
-    local formW = math.min(cw, MP_FIELD_MAX_W)
-    textInput(ctx, "trigger", "##mp_trigger", 40, MP.form.trigger,
-        cx, y, formW, BIG_ROW, "триггер в репорте, например: дигла",
-        function(v) MP.form.trigger = v end)
-    y = y + BIG_ROW + M_GAP + 4
-
-    -- =================================================================
-    --  ВЫДАТЬ ИГРОКУ ПОСЛЕ ТЕЛЕПОРТА
-    -- =================================================================
-    y = section(ctx, cx, y, cw, "ВЫДАТЬ ИГРОКУ ПОСЛЕ ТЕЛЕПОРТА")
-    for i = 1, #GIVE_CATS do
-        local cat = GIVE_CATS[i]
-        local G = MP.give[cat.key]
-        local headerY = y
-        -- Тумблер слева, название рядом, шестерёнка — сразу за названием
-        -- (v1.19.05: раньше она стояла у правого края карточки, далеко от
-        -- той выдачи, к которой относится).
-        if switchRow(ctx, "sw_" .. cat.key, cx + 4, headerY + 5, G.on) then
-            G.on = not G.on
-            if G.on and #G.rows == 0 then G.rows[1] = "" end
-            MP.touch()
-        end
-        ctx.uiText(cx + 62, headerY + 8, string.upper(cat.title),
-            ctx.c4(G.on and theme().textHi or theme().textDim), 0.92)
-        if gearButton(ctx, cat.key,
-            cx + 62 + mpTextW(ctx, string.upper(cat.title), 0.92) + 18,
-            headerY + 17, G.on or MP.givePopup == cat.key) then
-            MP.givePopup = (MP.givePopup == cat.key) and nil or cat.key
-        end
-        y = headerY + M_ROW
-
-        -- Строки выдачи редактируются только в компактном окне шестерёнки,
-        -- поэтому основная форма остаётся чистой и не перегруженной.
-        if MP.givePopup == cat.key then
-            y = drawGivePopup(ctx, cx, y, cw, cat.key)
-        end
-
-        if i < #GIVE_CATS then
-            y = y + 12      -- v1.19.03: без разделительной черты внутри блока
-        end
-    end
-    y = y + 4
-
-    -- =================================================================
-    --  ЗАБРАТЬ
-    -- =================================================================
-    y = section(ctx, cx, y, cw, "ЗАБРАТЬ")
-    for i, t in ipairs(TAKE_CATS) do
-        local rowY = y
-        if switchRow(ctx, "take_" .. t.key, cx + 4, rowY + 5, MP.take[t.key]) then
-            MP.take[t.key] = not MP.take[t.key]
-            MP.touch()
-        end
-        ctx.uiText(cx + 62, rowY + 8, t.title,
-            ctx.c4(MP.take[t.key] and TH.textHi or TH.textDim), 0.95)
-        y = rowY + M_ROW
-        if i < #TAKE_CATS then
-            y = y + 11      -- v1.19.03: без разделительной черты внутри блока
-        end
-    end
-    y = y + 6
-
-    -- =================================================================
-    --  ЗАГОТОВКИ
-    -- =================================================================
-    y = section(ctx, cx, y, cw, "ЗАГОТОВКИ")
-    y = fieldAt(ctx, cx, y, formW, "НАЗВАНИЕ", "presetName", "##mp_preset_name",
-        48, MP.presetName, "например: дигла | ночь",
-        function(v) MP.presetName = v end, BIG_ROW)
-    y = y + 4
-    if button(ctx, "psave", cx, y, cw, M_ROW, "Сохранить заготовку", {}) then
-        local ok, msg = MP.savePreset(MP.presetName)
-        MP.flash = { text = msg, at = now(), kind = ok and "ok" or "err" }
-    end
-    y = y + M_ROW + 8
-    if #(MP.presets or {}) == 0 then
-        ctx.uiText(cx + 2, y + 4, "заготовок пока нет", ctx.c4(TH.textMuted), 0.9)
-        y = y + 22
-    else
-        local pw = math.floor((cw - 6) / 2)
-        for i = 1, #(MP.presets or {}) do
-            local p = MP.presets[i]
-            local col = (i - 1) % 2
-            local rowi = math.floor((i - 1) / 2)
-            local x = cx + col * (pw + 6)
-            local yy = y + rowi * (M_ROW + 6)
-            if button(ctx, "pload_" .. i, x, yy, pw - M_ROW - 4, M_ROW,
-                string.format("%d.  %s", i, tostring(p.name or "")),
-                { align = "left" }) then
-                local ok, msg = MP.usePreset(p.name)
-                MP.flash = { text = msg, at = now(), kind = ok and "ok" or "err" }
+        if button(ctx, "msgadd", cx, y, msgW, M_ROW, "+ Добавить", {}) then
+            if #MP.form.messages < MAX_MSG then
+                table.insert(MP.form.messages, "")
+                MP.touch()
             end
-            iconButton(ctx, "pdel_" .. i, x + pw - M_ROW, yy, trashIcon,
-                function()
-                    local ok, msg = MP.deletePreset(p.name)
-                    flash(msg or "Заготовка не найдена", ok and "ok" or "error")
-                end)
         end
-        y = y + math.ceil(#(MP.presets or {}) / 2) * (M_ROW + 6) + 4
+        -- список правим только после того, как он весь отрисован
+        if msgDel and MP.form.messages[msgDel] ~= nil then
+            table.remove(MP.form.messages, msgDel)
+            dropFields("msg:")
+            MP.touch()
+        end
+        y = y + M_ROW + 10
+
+        -- =================================================================
+        --  ТРИГГЕР И УСЛОВИЯ
+        -- =================================================================
+        y = section(ctx, cx, y, cw, "ТРИГГЕР И УСЛОВИЯ")
+        local formW = math.min(cw, MP_FIELD_MAX_W)
+        textInput(ctx, "trigger", "##mp_trigger", 40, MP.form.trigger,
+            cx, y, formW, BIG_ROW, "триггер в репорте, например: дигла",
+            function(v) MP.form.trigger = v end)
+        y = y + BIG_ROW + M_GAP + 4
+
+        -- =================================================================
+        --  ВЫДАТЬ ИГРОКУ ПОСЛЕ ТЕЛЕПОРТА
+        -- =================================================================
+        y = section(ctx, cx, y, cw, "ВЫДАТЬ ИГРОКУ ПОСЛЕ ТЕЛЕПОРТА")
+        for i = 1, #GIVE_CATS do
+            local cat = GIVE_CATS[i]
+            local G = MP.give[cat.key]
+            local headerY = y
+            -- Тумблер слева, название рядом, шестерёнка — сразу за названием
+            -- (v1.19.05: раньше она стояла у правого края карточки, далеко от
+            -- той выдачи, к которой относится).
+            if switchRow(ctx, "sw_" .. cat.key, cx + 4, headerY + 5, G.on) then
+                G.on = not G.on
+                if G.on and #G.rows == 0 then G.rows[1] = "" end
+                MP.touch()
+            end
+            ctx.uiText(cx + 62, headerY + 8, string.upper(cat.title),
+                ctx.c4(G.on and theme().textHi or theme().textDim), 0.92)
+            if gearButton(ctx, cat.key,
+                cx + 62 + mpTextW(ctx, string.upper(cat.title), 0.92) + 18,
+                headerY + 17, G.on or MP.givePopup == cat.key) then
+                MP.givePopup = (MP.givePopup == cat.key) and nil or cat.key
+            end
+            y = headerY + M_ROW
+
+            -- Строки выдачи редактируются только в компактном окне шестерёнки,
+            -- поэтому основная форма остаётся чистой и не перегруженной.
+            if MP.givePopup == cat.key then
+                y = drawGivePopup(ctx, cx, y, cw, cat.key)
+            end
+
+            if i < #GIVE_CATS then
+                y = y + 12      -- v1.19.03: без разделительной черты внутри блока
+            end
+        end
+        y = y + 4
+
+        -- =================================================================
+        --  ЗАБРАТЬ
+        -- =================================================================
+        y = section(ctx, cx, y, cw, "ЗАБРАТЬ")
+        for i, t in ipairs(TAKE_CATS) do
+            local rowY = y
+            if switchRow(ctx, "take_" .. t.key, cx + 4, rowY + 5, MP.take[t.key]) then
+                MP.take[t.key] = not MP.take[t.key]
+                MP.touch()
+            end
+            ctx.uiText(cx + 62, rowY + 8, t.title,
+                ctx.c4(MP.take[t.key] and TH.textHi or TH.textDim), 0.95)
+            y = rowY + M_ROW
+            if i < #TAKE_CATS then
+                y = y + 11      -- v1.19.03: без разделительной черты внутри блока
+            end
+        end
+        y = y + 6
+
+        -- =================================================================
+        --  ЗАГОТОВКИ
+        -- =================================================================
+        y = section(ctx, cx, y, cw, "ЗАГОТОВКИ")
+        y = fieldAt(ctx, cx, y, formW, "НАЗВАНИЕ", "presetName", "##mp_preset_name",
+            48, MP.presetName, "например: дигла | ночь",
+            function(v) MP.presetName = v end, BIG_ROW)
+        y = y + 4
+        if button(ctx, "psave", cx, y, cw, M_ROW, "Сохранить заготовку", {}) then
+            local ok, msg = MP.savePreset(MP.presetName)
+            MP.flash = { text = msg, at = now(), kind = ok and "ok" or "err" }
+        end
+        y = y + M_ROW + 8
+        if #(MP.presets or {}) == 0 then
+            ctx.uiText(cx + 2, y + 4, "заготовок пока нет", ctx.c4(TH.textMuted), 0.9)
+            y = y + 22
+        else
+            local pw = math.floor((cw - 6) / 2)
+            for i = 1, #(MP.presets or {}) do
+                local p = MP.presets[i]
+                local col = (i - 1) % 2
+                local rowi = math.floor((i - 1) / 2)
+                local x = cx + col * (pw + 6)
+                local yy = y + rowi * (M_ROW + 6)
+                if button(ctx, "pload_" .. i, x, yy, pw - M_ROW - 4, M_ROW,
+                    string.format("%d.  %s", i, tostring(p.name or "")),
+                    { align = "left" }) then
+                    local ok, msg = MP.usePreset(p.name)
+                    MP.flash = { text = msg, at = now(), kind = ok and "ok" or "err" }
+                end
+                iconButton(ctx, "pdel_" .. i, x + pw - M_ROW, yy, trashIcon,
+                    function()
+                        local ok, msg = MP.deletePreset(p.name)
+                        flash(msg or "Заготовка не найдена", ok and "ok" or "error")
+                    end)
+            end
+            y = y + math.ceil(#(MP.presets or {}) / 2) * (M_ROW + 6) + 4
+        end
+
+        return y
     end
+    local okC, resC = pcall(drawContent, y)
+    if okC and tonumber(resC) then
+        MP.contentH = tonumber(resC) - contentStart
+        y = tonumber(resC)
+    else
+        -- содержимое не нарисовалось: сообщаем причину и оставляем столько
+        -- места, сколько оно занимало в последнем удачном кадре
+        frameErr = frameErr or tostring(resC)
+        local h = tonumber(MP.contentH) or 160
+        pcall(ctx.uiText, cx + 2, contentStart + 6,
+            "ошибка в содержимом панели: " .. tostring(MP.blockError):sub(1, 80),
+            ctx.c4({ 255, 120, 120, 255 }), 0.85)
+        y = contentStart + math.max(80, h)
+    end
+
     y = y + 6
 
     -- =================================================================
@@ -23885,6 +23926,16 @@ function MP.drawInner(raw)
                 say("запуск не выполнен: " .. tostring(f and f.text or "проверьте форму"), "error")
             end
         end
+    end
+
+    -- Итог кадра: если какой-то блок не нарисовался — сохраняем причину
+    -- для диагностики (/mp diag). Кнопка «Начать» при этом всё равно
+    -- нарисована: она идёт после «песочницы» содержимого.
+    if frameErr then
+        MP.blockError = frameErr
+        MP.blockErrN = (MP.blockErrN or 0) + 1
+    else
+        MP.blockError = nil
     end
 
     MP.totalH = y - y0 + M_ROW + 12
@@ -24025,8 +24076,16 @@ local function mpDiag()
         if res == nil then return "нет" end
         return "да"
     end
-    say("=== Панель МП: диагностика ===", "info")
-    say("версия " .. tostring(GRND_SCRIPT_VERSION or _G.GRND_SCRIPT_VERSION or "?")
+    -- Каждая строка идёт и в чат, и в файл: из чата текст не скопировать,
+    -- поэтому тот же отчёт кладётся в logs/grnd_diag.log — его можно
+    -- прислать файлом, как grnd_err.log.
+    local L = {}
+    local function emit(text, kind)
+        L[#L + 1] = tostring(text)
+        pcall(say, text, kind)
+    end
+    emit("=== Панель МП: диагностика ===", "info")
+    emit("версия " .. tostring(GRND_SCRIPT_VERSION or _G.GRND_SCRIPT_VERSION or "?")
         .. " · кадров ImGui: " .. tostring(_G.GRND_UIFRAME or 0)
         .. " · кадров панели: " .. tostring(MP.drawFrames or 0), "info")
     if MP.diag and MP.diag.at then
@@ -24087,8 +24146,28 @@ local function mpDiag()
             pcall(f.close, f)
         end
     end
-    if n == 0 then say("журнал ошибок пуст", "ok") end
-    say("пришлите эти строки текстом — по ним видно причину", "info")
+    if n == 0 then emit("журнал ошибок пуст", "ok") end
+    if MP.blockError then
+        emit("содержимое панели падало (" .. tostring(MP.blockErrN or 0) .. " раз): "
+            .. tostring(MP.blockError):sub(1, 160), "error")
+    end
+    -- файл: тот же ресурсный каталог, что и у grnd_err.log
+    local path
+    if type(grndStoragePath) == "function" then
+        path = grndStoragePath("logs", "grnd_diag.log")
+    end
+    if path then
+        local ok, f = pcall(io.open, path, "w")
+        if ok and f then
+            pcall(f.write, f, "\239\187\191")          -- BOM: читается как UTF-8
+            pcall(f.write, f, table.concat(L, "\r\n") .. "\r\n")
+            pcall(f.close, f)
+            emit("отчёт записан: " .. tostring(path), "ok")
+        else
+            emit("отчёт НЕ записался: " .. tostring(path), "warn")
+        end
+    end
+    emit("пришлите эти строки (или файл grnd_diag.log) — по ним видно причину", "info")
 end
 
 -- Команда /mp: состояние, старт/стоп, заготовки, список команд.
