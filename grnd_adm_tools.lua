@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.24"
+GRND_SCRIPT_VERSION = "1.19.25"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24347,7 +24347,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.24)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.25)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -26917,15 +26917,16 @@ do
 end
 
 -- =====================================================================
---  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.24) — «Репорт» → «Автопилот»
+--  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.25) — «Репорт» → «Автопилот»
 -- =====================================================================
---  Вкладки: в каждой — ОДИН триггер, свой текст ответа и своя команда после
---  ответа. Пришёл репорт — ищем триггер по вкладкам по порядку; срабатывает
+--  Вкладки (до 15): в каждой — ОДИН триггер, свой текст ответа и своя команда
+--  после ответа. Пришёл репорт — ищем триггер по всем вкладкам; срабатывает
 --  только ПОЛНОЕ совпадение: репорт должен целиком состоять из триггера
 --  («помогите» — да, «помогите, помогите плиз» — нет), иначе автопилот отвечал
---  бы на любую жалобу, где встретилось слово. Первая подошедшая вкладка
---  отвечает игроку штатной /ans ID текст (в CP1251, без «закорючек») и сразу
---  отправляет свою команду (/sp ID или /goto ID).
+--  бы на любую жалобу, где встретилось слово. Совпасть может не одна вкладка —
+--  тогда срабатывают ВСЕ, по порядку вкладок — каждая отвечает игроку штатной
+--  /ans ID текст (в CP1251, без «закорючек») и сразу отправляет свою команду
+--  (/sp ID или /goto ID).
 --
 --  Чтобы поведение было предсказуемым:
 --    * слежка — стоп: в слежке автопилот не срабатывает и САМ выключается
@@ -26949,7 +26950,7 @@ end
 -- =====================================================================
 do
     local MAX_ATRIG = 128      -- символов в триггере
-    local MAX_TABS = 8         -- сколько вкладок можно завести
+    local MAX_TABS = 15        -- сколько вкладок можно завести
     local AUTO_GAP = 2.5       -- пауза между срабатываниями (сек)
     local AUTO_PER_PID = 60    -- одному игроку — один ответ в минуту
     local AUTO_PER_MIN = 12    -- предохранитель: не больше 12 автоответов в минуту
@@ -27105,22 +27106,34 @@ do
         return out
     end
 
-    -- Первая вкладка, чей триггер — это ВЕСЬ текст репорта (лишние слова не
+    -- ВСЕ вкладки, чей триггер — это ВЕСЬ текст репорта (лишние слова не
     -- считаются: «помогите» — да, «помогите, дм!!!» или «помогите плиз» — нет,
     -- иначе автопилот отвечал бы на каждую жалобу со словом «помогите»).
-    -- Пробелы вокруг и лишние пробелы внутри не мешают: «  Помогите  » — да.
-    -- Возвращает номер вкладки и найденный триггер.
-    function QR.autoMatchTab(text)
+    -- Пробелы вокруг не мешают: «  Помогите  » — да. Совпасть может не одна
+    -- вкладка (например, один и тот же триггер стоит в двух) — тогда сработают
+    -- все, по порядку вкладок. Возвращает { {idx=, trig=}, … }.
+    function QR.autoMatchAll(text)
         local low = trim(autoLower(autoPlain(text)))
-        if low == "" then return nil end
+        local out = {}
+        if low == "" then return out end
         local tabs = QR.autoTabs()
         for i = 1, #tabs do
             local list = QR.autoTriggers(tabs[i])
             for k = 1, #list do
-                if low == list[k] then return i, list[k] end
+                if low == list[k] then
+                    out[#out + 1] = { idx = i, trig = list[k] }
+                    break
+                end
             end
         end
-        return nil
+        return out
+    end
+
+    -- Первая подошедшая вкладка (номер и триггер) — для подсказок и отладки.
+    function QR.autoMatchTab(text)
+        local hits = QR.autoMatchAll(text)
+        if #hits == 0 then return nil end
+        return hits[1].idx, hits[1].trig
     end
 
     -- Слишком короткий триггер ловит почти всё — предупреждаем.
@@ -27320,13 +27333,17 @@ do
             A.lastCheck = "пустой текст репорта"
             return false, "пусто"
         end
-        local idx, hit = QR.autoMatchTab(text)
-        if not idx then
+        local hits = QR.autoMatchAll(text)
+        if #hits == 0 then
             A.lastCheck = "триггер не найден в «" .. utf8Cut(text, 40) .. "»"
             return false, "нет триггера"
         end
-        local tab = QR.autoTab(idx)
-        A.lastCheck = "вкладка " .. tostring(idx) .. ": триггер «" .. hit .. "» найден"
+        local hit = hits[1].trig
+        local hitTabs = {}
+        for k = 1, #hits do hitTabs[k] = tostring(hits[k].idx) end
+        local hitTabsTxt = table.concat(hitTabs, ", ")
+        -- v1.19.25: срабатывают все вкладки с этим триггером, по порядку
+        A.lastCheck = "триггер «" .. hit .. "» найден: вкладки " .. hitTabsTxt
         if type(grndIsTyping) == "function" then
             local okT, typing = pcall(grndIsTyping)
             if okT and typing then
@@ -27341,38 +27358,59 @@ do
             return false, guard
         end
 
-        -- что уйдёт игроку и на сервер
+        -- Что уйдёт игроку и на сервер: сначала собираем план по всем
+        -- совпавшим вкладкам (пустые вкладки в план не попадают).
         local rep = { nick = nick, id = id }
-        local line = oneLine(QR.apply(tab.answer, rep))
-        local cmd = QR.autoCmdFor(id, tab)
-        if line == "" and not cmd then
-            A.lastCheck = "вкладка " .. tostring(idx) .. ": не заполнен ответ"
+        local plan = {}
+        for k = 1, #hits do
+            local tab = QR.autoTab(hits[k].idx)
+            local line = oneLine(QR.apply(tab.answer, rep))
+            local cmd = QR.autoCmdFor(id, tab)
+            if line ~= "" or cmd then
+                plan[#plan + 1] = { idx = hits[k].idx, line = line, cmd = cmd }
+            end
+        end
+        if #plan == 0 then
+            A.lastCheck = "вкладки " .. hitTabsTxt .. ": не заполнены ответ и команда"
             return false, "пусто"
         end
 
-        local sentAns, sentCmd = false, false
-        if line ~= "" and type(grndRepAnswer) == "function" then
-            -- grndRepAnswer сам переводит текст в CP1251 и ставит «/ans ID …»
-            -- в очередь репорта
-            local okA, res = pcall(grndRepAnswer, id, line)
-            sentAns = okA and res ~= false
+        -- Отправляем строго по порядку вкладок — так «/ans ID текст» каждой
+        -- вкладки встаёт в очередь перед её же командой.
+        local sentAns, sentCmd, cmdTxt, planTabs = 0, 0, {}, {}
+        for k = 1, #plan do
+            local it = plan[k]
+            if it.line ~= "" and type(grndRepAnswer) == "function" then
+                -- grndRepAnswer сам переводит текст в CP1251 и ставит
+                -- «/ans ID …» в очередь репорта
+                local okA, res = pcall(grndRepAnswer, id, it.line)
+                if okA and res ~= false then sentAns = sentAns + 1 end
+            end
+            if it.cmd then
+                if QR.queueCmd(it.cmd) then sentCmd = sentCmd + 1 end
+                cmdTxt[#cmdTxt + 1] = tostring(it.cmd)
+            end
+            planTabs[#planTabs + 1] = tostring(it.idx)
         end
-        if cmd then sentCmd = QR.queueCmd(cmd) end
 
         local now = os.clock()
         A.lastAt, A.perPid[id] = now, now
         A.rate[#A.rate + 1] = now
         A.fired = (A.fired or 0) + 1
-        A.lastCheck = (sentAns or sentCmd)
-            and ("вкладка " .. tostring(idx) .. ": отправлено, триггер «" .. hit .. "»")
+        local planTabsTxt = table.concat(planTabs, ", ")
+        local sentOk = (sentAns + sentCmd) > 0
+        A.lastCheck = sentOk
+            and ("отправлено (вкладки " .. planTabsTxt .. "), триггер «" .. hit .. "»")
             or "не удалось отправить"
-        if sentAns or sentCmd then
-            QR.toast("Автопилот: /ans " .. id .. (sentCmd and (" + " .. tostring(cmd)) or "")
-                .. " · «" .. hit .. "»", "ok", 3.6)
+        if sentOk then
+            local cmds = table.concat(cmdTxt, " + ")
+            QR.toast("Автопилот: /ans " .. id .. (cmds ~= "" and (" + " .. cmds) or "")
+                .. " · «" .. hit .. "»" .. (#plan > 1 and (" · вкладок " .. tostring(#plan)) or ""),
+                "ok", 3.6)
         else
             QR.toast("Автопилот: отправить не удалось", "warn", 3)
         end
-        return (sentAns or sentCmd), hit
+        return sentOk, hit
     end
 
     -- Тик из основного цикла: задержанное сохранение и авто-выключение
@@ -27467,11 +27505,10 @@ do
         ctx.dl:AddCircleFilled(ctx.at(x + 8, stY + 12), 5, dotC)
         ctx.uiText(x + 22, stY + 2, on and "включён" or "выключен",
             on and hi or dim, 0.95)
-        -- подпись — только когда автопилот работает или выключился сам
+        -- v1.19.25: у включённого автопилота подписи под строкой состояния
+        -- больше нет. Остаётся только важная причина авто-выключения.
         local note, noteCol
-        if on then
-            note, noteCol = "при репорте: ответ игроку и команда выбранной вкладки", mut
-        elseif A.offReason == "слежка" then
+        if not on and A.offReason == "слежка" then
             note, noteCol = "выключен сам: активна слежка, после выхода включите заново", warnC
         end
         if note and type(ctx.drawnW) == "function" then
@@ -27747,7 +27784,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.24"
+        local sv = "1.19.25"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -33780,6 +33817,7 @@ function grndMainBody()
                         -- v1.19.22: вкладок может быть сколько нужно.
                         -- v1.19.23: у вкладки крестик удаления, добавление — «+».
                         -- v1.19.24: триггер совпадает с репортом целиком.
+                        -- v1.19.25: вкладок до 15, срабатывают все совпавшие.
                         local topY = cardY + 16
                         local topBtnH = 34
                         local b1X = cardX + 20
@@ -34067,7 +34105,7 @@ function grndMainBody()
                             end
                         else
                             -- =========================================
-                            --  ПОД-ВКЛАДКИ «РЕПОРТА» (v1.19.24): «Ответы на
+                            --  ПОД-ВКЛАДКИ «РЕПОРТА» (v1.19.25): «Ответы на
                             --  репорт», «Наказания» и «Автопилот» — все три
                             --  рисуются своими модулями внутри GRND_QR.
                             -- =========================================
@@ -34107,6 +34145,8 @@ function grndMainBody()
                                 -- v1.19.23: добавление «+», удаление — крестик
                                 -- вкладки; подписи раздела — без лишнего.
                                 -- v1.19.24: триггер — только весь репорт целиком.
+                                -- v1.19.25: вкладок до 15, срабатывают все,
+                                -- у кого триггер совпал.
                                 if type(_G.grndQrAutoDraw) == "function" then
                                     local okAu = pcall(_G.grndQrAutoDraw, {
                                         im = im, dl = dl, at = at,

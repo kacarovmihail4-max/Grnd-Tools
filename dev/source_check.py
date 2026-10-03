@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.24"' in s, 'версия не 1.19.24')
+need('GRND_SCRIPT_VERSION = "1.19.25"' in s, 'версия не 1.19.25')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -147,7 +147,7 @@ need('function QR.autoTabs()' in s, 'нет списка вкладок авто
 need('function QR.autoLabel(i)' in s, 'вкладка не подписана своим триггером')
 need('function QR.autoAdd()' in s, 'нет добавления вкладки')
 need('function QR.autoDel(i)' in s, 'вкладка не удаляется')
-need('local MAX_TABS = 8' in s, 'нет предела числа вкладок')
+need('local MAX_TABS = 15' in s, 'предел вкладок не 15')
 need('"##grnd_qr_auto_tab_" .. i' in s, 'вкладки не нажимаются')
 need('"##grnd_qr_auto_tabc_" .. i' in s, 'у вкладки нет крестика удаления')
 need('"##grnd_qr_auto_add"' in s, 'нет кнопки-плюса добавления вкладки')
@@ -164,14 +164,24 @@ need('local function autoCross(cx, cy, r, col)' in s, 'крестик не ри�
 need('local function autoPlus(cx, cy, r, col)' in s, 'плюс не рисуется линиями')
 need('tabs[1] = QR.autoNewTab()' in s, 'последняя вкладка удаляется вместо очистки')
 # подписи раздела — без лишнего (v1.19.23)
-absent('вкладок: ', 'вернулся счётчик вкладок в шапке')
+absent('"вкладок: " .. tostring(#tabs)', 'вернулся счётчик вкладок в шапке')
 absent('срабатываний: ', 'вернулся счётчик срабатываний в шапке')
 absent('репорты проходят мимо', 'вернулась подпись «репорты проходят мимо»')
 absent('пусто — вкладка молчит', 'вернулась подпись «пусто — вкладка молчит»')
 absent('подставятся сами', 'вернулась подпись про {ник}/{ид}')
 # триггер ищем по вкладкам, первая подошедшая — её ответ и её команда
 need('function QR.autoMatchTab(text)' in s, 'нет поиска триггера по вкладкам')
-need('if low == list[k] then return i, list[k] end' in s,
+# v1.19.25: срабатывают ВСЕ вкладки с совпавшим триггером, по порядку
+need('function QR.autoMatchAll(text)' in s, 'нет сбора всех совпавших вкладок')
+need('local hits = QR.autoMatchAll(text)' in s, 'срабатывание ищет только первую вкладку')
+need('for k = 1, #hits do' in s, 'по совпавшим вкладкам нет прохода')
+need('for k = 1, #plan do' in s, 'отправка идёт не по всем совпавшим вкладкам')
+need('planTabsTxt' in s, 'в подсказке нет списка сработавших вкладок')
+# у включённого автопилота нет подписи «при репорте: …»
+auto_draw_src2 = s[s.index('_G.grndQrAutoDraw = function(ctx)'):s.index('_G.grndQrAutoOnReport = function')]
+need('при репорте' not in auto_draw_src2, 'вернулась строка «при репорте: …» под тумблером')
+need('выключен сам: активна слежка' in auto_draw_src2, 'пропала причина авто-выключения в слежке')
+need('if low == list[k] then' in s and 'out[#out + 1] = { idx = i, trig = list[k] }' in s,
      'триггер снова ищется как подстрока — репорт с лишними словами сработает')
 absent('low:find(list[k], 1, true)', 'вернулся поиск триггера подстрокой')
 need('local low = trim(autoLower(autoPlain(text)))' in s,
@@ -186,10 +196,10 @@ need('"Приветствую, уже смотрю…", true, sel2.answer' in s,
 auto_draw_src = s[s.index('_G.grndQrAutoDraw = function(ctx)'):s.index('_G.grndQrAutoOnReport = function')]
 need('{ник}' not in auto_draw_src, 'в разделе «Автопилот» снова подсказка с {ник}')
 need('репорт целиком' in auto_draw_src, 'нет подсказки, что репорт должен совпасть целиком')
-need('local tab = QR.autoTab(idx)' in s, 'срабатывание не привязано к вкладке')
+need('local tab = QR.autoTab(hits[k].idx)' in s, 'срабатывание не привязано к вкладке')
 need('local cmd = QR.autoCmdFor(id, tab)' in s, 'команда берётся не из вкладки')
 need('local line = oneLine(QR.apply(tab.answer, rep))' in s, 'ответ берётся не из вкладки')
-need('A.lastCheck = "вкладка " .. tostring(idx)' in s, 'в подсказке нет номера вкладки')
+need('planTabsTxt' in s, 'в подсказке нет списка сработавших вкладок')
 # конфиг: вкладки как t<N>_trigger / t<N>_answer / t<N>_command
 need('"t" .. i .. "_trigger="' in s and '"t" .. i .. "_answer="' in s and '"t" .. i .. "_command="' in s,
      'вкладки не пишутся в конфиг')
@@ -206,9 +216,9 @@ need('function QR.autoTriggers(tab)' in s, 'нет разбора триггер
 need('return "/" .. id .. " " .. pid' in s, 'команда после ответа не собирается')
 # срабатывание: ответ игроку, затем команда, и всё — через очередь репорта
 auto_part = s[s.index('function QR.autoOnReport(nick, pid, msg)'):s.index('function QR.autoTick()')]
-need('pcall(grndRepAnswer, id, line)' in auto_part, 'автопилот не отвечает игроку через /ans')
-need(auto_part.index('pcall(grndRepAnswer, id, line)') < auto_part.index('QR.queueCmd(cmd)'),
-     'команда автопилота уходит раньше ответа игроку')
+need('pcall(grndRepAnswer, id, it.line)' in auto_part, 'автопилот не отвечает игроку через /ans')
+need(auto_part.index('pcall(grndRepAnswer, id, it.line)') < auto_part.index('QR.queueCmd(it.cmd)'),
+     'команда вкладки уходит раньше её ответа игроку')
 need('if not A.on then' in auto_part, 'автопилот срабатывает при выключенном тумблере')
 need('local guard = QR.autoGuard(id, os.clock())' in auto_part, 'нет предохранителей автопилота')
 # слежка: не отвечает и выключается сам

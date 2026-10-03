@@ -61,6 +61,7 @@ drawAuto()
 CLICK = {}
 check(A.on == true, "тумблер не включил автопилот")
 check(TOASTS[#TOASTS] == "Автопилот включён", "нет тоста о включении")
+check(not has("при репорте"), "под тумблером осталась строка «при репорте: …»")
 check(#SWITCHPAINT > 0 and SWITCHPAINT[#SWITCHPAINT] == "##grnd_qr_auto_on",
     "тумблер нарисован не родной «пилюлей» скрипта")
 SWITCHPAINT = {}
@@ -177,7 +178,7 @@ check(#ORDER == 2 and ORDER[1] == "ans" and ORDER[2] == "chat",
     "порядок неверный: " .. table.concat(ORDER, ","))
 check(ANS[1] == "25 Приветствую, Mixa_Grozz! Уже смотрю. 25",
     "игроку ушёл не тот ответ: " .. tostring(ANS[1]))
-check(A.lastCheck:find("вкладка 1", 1, true) ~= nil, "нет пометки вкладки: " .. tostring(A.lastCheck))
+check(A.lastCheck:find("вкладки 1", 1, true) ~= nil, "нет пометки вкладки: " .. tostring(A.lastCheck))
 
 -- та же ситуация, но триггер второй вкладки
 NOW = NOW + 100
@@ -187,7 +188,7 @@ local fired2, hit2 = Q.autoOnReport("Другой", 77, "дм")
 check(fired2 == true and hit2 == "дм", "вторая вкладка не сработала: " .. tostring(hit2))
 check(#QUEUE == 2 and QUEUE[1] == "/ans 77 Не пишите в личку, отвечу в репорте"
     and QUEUE[2] == "/sp 77", "вторая вкладка отправила не то: " .. tostring(QUEUE[1]))
-check(A.lastCheck:find("вкладка 2", 1, true) ~= nil, "нет пометки второй вкладки")
+check(A.lastCheck:find("вкладки 2", 1, true) ~= nil, "нет пометки второй вкладки")
 -- в репорте есть лишние слова — это уже не триггер
 NOW = NOW + 100
 A.perPid, A.rate = {}, {}
@@ -196,7 +197,24 @@ local okExtra, whyExtra = Q.autoOnReport("Третий", 88, "помогите, 
 check(okExtra == false and whyExtra == "нет триггера",
     "репорт с лишними словами всё равно сработал: " .. tostring(whyExtra))
 check(#QUEUE == 0, "на репорт с лишними словами что-то ушло")
-HPRINT("срабатывание: триггер выбирает вкладку, её ответ и её команда (весь репорт целиком)")
+-- одинаковый триггер в двух вкладках: срабатывают ОБЕ, по порядку вкладок
+Q.autoTabs()[2].trigger = "Помогите"
+Q.autoTabs()[2].command = "sp"
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE, ANSICALLS = {}, {}
+check(Q.autoOnReport("Четвёртый", 99, "помогите") == true, "совпадение по двум вкладкам не сработало")
+check(#QUEUE == 4, "с двух вкладок встало не 4 строки: " .. tostring(#QUEUE))
+check(QUEUE[1] == "/ans 99 Приветствую, Четвёртый! Уже смотрю. 99"
+    and QUEUE[2] == "/goto 99", "первая вкладка отправила не своё: " .. tostring(QUEUE[1]))
+check(QUEUE[3] == "/ans 99 Не пишите в личку, отвечу в репорте"
+    and QUEUE[4] == "/sp 99", "вторая вкладка отправила не своё: " .. tostring(QUEUE[3]))
+check(A.lastCheck:find("вкладки 1, 2", 1, true) ~= nil,
+    "в подсказке нет обеих вкладок: " .. tostring(A.lastCheck))
+check(TOASTS[#TOASTS]:find("вкладок 2", 1, true) ~= nil,
+    "тост не сообщает про две вкладки: " .. tostring(TOASTS[#TOASTS]))
+Q.autoTabs()[2].trigger = "дм"
+HPRINT("срабатывание: триггер = весь репорт; совпавшие вкладки срабатывают все, по порядку")
 
 -- ===== 10. репорт без триггера / без ID =====
 NOW = NOW + 100
@@ -362,14 +380,18 @@ check(#Q.autoTabs() == 1 and Q.autoTabs()[1].trigger == "" and Q.autoTabs()[1].a
 HPRINT("удаление: крестик на вкладке удаляет её, последняя вкладка очищается")
 
 -- ===== 19. предел вкладок =====
-for i = 2, 8 do Q.autoAdd() end
-check(#Q.autoTabs() == 8, "не набралось 8 вкладок: " .. tostring(#Q.autoTabs()))
-check(Q.autoAdd() == nil, "появилась 9-я вкладка")
-check(#Q.autoTabs() == 8, "вкладок стало больше предела")
-HPRINT("предел: 8 вкладок, дальше отказ с тостом")
+for i = 2, 15 do Q.autoAdd() end
+check(#Q.autoTabs() == 15, "не набралось 15 вкладок: " .. tostring(#Q.autoTabs()))
+check(Q.autoAdd() == nil, "появилась 16-я вкладка")
+check(#Q.autoTabs() == 15, "вкладок стало больше предела")
+check(TOASTS[#TOASTS]:find("Больше 15 вкладок", 1, true) ~= nil,
+    "нет тоста про предел: " .. tostring(TOASTS[#TOASTS]))
+HPRINT("предел: 15 вкладок, дальше отказ с тостом")
 
 -- ===== 20. очередь репорта недоступна — команда уходит напрямую =====
 NOW = NOW + 100
+while #Q.autoTabs() > 2 do Q.autoDel(#Q.autoTabs()) end
+Q.autoEnsure()
 A.on, A.perPid, A.rate = true, {}, {}
 Q.autoTabs()[1].trigger = "помогите"
 Q.autoTabs()[1].answer = "уже смотрю"
