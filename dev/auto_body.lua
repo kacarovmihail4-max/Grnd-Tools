@@ -216,6 +216,55 @@ check(TOASTS[#TOASTS]:find("вкладок 2", 1, true) ~= nil,
 Q.autoTabs()[2].trigger = "дм"
 HPRINT("срабатывание: триггер = весь репорт; совпавшие вкладки срабатывают все, по порядку")
 
+-- ===== 9b. склейка из двух триггеров не срабатывает =====
+-- Вкладка 1 — «дм», вкладка 2 — «помогите». Репорт из двух слов («помогите дм»)
+-- не равен ни одному триггеру целиком, поэтому срабатывать не должен.
+Q.autoTabs()[1].trigger = "дм"
+Q.autoTabs()[1].answer = "ответ первой вкладки"
+Q.autoTabs()[1].command = "goto"
+Q.autoTabs()[2].trigger = "помогите"
+Q.autoTabs()[2].answer = "ответ второй вкладки"
+Q.autoTabs()[2].command = "sp"
+Q.autoEnsure()
+local combos = {
+    "помогите дм", "помогите, дм", "дм помогите", "помогите,дм",
+    "помогите дм!", "Помогите ДМ", "  помогите   дм  ",
+    "помогите и дм", "дм-помогите",
+}
+for _, rep in ipairs(combos) do
+    NOW = NOW + 100
+    A.perPid, A.rate = {}, {}
+    QUEUE, CHAT = {}, {}
+    local okC, whyC = Q.autoOnReport("Склейка", 150, rep)
+    check(okC == false and whyC == "нет триггера",
+        "репорт «" .. rep .. "» сработал: " .. tostring(whyC))
+    check(#QUEUE == 0 and #CHAT == 0, "на репорт «" .. rep .. "» что-то ушло")
+end
+check(#Q.autoMatchAll("помогите дм") == 0, "склейка совпала с вкладкой")
+-- а каждый триггер по отдельности работает
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+check(Q.autoOnReport("Первый", 151, "дм") == true, "чистый «дм» не сработал")
+check(#QUEUE == 2 and QUEUE[1]:find("ответ первой вкладки", 1, true) ~= nil,
+    "сработала не та вкладка: " .. tostring(QUEUE[1]))
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+check(Q.autoOnReport("Второй", 152, "Помогите") == true, "чистое «Помогите» не сработало")
+check(#QUEUE == 2 and QUEUE[1]:find("ответ второй вкладки", 1, true) ~= nil,
+    "сработала не та вкладка: " .. tostring(QUEUE[1]))
+-- возвращаем вкладки к состоянию до этой проверки (дальше идут их сценарии)
+Q.autoTabs()[1].trigger = "Помогите"
+Q.autoTabs()[1].answer = "Приветствую, {ник}! Уже смотрю. {ид}"
+Q.autoTabs()[1].command = "goto"
+Q.autoTabs()[2].trigger = "дм"
+Q.autoTabs()[2].answer = "Не пишите в личку, отвечу в репорте"
+Q.autoTabs()[2].command = "sp"
+Q.autoEnsure()
+HPRINT("склейка: «помогите дм» и «помогите, дм» не срабатывают, чистые «дм» и «помогите» — да")
+
+
 -- ===== 10. репорт без триггера / без ID =====
 NOW = NOW + 100
 A.perPid, A.rate = {}, {}
