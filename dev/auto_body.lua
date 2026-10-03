@@ -68,18 +68,37 @@ check(has("«помогите, дм!!!» — обработается, даже 
     "нет примера «помогите, дм!!!» в подсказке")
 check(has("Только для «помогите»: остальным триггерам — репорт целиком"),
     "нет строки о том, что правило действует только для «помогите»")
--- v1.19.33: под полем «Триггер» — подсказка про синонимы через запятую, фраза
--- переносится по словам и должна помещаться ЦЕЛИКОМ (без «…»)
-check(has("Можно ввести триггер и похожие слова к триггеру, на которые скрипт тоже"),
+-- v1.19.34: подсказка про синонимы — СРАЗУ ПОСЛЕ названия «Триггер» (над
+-- полем ввода); фраза переносится по словам и должна помещаться ЦЕЛИКОМ
+check(has("Можно ввести триггер и похожие слова к триггеру (через запятую),"),
     "нет подсказки про похожие слова у поля «Триггер»: " .. texts())
-local hintTail = "так реагировать"
-local hintFull = false
+local hintTail = "так будет реагировать"
+local hintFull, hintY, hintY2 = false, nil, nil
 for i = 1, #TXT do
     local str = tostring(TXT[i].str)
-    if str:sub(-#hintTail) == hintTail then hintFull = true end
+    if str:find("Можно ввести триггер", 1, true) then
+        hintY = TXT[i].y
+        if str:sub(-#hintTail) == hintTail then hintFull = true end
+    end
+    if str:sub(-#hintTail) == hintTail then hintY2 = TXT[i].y end
 end
-check(hintFull, "подсказка про похожие слова обрезана: " .. texts())
+check(hintFull or hintY2 ~= nil, "подсказка про похожие слова обрезана: " .. texts())
 check(not has("напр. помогите"), "вернулся прежний placeholder «напр. помогите»")
+-- подсказка стоит НАД полем «Триггер» и ПОД названием «Триггер»
+local labelY = nil
+for i = 1, #TXT do
+    if TXT[i].str == "Триггер" then labelY = TXT[i].y end
+end
+local fieldY = nil
+for i = 1, #INPUTS do
+    if INPUTS[i].id == "##grnd_qr_auto_trigger" then fieldY = INPUTS[i].y end
+end
+check(labelY ~= nil, "не найдено название «Триггер»")
+check(fieldY ~= nil, "не найдено поле «Триггер»")
+check(hintY ~= nil, "не найдена первая строка подсказки")
+check(hintY > labelY, "подсказка стоит выше названия «Триггер»: " .. tostring(hintY))
+check(hintY < fieldY, "подсказка должна быть НАД полем «Триггер», а она под ним")
+check(hintY - labelY < 30, "подсказка оторвалась от названия «Триггер»: " .. tostring(hintY - labelY))
 -- лишние подписи и кнопки убраны (v1.19.23)
 local goneList = { "вкладок:", "срабатываний", "Добавить вкладку", "Удалить (",
                    "пусто — вкладка молчит", "подставятся сами", "Срабатывания",

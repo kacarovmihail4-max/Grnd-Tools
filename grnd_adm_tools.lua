@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.33"
+GRND_SCRIPT_VERSION = "1.19.34"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24350,7 +24350,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.33)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.34)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -26952,7 +26952,7 @@ do
 end
 
 -- =====================================================================
---  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.33) — «Репорт» → «Автопилот»
+--  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.34) — «Репорт» → «Автопилот»
 -- =====================================================================
 --  Вкладки (до 15): в каждой — ОДИН триггер, свой текст ответа и своя команда
 --  после ответа. Пришёл репорт — ищем триггер по всем вкладкам; совпадение
@@ -27710,12 +27710,22 @@ do
         local yy = ty + tabH + 14
         local iw = w
         -- v1.19.26: у поля «Триггер» нет подписи про длину — короткий триггер
-        -- разрешён. v1.19.33: вместо placeholder «напр. помогите» под полем
-        -- подсказка про синонимы через запятую (её длинный текст переносится
-        -- по словам, чтобы помещался целиком).
+        -- разрешён. v1.19.34: подсказка про синонимы стоит СРАЗУ ПОСЛЕ названия
+        -- «Триггер» (над полем ввода), длинная фраза переносится по словам,
+        -- поэтому помещается целиком.
         ctx.uiText(x, yy, "Триггер", dim, 0.84)
         local sel2 = QR.autoTab()
         yy = yy + 17
+        local tHintSc = 0.72
+        local tHintLines = wrapW(
+            "Можно ввести триггер и похожие слова к триггеру (через запятую), "
+                .. "на которые скрипт тоже так будет реагировать",
+            iw, ctx.drawnW, tHintSc)
+        local tHintStep = lineH(ctx, tHintSc) + 2
+        for li = 1, #tHintLines do
+            ctx.uiText(x, yy + (li - 1) * tHintStep, tHintLines[li], mut, tHintSc)
+        end
+        yy = yy + math.max(1, #tHintLines) * tHintStep + 4
         local trigW = math.min(360, iw)
         local tkey, tid = "autoTrigger" .. A.sel, "##grnd_qr_auto_trigger"
         field(ctx, tid, tkey, MAX_ATRIG + 1, x, yy, trigW, 28, "", false, sel2.trigger)
@@ -27724,15 +27734,7 @@ do
             sel2.trigger = trigVal
             A.dirtyAt = os.clock()
         end
-        local tHintSc = 0.72
-        local tHintLines = wrapW(
-            "Можно ввести триггер и похожие слова к триггеру, на которые скрипт тоже будет так реагировать",
-            iw, ctx.drawnW, tHintSc)
-        local tHintStep = lineH(ctx, tHintSc) + 2
-        for li = 1, #tHintLines do
-            ctx.uiText(x, yy + 32 + (li - 1) * tHintStep, tHintLines[li], mut, tHintSc)
-        end
-        yy = yy + 32 + math.max(1, #tHintLines) * tHintStep + 4
+        yy = yy + 40
 
         ctx.uiText(x, yy, "Ответ игроку", dim, 0.84)
         yy = yy + 17
@@ -27900,7 +27902,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.33"
+        local sv = "1.19.34"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end

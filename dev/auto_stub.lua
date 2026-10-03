@@ -4,6 +4,7 @@
 HPRINT = print
 function print(...) end
 CHAT, ANS, TOASTS, TXT, BTNS = {}, {}, {}, {}, {}
+INPUTS = {}        -- позиции полей ввода ImGui (id + x/y) для проверок вёрстки
 ORDER = {}          -- порядок вызовов: ans (ответ игроку) / chat (команда)
 ANSICALLS = {}      -- что уходило через grndAnsiText (UTF-8 → CP1251)
 QUEUE = {}          -- очередь репорта: и ответ, и команда
@@ -165,7 +166,9 @@ local POS = {}
 local function makeCtx()
     local im = {}
     function im.ImVec2(x, y) return { x = x, y = y } end
-    function im.SetCursorPos() end
+    -- v1.19.34: запоминаем позицию курсора ImGui и позиции полей ввода —
+-- тесты проверяют, что подсказка стоит НАД полем «Триггер», а не под ним.
+function im.SetCursorPos(p) if type(p) == "table" then POS.cx, POS.cy = p.x, p.y end end
     function im.InvisibleButton(id, size)
         BTNS[#BTNS + 1] = tostring(id)
         return CLICK[tostring(id)] and true or false
@@ -184,10 +187,12 @@ local function makeCtx()
         return false
     end
     function im.InputTextWithHint(id, hint, buf, cap)
+        INPUTS[#INPUTS + 1] = { id = tostring(id), x = POS.cx or 0, y = POS.cy or 0 }
         if TYPE[id] then grndBinderWriteCBuf(buf, cap, TYPE[id]); TYPE[id] = nil end
         return false
     end
     function im.InputText(id, buf, cap)
+        INPUTS[#INPUTS + 1] = { id = tostring(id), x = POS.cx or 0, y = POS.cy or 0 }
         if TYPE[id] then grndBinderWriteCBuf(buf, cap, TYPE[id]); TYPE[id] = nil end
         return false
     end
