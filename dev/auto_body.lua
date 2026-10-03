@@ -81,12 +81,18 @@ local t1 = Q.autoTabs()[1]
 check(t1.trigger == "Помогите", "триггер не записался: " .. tostring(t1.trigger))
 check(Q.autoLabel(1) == "Помогите", "подпись вкладки не стала триггером: " .. Q.autoLabel(1))
 check(Q.autoTriggers(t1)[1] == "помогите", "триггер не приводится к нижнему регистру")
-check(Q.autoMatchTab("ПОМОГИТЕ!!!") == 1, "кириллица в верхнем регистре не найдена")
-check(Q.autoMatchTab("{FF0000}Help me") == nil, "найдено лишнее совпадение")
+check(Q.autoMatchTab("ПОМОГИТЕ") == 1, "кириллица в верхнем регистре не найдена")
+check(Q.autoMatchTab("  помогите  ") == 1, "лишние пробелы вокруг сбивают совпадение")
+check(Q.autoMatchTab("{FF0000}помогите") == 1, "код цвета мешает совпадению")
+check(Q.autoMatchTab("ПОМОГИТЕ!!!") == nil, "знак пунктуации не должен считаться триггером")
+check(Q.autoMatchTab("помогите плиз") == nil, "лишнее слово не должно считаться триггером")
+check(Q.autoMatchTab("помогите, дм") == nil, "два слова в репорте не должны срабатывать")
+check(Q.autoMatchTab("Help me") == nil, "найдено лишнее совпадение")
 TYPE["##grnd_qr_auto_answer"] = "Приветствую, {ник}! Уже смотрю. {ид}"
 drawAuto()
 check(t1.answer == "Приветствую, {ник}! Уже смотрю. {ид}",
     "ответ не записался: " .. tostring(t1.answer))
+check(not texts():find("{ник}", 1, true), "в разделе осталась подсказка с {ник}")
 HPRINT("вкладка 1: триггер «Помогите», ответ с {ник}/{ид}, подпись = триггер")
 
 -- ===== 5. селектор команды и строка-предпросмотр =====
@@ -147,7 +153,7 @@ NOW = NOW + 10
 A.perPid, A.rate = {}, {}
 Q.autoSet(false)
 QUEUE, ANS, CHAT, ORDER = {}, {}, {}, {}
-local okOff, whyOff = Q.autoOnReport("Mixa_Grozz", 25, "Помогите!!!")
+local okOff, whyOff = Q.autoOnReport("Mixa_Grozz", 25, "Помогите")
 check(okOff == false and whyOff == "выключен", "выключенный автопилот сработал: " .. tostring(whyOff))
 check(#QUEUE == 0, "выключенный автопилот что-то отправил")
 check(Q.autoSet(true) == true, "автопилот не включился")
@@ -157,7 +163,7 @@ HPRINT("выключен: репорты проходят мимо, в чат н
 NOW = NOW + 10
 A.perPid, A.rate = {}, {}
 QUEUE, ANS, CHAT, ORDER, ANSICALLS = {}, {}, {}, {}, {}
-local fired, hit = Q.autoOnReport("Mixa_Grozz", 25, "Помогите, дм!!!")
+local fired, hit = Q.autoOnReport("Mixa_Grozz", 25, "Помогите")
 check(fired == true, "репорт с триггером не обработан")
 check(hit == "помогите", "сработал не тот триггер: " .. tostring(hit))
 check(#QUEUE == 2, "в очередь встало не две строки: " .. tostring(#QUEUE))
@@ -177,12 +183,20 @@ check(A.lastCheck:find("вкладка 1", 1, true) ~= nil, "нет пометк
 NOW = NOW + 100
 A.perPid, A.rate = {}, {}
 QUEUE, ANS, CHAT, ORDER, ANSICALLS = {}, {}, {}, {}, {}
-local fired2, hit2 = Q.autoOnReport("Другой", 77, "написал в дм, ответь")
+local fired2, hit2 = Q.autoOnReport("Другой", 77, "дм")
 check(fired2 == true and hit2 == "дм", "вторая вкладка не сработала: " .. tostring(hit2))
 check(#QUEUE == 2 and QUEUE[1] == "/ans 77 Не пишите в личку, отвечу в репорте"
     and QUEUE[2] == "/sp 77", "вторая вкладка отправила не то: " .. tostring(QUEUE[1]))
 check(A.lastCheck:find("вкладка 2", 1, true) ~= nil, "нет пометки второй вкладки")
-HPRINT("срабатывание: триггер выбирает вкладку, её ответ и её команда")
+-- в репорте есть лишние слова — это уже не триггер
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+local okExtra, whyExtra = Q.autoOnReport("Третий", 88, "помогите, дм")
+check(okExtra == false and whyExtra == "нет триггера",
+    "репорт с лишними словами всё равно сработал: " .. tostring(whyExtra))
+check(#QUEUE == 0, "на репорт с лишними словами что-то ушло")
+HPRINT("срабатывание: триггер выбирает вкладку, её ответ и её команда (весь репорт целиком)")
 
 -- ===== 10. репорт без триггера / без ID =====
 NOW = NOW + 100
@@ -207,14 +221,14 @@ NOW = NOW + 10
 A.perPid, A.rate = {}, {}
 Q.autoOnReport("Mixa_Grozz", 25, "Помогите")
 QUEUE = {}
-local okGap, whyGap = Q.autoOnReport("Другой", 77, "Помогите")
+local okGap, whyGap = Q.autoOnReport("Другой", 77, "помогите")
 check(okGap == false and whyGap == "слишком часто", "нет паузы между срабатываниями: " .. tostring(whyGap))
 NOW = NOW + 3
-local okDup, whyDup = Q.autoOnReport("Mixa_Grozz", 25, "помогите ещё раз")
+local okDup, whyDup = Q.autoOnReport("Mixa_Grozz", 25, " Помогите " )
 check(okDup == false and whyDup == "этому игроку уже отвечали", "нет антидубля: " .. tostring(whyDup))
 check(#QUEUE == 0, "пропущенные репорты всё равно ушли")
 NOW = NOW + 3
-check(Q.autoOnReport("Другой", 77, "Помогите!") == true, "после паузы не сработало")
+check(Q.autoOnReport("Другой", 77, "помогите") == true, "после паузы не сработало")
 HPRINT("антидубль: тому же игроку — раз в минуту, между срабатываниями пауза")
 
 A.perPid, A.rate = {}, {}
@@ -272,7 +286,7 @@ A.perPid, A.rate = {}, {}
 Q.autoTabs()[2].command = "none"
 CHAT, QUEUE = {}, {}
 check(Q.autoCmdFor(500, Q.autoTabs()[2]) == nil, "команда «без команды» всё равно собирается")
-check(Q.autoOnReport("Тихий", 500, "в дм пишет") == true, "вторая вкладка не сработала")
+check(Q.autoOnReport("Тихий", 500, "дм") == true, "вторая вкладка не сработала")
 check(#QUEUE == 1, "в очереди лишние строки: " .. tostring(#QUEUE))
 grndRepQueueTick()
 check(#CHAT == 0, "при «без команды» в чат всё равно ушла команда")

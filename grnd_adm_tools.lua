@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.23"
+GRND_SCRIPT_VERSION = "1.19.24"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24347,7 +24347,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.23)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.24)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -25246,25 +25246,10 @@ local function field(ctx, id, key, cap, x, y, w, h, hint, multiline, initial)
         if okM then okCall, changed = true, (res == true) end
     end
 
-    -- рамка по ФАКТИЧЕСКИМ габаритам поля (без двойного контура)
-    local rx, ry, rw, rh = x, y, w, h
-    if type(im.GetItemRectMin) == "function" and type(im.GetItemRectMax) == "function" then
-        local okA, a = pcall(im.GetItemRectMin)
-        local okB, b = pcall(im.GetItemRectMax)
-        local p = im.GetWindowPos()
-        if okA and okB and a and b and a.x and b.x and p and p.x then
-            rx, ry, rw, rh = a.x - p.x, a.y - p.y, b.x - a.x, b.y - a.y
-        end
-    end
-    local hov = (im.IsItemHovered and im.IsItemHovered()) or false
-    local act = (im.IsItemActive and im.IsItemActive()) or false
-    local ac = TH.accent or { 164, 112, 224, 255 }
-    local edge = act and ctx.col32(ac[1], ac[2], ac[3], 190)
-        or (hov and ctx.col32(255, 255, 255, 60) or ctx.col32(255, 255, 255, 30))
-    if ctx.dl.AddRect then
-        pcall(ctx.dl.AddRect, ctx.dl, ctx.at(rx + 0.5, ry + 0.5),
-            ctx.at(rx + rw - 0.5, ry + rh - 0.5), edge, 6, 0, 1)
-    end
+    -- v1.19.24: своей рамки поверх поля больше нет. Она рисовалась по
+    -- габаритам и при наведении становилась ярче — поверх поля появлялся
+    -- полупрозрачный прямоугольник («квадратик»). Теперь наведение видно
+    -- только по родному фону поля, рамка задаётся цветом Border выше.
 
     if ctx.popVar and nVar > 0 then ctx.popVar(nVar) end
     if ctx.popCol and nCol > 0 then ctx.popCol(nCol) end
@@ -26932,12 +26917,15 @@ do
 end
 
 -- =====================================================================
---  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.23) — «Репорт» → «Автопилот»
+--  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.24) — «Репорт» → «Автопилот»
 -- =====================================================================
 --  Вкладки: в каждой — ОДИН триггер, свой текст ответа и своя команда после
---  ответа. Пришёл репорт — ищем триггер по вкладкам по порядку; первая
---  подошедшая отвечает игроку штатной /ans ID текст (в CP1251, без
---  «закорючек») и сразу отправляет свою команду (/sp ID или /goto ID).
+--  ответа. Пришёл репорт — ищем триггер по вкладкам по порядку; срабатывает
+--  только ПОЛНОЕ совпадение: репорт должен целиком состоять из триггера
+--  («помогите» — да, «помогите, помогите плиз» — нет), иначе автопилот отвечал
+--  бы на любую жалобу, где встретилось слово. Первая подошедшая вкладка
+--  отвечает игроку штатной /ans ID текст (в CP1251, без «закорючек») и сразу
+--  отправляет свою команду (/sp ID или /goto ID).
 --
 --  Чтобы поведение было предсказуемым:
 --    * слежка — стоп: в слежке автопилот не срабатывает и САМ выключается
@@ -26949,7 +26937,8 @@ end
 --    * ответ и команда идут в ОДНУ очередь репорта: ответ уходит первым,
 --      сервер не получает две команды в одном кадре;
 --    * репорт должен быть настоящим («… [К-во репорта: N]» или формат
---      админ-бота «Ник(ID): текст») — обычная болтовня в чате не считается.
+--      админ-бота «Ник(ID): текст») — обычная болтовня в чате не считается;
+--    * текст репорта должен быть ровно триггером — без других слов;
 --
 --  Конфиг: grnd_repauto.cfg (on / sel / count / t1_trigger / t1_answer /
 --  t1_command / …). Файл старого формата (один trigger=…) читается как
@@ -27116,16 +27105,19 @@ do
         return out
     end
 
-    -- Первая вкладка, чей триггер есть в тексте репорта. Возвращает её номер
-    -- и найденный триггер.
+    -- Первая вкладка, чей триггер — это ВЕСЬ текст репорта (лишние слова не
+    -- считаются: «помогите» — да, «помогите, дм!!!» или «помогите плиз» — нет,
+    -- иначе автопилот отвечал бы на каждую жалобу со словом «помогите»).
+    -- Пробелы вокруг и лишние пробелы внутри не мешают: «  Помогите  » — да.
+    -- Возвращает номер вкладки и найденный триггер.
     function QR.autoMatchTab(text)
-        local low = autoLower(autoPlain(text))
+        local low = trim(autoLower(autoPlain(text)))
         if low == "" then return nil end
         local tabs = QR.autoTabs()
         for i = 1, #tabs do
             local list = QR.autoTriggers(tabs[i])
             for k = 1, #list do
-                if low:find(list[k], 1, true) then return i, list[k] end
+                if low == list[k] then return i, list[k] end
             end
         end
         return nil
@@ -27590,7 +27582,7 @@ do
         if shortTrig then
             hintTxt, hintCol = "слишком короткий — сработает почти на всё", warnC
         elseif #QR.autoTriggers(sel2) > 0 then
-            hintTxt, hintCol = "регистр не важен", mut
+            hintTxt, hintCol = "репорт целиком · регистр не важен", mut
         end
         if hintTxt and type(ctx.drawnW) == "function" then
             local okM, v = pcall(ctx.drawnW, hintTxt, 0.8)
@@ -27613,7 +27605,7 @@ do
         yy = yy + 17
         local ansH = 92
         local akey, aid = "autoAnswer" .. A.sel, "##grnd_qr_auto_answer"
-        field(ctx, aid, akey, 1024, x, yy, iw, ansH, "Приветствую, {ник}, уже смотрю…", true, sel2.answer)
+        field(ctx, aid, akey, 1024, x, yy, iw, ansH, "Приветствую, уже смотрю…", true, sel2.answer)
         local ansVal = clampText(cleanText(bufText(akey)), MAX_TEXT)
         if ansVal ~= sel2.answer then
             sel2.answer = ansVal
@@ -27755,7 +27747,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.23"
+        local sv = "1.19.24"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -33787,6 +33779,7 @@ function grndMainBody()
                         -- триггер, ответ /ans ID и команда /sp или /goto.
                         -- v1.19.22: вкладок может быть сколько нужно.
                         -- v1.19.23: у вкладки крестик удаления, добавление — «+».
+                        -- v1.19.24: триггер совпадает с репортом целиком.
                         local topY = cardY + 16
                         local topBtnH = 34
                         local b1X = cardX + 20
@@ -34074,7 +34067,7 @@ function grndMainBody()
                             end
                         else
                             -- =========================================
-                            --  ПОД-ВКЛАДКИ «РЕПОРТА» (v1.19.23): «Ответы на
+                            --  ПОД-ВКЛАДКИ «РЕПОРТА» (v1.19.24): «Ответы на
                             --  репорт», «Наказания» и «Автопилот» — все три
                             --  рисуются своими модулями внутри GRND_QR.
                             -- =========================================
@@ -34113,6 +34106,7 @@ function grndMainBody()
                                 -- триггер, ответ /ans ID и команда после него.
                                 -- v1.19.23: добавление «+», удаление — крестик
                                 -- вкладки; подписи раздела — без лишнего.
+                                -- v1.19.24: триггер — только весь репорт целиком.
                                 if type(_G.grndQrAutoDraw) == "function" then
                                     local okAu = pcall(_G.grndQrAutoDraw, {
                                         im = im, dl = dl, at = at,

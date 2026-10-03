@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.23"' in s, 'версия не 1.19.23')
+need('GRND_SCRIPT_VERSION = "1.19.24"' in s, 'версия не 1.19.24')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -171,6 +171,21 @@ absent('пусто — вкладка молчит', 'вернулась под�
 absent('подставятся сами', 'вернулась подпись про {ник}/{ид}')
 # триггер ищем по вкладкам, первая подошедшая — её ответ и её команда
 need('function QR.autoMatchTab(text)' in s, 'нет поиска триггера по вкладкам')
+need('if low == list[k] then return i, list[k] end' in s,
+     'триггер снова ищется как подстрока — репорт с лишними словами сработает')
+absent('low:find(list[k], 1, true)', 'вернулся поиск триггера подстрокой')
+need('local low = trim(autoLower(autoPlain(text)))' in s,
+     'текст репорта не нормализуется (пробелы/регистр) перед сравнением')
+# v1.19.24: у полей ввода нет своей рамки — при наведении не появляется «квадратик»
+field_src = s[s.index('local function field(ctx, id, key, cap'):s.index('-- Треугольник средствами draw-list')]
+need('AddRect' not in field_src,
+     'у полей ввода снова своя рамка (при наведении появлялся «квадратик»)')
+# v1.19.24: подсказка поля ответа — без {ник}
+need('"Приветствую, уже смотрю…", true, sel2.answer' in s,
+     'подсказка поля «Ответ игроку» снова с {ник}')
+auto_draw_src = s[s.index('_G.grndQrAutoDraw = function(ctx)'):s.index('_G.grndQrAutoOnReport = function')]
+need('{ник}' not in auto_draw_src, 'в разделе «Автопилот» снова подсказка с {ник}')
+need('репорт целиком' in auto_draw_src, 'нет подсказки, что репорт должен совпасть целиком')
 need('local tab = QR.autoTab(idx)' in s, 'срабатывание не привязано к вкладке')
 need('local cmd = QR.autoCmdFor(id, tab)' in s, 'команда берётся не из вкладки')
 need('local line = oneLine(QR.apply(tab.answer, rep))' in s, 'ответ берётся не из вкладки')
