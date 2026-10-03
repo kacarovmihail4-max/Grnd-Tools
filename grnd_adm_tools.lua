@@ -1,5 +1,5 @@
 script_name("grnd_adm_tools")
-script_version("1.19.05")
+script_version("1.19.06")
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
 require "lib.sampfuncs"
@@ -19914,20 +19914,24 @@ function grndUiButton(ctx, id, x, y, w, h, label, opts)
     local ac = TH.accent or { 0, 214, 170, 255 }
     local bg, border
     if opts.danger then
-        bg = (hov or act) and col32(255, 96, 96, 46) or col32(255, 96, 96, 26)
-        border = col32(255, 96, 96, (hov or act) and 120 or 70)
+        bg = (hov or act) and col32(255, 96, 96, 56) or col32(255, 96, 96, 34)
+        border = col32(255, 96, 96, (hov or act) and 130 or 84)
     elseif opts.selected then
-        bg = col32(ac[1], ac[2], ac[3], 28)
-        border = col32(ac[1], ac[2], ac[3], 100)
+        bg = col32(ac[1], ac[2], ac[3], 38)
+        border = col32(ac[1], ac[2], ac[3], 115)
     elseif act then
-        bg = col32(255, 255, 255, 24)
-        border = col32(255, 255, 255, 44)
+        bg = col32(255, 255, 255, 44)
+        border = col32(255, 255, 255, 78)
     elseif hov then
-        bg = col32(255, 255, 255, 14)
-        border = col32(255, 255, 255, 30)
+        bg = col32(255, 255, 255, 34)
+        border = col32(255, 255, 255, 66)
     else
-        bg = col32(255, 255, 255, 10)
-        border = col32(255, 255, 255, 18)
+        -- v1.19.06: спокойное состояние тоже должно читаться. Раньше заливка
+        -- была 10/255 (≈4 %), и кнопка «пропадала», пока под неё не наведёшь
+        -- курсор: единственной видимой частью оставался hoverLayer, а он
+        -- рисуется только при наведении.
+        bg = col32(255, 255, 255, 22)
+        border = col32(255, 255, 255, 40)
     end
     roundRect(dl, at(x, y), at(x + w, y + h), bg, 6)
     if dl.AddRect then
@@ -22827,12 +22831,20 @@ end
 -- считаем, что удалось, чтобы потом снять ровно столько же.
 local function mpPushCol(im, idx, r, g, b, a)
     if not (im and im.PushStyleColor and idx ~= nil and im.ImVec4) then return false end
-    return pcall(im.PushStyleColor, idx,
-        im.ImVec4(r / 255, g / 255, b / 255, (a or 255) / 255))
+    -- конструктор цвета тоже под pcall: в части сборок im.ImVec4 — не функция,
+    -- а тип, и прямое обращение уронило бы отрисовку всей панели
+    local okC, col = pcall(im.ImVec4, r / 255, g / 255, b / 255, (a or 255) / 255)
+    if not okC then return false end
+    return pcall(im.PushStyleColor, idx, col)
 end
 local function mpPushVar2(im, idx, vx, vy)
     if not (im and idx ~= nil) then return false end
-    local v = im.ImVec2 and im.ImVec2(vx, vy) or { x = vx, y = vy }
+    local v
+    if im.ImVec2 then
+        local okV, vec = pcall(im.ImVec2, vx, vy)
+        if okV then v = vec end
+    end
+    if not v then v = { x = vx, y = vy } end
     if im.PushStyleVarVec2 and pcall(im.PushStyleVarVec2, idx, v) then return true end
     if im.PushStyleVar and pcall(im.PushStyleVar, idx, v) then return true end
     return false
@@ -22969,8 +22981,16 @@ local function textInput(ctx, key, id, cap, value, x, y, w, h, hint, onChange)
         FIELD_H = rh
     end
 
-    if nCol > 0 and im.PopStyleColor then pcall(im.PopStyleColor, nCol) end
-    if (padN + borderN) > 0 and im.PopStyleVar then pcall(im.PopStyleVar, padN + borderN) end
+    if nCol > 0 and im.PopStyleColor then
+        if not pcall(im.PopStyleColor, nCol) then
+            for _ = 1, nCol do pcall(im.PopStyleColor) end
+        end
+    end
+    if (padN + borderN) > 0 and im.PopStyleVar then
+        if not pcall(im.PopStyleVar, padN + borderN) then
+            for _ = 1, padN + borderN do pcall(im.PopStyleVar) end
+        end
+    end
     if pushedWidth and im.PopItemWidth then pcall(im.PopItemWidth) end
 
     -- Рамка по фактическим габаритам поля — как у «Название»: спокойная
@@ -23189,15 +23209,17 @@ local function button(ctx, id, x, y, w, h, label, opts)
     end
     local ac0 = theme().accent
     local bg, bd
+    -- v1.19.06: спокойные кнопки панели больше не «исчезают» — заливка и
+    -- рамка видны и без наведения (hoverLayer лишь добавляет акцент).
     if opts.danger then
-        bg = col32(255, 96, 96, 26)
-        bd = col32(255, 96, 96, 70)
+        bg = col32(255, 96, 96, 34)
+        bd = col32(255, 96, 96, 84)
     elseif opts.selected then
-        bg = col32(ac0[1], ac0[2], ac0[3], 28)
-        bd = col32(ac0[1], ac0[2], ac0[3], 100)
+        bg = col32(ac0[1], ac0[2], ac0[3], 38)
+        bd = col32(ac0[1], ac0[2], ac0[3], 115)
     else
-        bg = col32(255, 255, 255, 10)
-        bd = col32(255, 255, 255, 18)
+        bg = col32(255, 255, 255, 22)
+        bd = col32(255, 255, 255, 40)
     end
     roundRect(ctx.dl, ctx.at(x, y), ctx.at(x + w, y + h), bg, 6)
     frameRect(ctx.dl, ctx.at(x + 0.5, y + 0.5), ctx.at(x + w - 0.5, y + h - 0.5), bd, 6, 1)
@@ -23311,8 +23333,8 @@ local function gearButton(ctx, key, cx, cy, active)
         or (th.textMuted or { 170, 164, 184 })
     if hovered then base = { 255, 222, 255, 255 } end
     roundRect(ctx.dl, ctx.at(x + 3, y + 3), ctx.at(x + size - 3, y + size - 3),
-        col32(base[1], base[2], base[3], hovered and 38 or 16), 7)
-    gearIcon(ctx, cx, cy, col32(base[1], base[2], base[3], hovered and 255 or (active and 245 or 205)))
+        col32(base[1], base[2], base[3], hovered and 48 or 26), 7)
+    gearIcon(ctx, cx, cy, col32(base[1], base[2], base[3], hovered and 255 or (active and 250 or 225)))
     return clicked
 end
 
@@ -23926,7 +23948,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.05)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.06)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -24797,8 +24819,8 @@ local function button(ctx, id, x, y, w, h, label, opts)
     local act = (im.IsItemActive and im.IsItemActive()) or false
     local bg, bd, fg
     if opts.danger then
-        bg = (hov or act) and ctx.col32(255, 96, 96, 46) or ctx.col32(255, 96, 96, 24)
-        bd = ctx.col32(255, 96, 96, (hov or act) and 130 or 70)
+        bg = (hov or act) and ctx.col32(255, 96, 96, 56) or ctx.col32(255, 96, 96, 32)
+        bd = ctx.col32(255, 96, 96, (hov or act) and 130 or 84)
         fg = ctx.col32(255, 190, 190, 255)
     elseif opts.primary then
         bg = (hov or act) and ctx.col32(TH.accent2[1], TH.accent2[2], TH.accent2[3], 255)
@@ -24806,15 +24828,16 @@ local function button(ctx, id, x, y, w, h, label, opts)
         bd = ctx.col32(255, 255, 255, 45)
         fg = ctx.col32(18, 15, 24, 255)
     elseif opts.selected then
-        bg = ctx.col32(ac[1], ac[2], ac[3], 34)
-        bd = ctx.col32(ac[1], ac[2], ac[3], 120)
+        bg = ctx.col32(ac[1], ac[2], ac[3], 40)
+        bd = ctx.col32(ac[1], ac[2], ac[3], 125)
         fg = ctx.col32(250, 248, 255, 255)
     elseif act then
-        bg, bd, fg = ctx.col32(255, 255, 255, 26), ctx.col32(255, 255, 255, 48), ctx.col32(250, 248, 255, 255)
+        bg, bd, fg = ctx.col32(255, 255, 255, 38), ctx.col32(255, 255, 255, 72), ctx.col32(250, 248, 255, 255)
     elseif hov then
-        bg, bd, fg = ctx.col32(255, 255, 255, 15), ctx.col32(255, 255, 255, 34), ctx.col32(250, 248, 255, 255)
+        bg, bd, fg = ctx.col32(255, 255, 255, 32), ctx.col32(255, 255, 255, 64), ctx.col32(250, 248, 255, 255)
     else
-        bg, bd = ctx.col32(255, 255, 255, 10), ctx.col32(255, 255, 255, 20)
+        -- v1.19.06: спокойная кнопка видна (было 10/20 — «пропадала»)
+        bg, bd = ctx.col32(255, 255, 255, 22), ctx.col32(255, 255, 255, 40)
         -- v1.19.03: подписи кнопок ярче (просили «поярче»)
         fg = opts.muted and ctx.col32(208, 202, 226, 255) or ctx.col32(240, 236, 250, 255)
     end
@@ -25025,11 +25048,12 @@ local function pickerDraw(ctx)
                         im.ImVec2(cell.w, bottom - top)) and true or false
                     local hov = (im.IsItemHovered and im.IsItemHovered()) or false
                     local act = (im.IsItemActive and im.IsItemActive()) or false
-                    local bg = act and ctx.col32(acC[1], acC[2], acC[3], 56)
-                        or (hov and ctx.col32(acC[1], acC[2], acC[3], 30)
-                            or ctx.col32(255, 255, 255, 12))
-                    local bd = (hov or act) and ctx.col32(acC[1], acC[2], acC[3], 150)
-                        or ctx.col32(255, 255, 255, 28)
+                    -- v1.19.06: спокойная кнопка видна и без наведения
+                    local bg = act and ctx.col32(acC[1], acC[2], acC[3], 62)
+                        or (hov and ctx.col32(acC[1], acC[2], acC[3], 38)
+                            or ctx.col32(255, 255, 255, 24))
+                    local bd = (hov or act) and ctx.col32(acC[1], acC[2], acC[3], 155)
+                        or ctx.col32(255, 255, 255, 46)
                     box(bx, ry, cell.w, PICK_BH, bg, 7)
                     frame(bx, ry, cell.w, PICK_BH, bd, 7)
                     if hov or act then
@@ -25420,7 +25444,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.05"
+        local sv = "1.19.06"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -33409,11 +33433,12 @@ function grndMainBody()
                         bd = bg
                         fg = c4(TH.bg)
                     else
-                        bg = active and col32(TH.accent[1], TH.accent[2], TH.accent[3], 50)
-                            or (hovered and col32(TH.accent[1], TH.accent[2], TH.accent[3], 28)
-                                or col32(255, 255, 255, 10))
-                        bd = hovered and col32(TH.accent[1], TH.accent[2], TH.accent[3], 110)
-                            or col32(255, 255, 255, 20)
+                        -- v1.19.06: спокойная кнопка видна и без наведения
+                        bg = active and col32(TH.accent[1], TH.accent[2], TH.accent[3], 58)
+                            or (hovered and col32(TH.accent[1], TH.accent[2], TH.accent[3], 36)
+                                or col32(255, 255, 255, 22))
+                        bd = hovered and col32(TH.accent[1], TH.accent[2], TH.accent[3], 120)
+                            or col32(255, 255, 255, 40)
                         -- v1.19.04: подписи кнопок окна репорта — заметно ярче
                         -- (прежний TH.text 207,202,217 читался блёкло)
                         fg = hovered and c4({ 252, 250, 255, 255 })
