@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.18"' in s, 'версия не 1.19.18')
+need('GRND_SCRIPT_VERSION = "1.19.19"' in s, 'версия не 1.19.19')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -147,20 +147,30 @@ for c in ('{ id = "jail"', '{ id = "kick"', '{ id = "warn"'):
     absent(c, 'в селекторе осталась убранная команда ' + c)
 need('function QR.punDef(id)' in s, 'нет разбора команды наказания')
 need('function QR.punCommand(it, rep)' in s, 'нет сборки команды наказания')
-need('QR.sendChat("/n " .. cmd)' in s, 'наказание не проверяется через /n (тестовый режим)')
 # v1.19.17: в тестовом режиме в /n уходит и ответ на репорт
 need('QR.sendChat("/n " .. line)' in s, 'ответ на репорт не уходит в /n вместе с командой')
 need('и ответ игроку' in s, 'тост не сообщает про оба сообщения в /n')
-# v1.19.18: порядок — сначала ответ игроку, потом наказание
-need('QR.sendChat("/n " .. line)          -- ответ на репорт — первым' in s,
-     'в /n ответ на репорт уходит не первым')
-need('pcall(grndRepAnswer, pid, line)' in s, 'в бою ответ игроку не уходит перед наказанием')
+# v1.19.19: ответ игроку — штатной /ans ID текст, наказание — без /n
+need('pcall(grndRepAnswer, pid, line)' in s, 'ответ игроку не уходит командой /ans')
 pun_choose = s[s.index('function QR.punChoose(it)'):s.index('function QR.openPunPicker()')]
-need(pun_choose.index('pcall(grndRepAnswer, pid, line)') < pun_choose.index('if QR.sendChat(cmd) then'),
-     'в бою наказание уходит раньше ответа игроку')
-test_part = pun_choose[pun_choose.index('-- Тестовый режим: в /n уходит И ответ'):]
-need(test_part.index('QR.sendChat("/n " .. line)') < test_part.index('if QR.sendChat("/n " .. cmd) then'),
-     'в тесте команда уходит раньше ответа игроку')
+tail_part = pun_choose[pun_choose.index('-- v1.19.19: сначала игроку уходит ОТВЕТ'):]
+need(tail_part.index('pcall(grndRepAnswer, pid, line)') < tail_part.index('grndRepQueue(cmd)'),
+     'наказание встаёт в очередь раньше ответа игроку')
+need('local sent = false' in pun_choose and 'grndRepQueue(cmd)' in pun_choose,
+     'наказание не идёт через очередь репорта (обгонит ответ игроку)')
+absent('QR.sendChat("/n " .. cmd)', 'перед командой наказания остался /n')
+need('QR.sendChat(cmd)' in pun_choose, 'команда наказания не отправляется')
+# быстрые ответы: ответ тоже через /ans, /n остаётся только как путь без ID
+need('QR.toast("Ответ игроку /ans " .. pid' in s, 'быстрые ответы не отвечают через /ans')
+choose = s[s.index('function QR.choose(it)'):s.index('function QR.openPicker()')]
+need(choose.index('pcall(grndRepAnswer, pid, text)') < choose.index('QR.sendChat("/n " .. line)'),
+     'в быстрых ответах /ans должен идти раньше резервного /n')
+need('Нет ID игрока (ответить некому)' in s, 'пропал резервный путь /n для репорта без ID')
+# баг первой строки списка наказаний
+need('local fully = (iy >= listY - 0.5) and (iy + rowH <= listY + listH + 0.5)' in s,
+     'первая строка списка наказаний снова считается невидимой (мёртвые стрелки)')
+need('local canUp = (pidx or 1) > 1' in s and 'local canDn = pidx ~= nil and pidx < QR.punCount()' in s,
+     'стрелки на краях списка наказаний не отключаются')
 # полоса обжимает кнопки: минимум ширины снижен, пустоты справа нет
 absent('local W = math.max(184, math.min(maxW, contentW + PICK_PADX * 2))',
        'вернулась полоса шириной минимум 184 px (пустота справа)')

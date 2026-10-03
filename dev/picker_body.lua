@@ -177,16 +177,30 @@ check(POS.y > RESY / 2, "фолбэк позиции полосы по Y нев�
 HPRINT(("окно репорта ещё не рисовалось: x=%s y=%s")
     :format(tostring(POS.x), tostring(POS.y)))
 
--- 5. клик по шаблону в тестовом режиме: уходит в чат И окно репорта закрывается
+-- 5. клик по шаблону: ответ игроку штатной /ans ID текст, окно репорта закрывается
 TOOLTIP = nil
 GRND_REP.open = true
+GRND_REP.playerId = "25"
 Q.pickOpen = true
 Q.mode = "test"
+local before = #CHAT
 check(Q.choose(Q.items[1]) == true, "шаблон не отправился")
-check(#CHAT == 1, "в чат ушло не одно сообщение: " .. tostring(#CHAT))
+local want = "25|" .. Q.apply(Q.items[1].text, { nick = GRND_REP.author, id = GRND_REP.playerId })
+check(#ANS == 1 and ANS[1] == want, "ответ ушёл не через /ans: " .. tostring(ANS[1]))
+check(#CHAT == before, "в чат ушло лишнее сообщение: " .. tostring(CHAT[#CHAT]))
 check(GRND_REP.open == false, "окно репорта НЕ закрылось после отправки шаблона")
 check(Q.pickOpen == false, "полоса шаблонов не закрылась")
-HPRINT("тестовый режим: отправлено «" .. CHAT[1] .. "», окно репорта закрыто")
+HPRINT("ответ игроку: /ans 25 «" .. want:gsub("^25|", "") .. "», окно репорта закрыто")
+
+-- 5b. нет ID игрока (ответить некому): прежний тестовый путь в /n
+GRND_REP.open = true
+GRND_REP.playerId = "—"
+Q.pickOpen = true
+check(Q.choose(Q.items[1]) == true, "шаблон не отправился (без ID)")
+check(#CHAT == before + 1 and CHAT[#CHAT]:sub(1, 3) == "/n ",
+    "без ID шаблон не ушёл в /n: " .. tostring(CHAT[#CHAT]))
+HPRINT("без ID игрока: шаблон уходит в /n — «" .. CHAT[#CHAT] .. "»")
+GRND_REP.playerId = "25"
 
 -- 6. режим «в поле ответа»: окно НЕ закрываем (там ещё правят текст)
 GRND_REP.open = true
@@ -201,8 +215,9 @@ HPRINT("режим «в поле ответа»: окно репорта ост�
 GRND_REP.open = true
 Q.mode = "ans"
 Q.pickOpen = true
+local ansBefore = #ANS
 check(Q.choose(Q.items[1]) == true, "ответ не ушёл")
-check(#ANS == 1, "grndRepAnswer не вызван")
+check(#ANS == ansBefore + 1, "grndRepAnswer не вызван")
 check(GRND_REP.open == false, "после ответа игроку окно репорта не закрылось")
 HPRINT("режим ответа игроку: ответ отправлен, окно репорта закрыто")
 

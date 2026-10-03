@@ -60,7 +60,29 @@ function sampSendChat(s) CHAT[#CHAT + 1] = tostring(s) ORDER[#ORDER + 1] = "chat
 function getScreenResolution() return 1920, 1080 end
 function grndBinderWriteCBuf(buf, cap, text) buf.v = tostring(text) return true end
 function grndBinderReadCBuf(buf) return tostring(buf.v or "") end
-function grndRepAnswer(pid, text) ANS[#ANS + 1] = tostring(pid) .. "|" .. tostring(text) ORDER[#ORDER + 1] = "ans" return true end
+-- Очередь репорта — как в игре: grndRepAnswer ставит «/ans ID текст» в очередь,
+-- наказание встаёт туда же СЛЕДОМ, отправка идёт по одной строке за тик.
+-- QR.sendChat/grndChatSend при этом бьют мгновенно (как sampSendChat в игре),
+-- поэтому, если наказание когда-нибудь отправят в обход очереди, стенд поймает
+-- это проверкой порядка ORDER (получилось бы chat раньше ans).
+QUEUE = {}
+function grndRepQueue(cmd) QUEUE[#QUEUE + 1] = cmd end
+function grndRepQueueTick()
+    while #QUEUE > 0 do
+        local item = table.remove(QUEUE, 1)
+        if type(item) == "table" and item.ans then
+            ANS[#ANS + 1] = item.pid .. "|" .. item.text
+            ORDER[#ORDER + 1] = "ans"
+        else
+            CHAT[#CHAT + 1] = tostring(item)
+            ORDER[#ORDER + 1] = "chat"
+        end
+    end
+end
+function grndRepAnswer(pid, text)
+    grndRepQueue({ ans = true, pid = tostring(pid), text = tostring(text) })
+    return true
+end
 function isKeyDown() return false end
 function isMouseButtonDown() return false end
 GRND_REP = { open = true, author = "Тестовый", playerId = "25", question = "дм", focused = false }

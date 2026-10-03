@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.18"
+GRND_SCRIPT_VERSION = "1.19.19"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24243,7 +24243,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» И ШАБЛОНЫ НАКАЗАНИЙ (v1.19.18)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» И ШАБЛОНЫ НАКАЗАНИЙ (v1.19.19)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -24923,20 +24923,23 @@ function QR.choose(it)
         mode = "test"      -- нет буфера — уходим в тестовый канал
     end
 
-    if mode == "ans" then
+    -- v1.19.19: ответ игроку уходит штатной командой /ans ID текст — вместо
+    -- прежнего /n. Так работают и «быстрые ответы», и «наказания»: сначала
+    -- человек получает ответ, потом (в наказаниях) прилетает команда.
+    do
         local pid = tostring(rep.id or "")
         if pid:match("^%d+$") and type(grndRepAnswer) == "function" then
             local okA, res = pcall(grndRepAnswer, pid, text)
             if okA and res ~= false then
-                QR.toast("Ответ игроку ID " .. pid .. ": «" .. utf8Cut(label, 20) .. "»", "ok", 2.6)
+                QR.toast("Ответ игроку /ans " .. pid .. ": «" .. utf8Cut(label, 20) .. "»", "ok", 2.8)
                 QR.closeReport()      -- ответ ушёл: окно репорта тоже закрываем
                 return true
             end
         end
-        mode = "test"
     end
+    mode = "test"
 
-    -- Тестовый режим: содержимое шаблона одной строкой уходит в /n.
+    -- Нет ID игрока (ответить некому): остаётся прежний тестовый путь в /n.
     -- В чат влезает ~128 символов, поэтому длинный текст аккуратно режем.
     local line = oneLine(text)
     if utf8Len(line) > MAX_CHAT then
@@ -24944,7 +24947,7 @@ function QR.choose(it)
         QR.toast("В чат ушло начало шаблона (лимит строки чата)", "warn", 3.2)
     end
     if QR.sendChat("/n " .. line) then
-        QR.toast("В /n: «" .. utf8Cut(label, 22) .. "»", "ok", 2.6)
+        QR.toast("ID игрока не распознан — шаблон ушёл в /n", "warn", 3)
         -- v1.19.10: шаблон отправлен — основное окно репорта закрывается.
         -- В режиме «в поле ответа» окно НЕ закрываем: там ещё правят текст.
         QR.closeReport()
@@ -25757,60 +25760,51 @@ do
         local mode = QR.modeOk(QR.mode)
         P.pickOpen, P.pickFocus = false, false
 
-        -- «в поле ответа»: текст уходит в поле, команда пока проверяется в /n
+        local line = oneLine(text)
+
+        -- «в поле ответа»: текст уходит в поле, команда наказания — ЖИВАЯ
+        -- (v1.19.19: /n перед наказанием больше не подставляется)
         if mode == "input" then
             local R = _G.GRND_REP
             local buf = R and R.answer
-            if buf and type(grndBinderWriteCBuf) == "function" and oneLine(text) ~= "" then
-                pcall(grndBinderWriteCBuf, buf, 256, byteCut(oneLine(text), MAX_BUF))
+            if buf and type(grndBinderWriteCBuf) == "function" and line ~= "" then
+                pcall(grndBinderWriteCBuf, buf, 256, byteCut(line, MAX_BUF))
                 if R then R.focused = false end
             end
-            if QR.sendChat("/n " .. cmd) then
-                QR.toast("Проверка: в /n — «" .. utf8Cut(cmd, 56) .. "»", "warn", 3.6)
-                return true
-            end
-            QR.toast("Не удалось отправить команду в чат", "warn", 3)
-            return false
-        end
-
-        -- Боевой режим: v1.19.18 — сначала игроку уходит ответ на репорт,
-        -- и только следом команда наказания (так и просил заказчик: человек
-        -- получает пояснение раньше, чем наказание).
-        if mode == "ans" then
-            local line = oneLine(text)
-            if line ~= "" and type(grndRepAnswer) == "function" then
-                pcall(grndRepAnswer, pid, line)
-            end
             if QR.sendChat(cmd) then
-                QR.toast("Наказание «" .. utf8Cut(label, 20) .. "» по ID " .. pid, "ok", 3)
-                QR.closeReport()
+                QR.toast("Наказание отправлено, текст — в поле ответа", "ok", 3.4)
                 return true
             end
             QR.toast("Не удалось отправить команду наказания", "warn", 3)
             return false
         end
 
-        -- Тестовый режим: в /n уходит И ответ на репорт, И команда наказания —
-        -- ровно в том же порядке, что и в бою (v1.19.18): сначала ответ игроку,
-        -- следом наказание. Так видно, что именно уйдёт игроку и что на сервер.
-        local line = oneLine(text)
-        if line ~= "" then
-            if utf8Len(line) > MAX_CHAT then
-                line = utf8Cut(line, MAX_CHAT - 1) .. "…"
-            end
-            QR.sendChat("/n " .. line)          -- ответ на репорт — первым
+        -- v1.19.19: сначала игроку уходит ОТВЕТ штатной командой /ans ID текст,
+        -- и только следом — сама команда наказания, уже БЕЗ /n. Обе строки
+        -- ставим в одну очередь репорта (grndRepQueue): она отправляет по одной
+        -- с паузой, поэтому ответ гарантированно уходит ПЕРВЫМ, а сервер не
+        -- проглатывает вторую команду, пришедшую в том же кадре.
+        if line ~= "" and type(grndRepAnswer) == "function" then
+            pcall(grndRepAnswer, pid, line)
         end
-        if QR.sendChat("/n " .. cmd) then
+        local sent = false
+        if type(grndRepQueue) == "function" then
+            grndRepQueue(cmd)
+            sent = true
+        else
+            sent = QR.sendChat(cmd)
+        end
+        if sent then
             if line ~= "" then
-                QR.toast("Проверка: в /n — «" .. utf8Cut(cmd, 44) .. "» и ответ игроку",
-                    "warn", 3.8)
+                QR.toast("Ответ игроку /ans " .. pid .. " и наказание «"
+                    .. utf8Cut(label, 20) .. "»", "ok", 3.4)
             else
-                QR.toast("Проверка: в /n — «" .. utf8Cut(cmd, 56) .. "»", "warn", 3.6)
+                QR.toast("Наказание «" .. utf8Cut(label, 20) .. "» по ID " .. pid, "ok", 3)
             end
             QR.closeReport()
             return true
         end
-        QR.toast("Не удалось отправить команду в /n", "warn", 3)
+        QR.toast("Не удалось отправить команду наказания", "warn", 3)
         return false
     end
 
@@ -26422,7 +26416,11 @@ do
         for i = 1, #list do
             local it = list[i]
             local iy = listY + (i - 1) * rowH - (P.listScroll or 0)
-            local fully = (iy >= listY + 1) and (iy + rowH - 4 <= listY + listH)
+            -- v1.19.19: раньше у ПЕРВОЙ строки (scroll = 0) условие
+            -- iy >= listY + 1 не выполнялось — кнопки «вверх/вниз» рисовались,
+            -- но не нажимались. Теперь полная видимость считается как у списка
+            -- шаблонов ответа.
+            local fully = (iy >= listY - 0.5) and (iy + rowH <= listY + listH + 0.5)
             if iy + rowH >= listY and iy <= listY + listH then
                 local sel = (P.selId == it.id)
                 -- клик — только по видимой части строки
@@ -26451,22 +26449,33 @@ do
                     P.selId, P.isNew, P.delArm = it.id, false, nil
                     P.comboOpen = false
                 end
-                -- порядок задаётся стрелками (фигурами: ▲▼ в шрифте может не быть)
+                -- порядок задаётся стрелками (фигурами: ▲▼ в шрифте может не быть).
+                -- У первого шаблона «вверх» и у последнего «вниз» — неактивные
+                -- стрелки (мёртвых кнопок нет).
+                local _, pidx = QR.punById(it.id)
+                local canUp = (pidx or 1) > 1
+                local canDn = pidx ~= nil and pidx < QR.punCount()
                 local bx = x + w - 12 - 48
                 local by = iy + math.floor((rowH - 6 - 24) / 2) + 3
-                if fully and button(ctx, "##grnd_qr_pun_up_" .. tostring(it.id), bx, by, 22, 24, "",
-                    { muted = true, tri = "up" }) then
-                    QR.punMove(it.id, -1)
-                    pcall(QR.punSave)
-                elseif not fully then
-                    tri(ctx.dl, ctx.at, bx + 11, iy + 20, 4, "up", ctx.col32(255, 255, 255, 60))
+                if fully and canUp then
+                    if button(ctx, "##grnd_qr_pun_up_" .. tostring(it.id), bx, by, 22, 24, "",
+                        { muted = true, tri = "up" }) then
+                        QR.punMove(it.id, -1)
+                        pcall(QR.punSave)
+                    end
+                else
+                    tri(ctx.dl, ctx.at, bx + 11, iy + 20, 4, "up",
+                        ctx.col32(255, 255, 255, fully and 34 or 60))
                 end
-                if fully and button(ctx, "##grnd_qr_pun_dn_" .. tostring(it.id), bx + 26, by, 22, 24, "",
-                    { muted = true, tri = "down" }) then
-                    QR.punMove(it.id, 1)
-                    pcall(QR.punSave)
-                elseif not fully then
-                    tri(ctx.dl, ctx.at, bx + 37, iy + 20, 4, "down", ctx.col32(255, 255, 255, 60))
+                if fully and canDn then
+                    if button(ctx, "##grnd_qr_pun_dn_" .. tostring(it.id), bx + 26, by, 22, 24, "",
+                        { muted = true, tri = "down" }) then
+                        QR.punMove(it.id, 1)
+                        pcall(QR.punSave)
+                    end
+                else
+                    tri(ctx.dl, ctx.at, bx + 37, iy + 20, 4, "down",
+                        ctx.col32(255, 255, 255, fully and 34 or 60))
                 end
             end
         end
@@ -26818,7 +26827,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.18"
+        local sv = "1.19.19"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -28431,7 +28440,6 @@ function grndMainBody()
         local cmd = table.remove(q, 1)
         if type(sampSendChat) == "function" then pcall(sampSendChat, cmd) end
     end
-    -- Ответ игроку на репорт: /ans ID текст
     -- Ответ игроку на репорт: /ans ID текст
     function grndRepAnswer(pid, text)
         pid = tostring(pid or "")

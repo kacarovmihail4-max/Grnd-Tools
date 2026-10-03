@@ -106,6 +106,7 @@ local function drawPicker()
     pc.uiText = CTX.uiText
     local ok = _G.grndQrPunPickerDraw(pc)
     check(ok == true, "полоса наказаний не нарисовалась")
+    grndRepQueueTick()   -- тик очереди репорта: одна строка за кадр, как в игре
 end
 
 -- ===== 1. редактор наказания: поля как просили =====
@@ -266,7 +267,7 @@ check(POS.x == 660 + math.floor((600 - 128) / 2),
 HPRINT(("один шаблон: полоса %s px (кнопка 108 + поля), по центру окна репорта")
     :format(tostring(POS.w)))
 
--- ===== 12. тестовый режим: сначала ответ игроку, потом наказание =====
+-- ===== 12. ответ игроку (/ans ID) и наказание живьём, без /n =====
 setPunItems()
 GRND_REP.open = true
 Q.mode = "test"
@@ -275,28 +276,35 @@ local before = #CHAT
 CLICK = { ["##grnd_qr_pun_q_1"] = true }
 drawPicker()
 CLICK = {}
-check(#CHAT == before + 2, "в /n ушло не два сообщения: " .. tostring(#CHAT - before))
-check(CHAT[#CHAT - 1] == "/n Приветствую, мут за флуд",
-    "первым должен уходить «ответ игроку»: " .. tostring(CHAT[#CHAT - 1]))
-check(CHAT[#CHAT] == "/n /mute 25 60 флуд в чате",
-    "вторым должно уходить наказание: " .. tostring(CHAT[#CHAT]))
-check(TOASTS[#TOASTS]:find("и ответ игроку", 1, true) ~= nil,
-    "тост не сообщил про оба сообщения: " .. tostring(TOASTS[#TOASTS]))
+check(#CHAT == before + 1, "в чат ушло не одно сообщение: " .. tostring(#CHAT - before))
+check(CHAT[#CHAT] == "/mute 25 60 флуд в чате",
+    "наказание ушло не живьём или с /n: " .. tostring(CHAT[#CHAT]))
+for i = 1, #CHAT do
+    check(not CHAT[i]:find("/n", 1, true), "перед наказанием остался /n: " .. tostring(CHAT[i]))
+end
+check(#ANS == 1 and ANS[1] == "25|Приветствую, мут за флуд",
+    "ответ игроку ушёл не через /ans: " .. tostring(ANS[1]))
+check(ORDER[#ORDER - 1] == "ans" and ORDER[#ORDER] == "chat",
+    "порядок вызовов неверный: " .. table.concat(ORDER, ","))
+check(TOASTS[#TOASTS]:find("/ans 25", 1, true) ~= nil,
+    "тост не сообщил про ответ /ans: " .. tostring(TOASTS[#TOASTS]))
 check(GRND_REP.open == false, "после наказания окно репорта не закрылось")
 check(P.pickOpen == false, "полоса наказаний не закрылась")
-HPRINT("тестовый режим: «" .. CHAT[#CHAT - 1] .. "» и «" .. CHAT[#CHAT] .. "» (ответ → наказание)")
+HPRINT("ответ игроку /ans 25, затем наказание «" .. CHAT[#CHAT] .. "» (без /n)")
 
--- ===== 13. пустой «Ответ на репорт»: в /n уходит только команда =====
+-- ===== 13. пустой «Ответ на репорт»: уходит только наказание =====
 P.items[1].text = ""
 GRND_REP.open = true
 P.pickOpen = true
 before = #CHAT
+local ansBefore = #ANS
 CLICK = { ["##grnd_qr_pun_q_1"] = true }
 drawPicker()
 CLICK = {}
 check(#CHAT == before + 1, "без ответа ушло лишнее сообщение: " .. tostring(#CHAT - before))
-check(TOASTS[#TOASTS]:find("и ответ игроку", 1, true) == nil, "тост обещает ответ, которого нет")
-HPRINT("без ответа: в /n только команда")
+check(#ANS == ansBefore, "ушёл пустой ответ игроку")
+check(TOASTS[#TOASTS]:find("/ans", 1, true) == nil, "тост обещает ответ, которого нет")
+HPRINT("без ответа: уходит только наказание, ответ игроку не отправляется")
 setPunItems()
 
 -- ===== 14. подстановки {ид} в причине и в ответе =====
@@ -308,48 +316,52 @@ before = #CHAT
 CLICK = { ["##grnd_qr_pun_q_9"] = true }
 drawPicker()
 CLICK = {}
-check(CHAT[#CHAT - 1] == "/n Бан по ID 77",
-    "подстановки в ответе не сработали: " .. tostring(CHAT[#CHAT - 1]))
-check(CHAT[#CHAT] == "/n /ban 77 7 читы, ID 77",
+check(ANS[#ANS] == "77|Бан по ID 77",
+    "подстановки в ответе не сработали: " .. tostring(ANS[#ANS]))
+check(CHAT[#CHAT] == "/ban 77 7 читы, ID 77",
     "подстановки в команде не сработали: " .. tostring(CHAT[#CHAT]))
-HPRINT("подстановки: «" .. CHAT[#CHAT - 1] .. "» + «" .. CHAT[#CHAT] .. "»")
+HPRINT("подстановки: /ans «" .. ANS[#ANS] .. "» + «" .. CHAT[#CHAT] .. "»")
 P.items[3] = nil
 setPunItems()
 
--- ===== 15. боевой режим: ответ игроку первым, затем команда как есть =====
+-- ===== 15. боевой режим (mode=ans): то же поведение, что и в тесте =====
 GRND_REP.open = true
 GRND_REP.playerId = "25"
 Q.mode = "ans"
 P.pickOpen = true
 before = #CHAT
+ansBefore = #ANS
 ORDER = {}
 CLICK = { ["##grnd_qr_pun_q_1"] = true }
 drawPicker()
 CLICK = {}
 check(#CHAT == before + 1, "в боевом режиме ушло больше одного сообщения")
 check(CHAT[#CHAT] == "/mute 25 60 флуд в чате", "боевая команда ушла неверно: " .. tostring(CHAT[#CHAT]))
-check(#ANS == 1 and ANS[1] == "25|Приветствую, мут за флуд",
-    "игроку ушёл не тот ответ: " .. tostring(ANS[1]))
+check(#ANS == ansBefore + 1 and ANS[#ANS] == "25|Приветствую, мут за флуд",
+    "игроку ушёл не тот ответ: " .. tostring(ANS[#ANS]))
 check(ORDER[1] == "ans" and ORDER[2] == "chat",
     "в бою ответ игроку должен уходить ДО наказания: " .. table.concat(ORDER, ","))
 check(GRND_REP.open == false, "в боевом режиме окно репорта не закрылось")
 HPRINT("боевой режим: ответ игроку → «" .. CHAT[#CHAT] .. "» (в таком порядке)")
 
--- ===== 16. режим «в поле ответа»: текст в поле, команда в /n, окно открыто =====
+-- ===== 16. режим «в поле ответа»: текст в поле, команда ЖИВАЯ, окно открыто =====
 GRND_REP.open = true
 GRND_REP.answer = { v = "" }
 Q.mode = "input"
 P.pickOpen = true
 before = #CHAT
+ansBefore = #ANS
 CLICK = { ["##grnd_qr_pun_q_1"] = true }
 drawPicker()
 CLICK = {}
 check(GRND_REP.answer.v == "Приветствую, мут за флуд",
     "текст не вставился в поле ответа: " .. tostring(GRND_REP.answer.v))
-check(#CHAT == before + 1 and CHAT[#CHAT] == "/n /mute 25 60 флуд в чате",
-    "в режиме «в поле» команда ушла не в /n")
+check(#CHAT == before + 1 and CHAT[#CHAT] == "/mute 25 60 флуд в чате",
+    "в режиме «в поле» команда ушла не живьём: " .. tostring(CHAT[#CHAT]))
+check(#ANS == ansBefore, "в режиме «в поле ответа» ответ игроку уходит сам")
+check(not ORDER[#ORDER] or ORDER[#ORDER] == "chat", "в очередь встало лишнее: " .. table.concat(ORDER, ","))
 check(GRND_REP.open == true, "в режиме «в поле ответа» окно репорта закрывать нельзя")
-HPRINT("режим «в поле ответа»: текст в поле, команда в /n, окно открыто")
+HPRINT("режим «в поле ответа»: текст в поле, команда живьём, окно открыто")
 GRND_REP.answer = nil
 Q.mode = "test"
 
@@ -381,6 +393,37 @@ check(Q.pickOpen == false, "полоса быстрых ответов оста�
 check(Q.openPicker() == true, "полоса быстрых ответов не открылась")
 check(P.pickOpen == false, "полоса наказаний осталась висеть рядом")
 HPRINT("полосы не дублируются: открыта всегда одна")
+
+-- ===== 19b. стрелки у ПЕРВОЙ строки списка нажимаются (баг до v1.19.19) =====
+P.items = {
+    { id = 1, name = "Первый", text = "текст 1", cmd = "mute", time = "60", reason = "флуд" },
+    { id = 2, name = "Второй", text = "текст 2", cmd = "ban", time = "7", reason = "читы" },
+}
+P.selId, P.isNew, P.formKey, P.listScroll, P.comboOpen = nil, false, nil, 0, false
+drawSettings()
+local hasDn1, hasUp1 = false, false
+for i = 1, #BTNS do
+    if BTNS[i] == "##grnd_qr_pun_dn_1" then hasDn1 = true end
+    if BTNS[i] == "##grnd_qr_pun_up_1" then hasUp1 = true end
+end
+check(hasDn1, "у первой строки списка кнопка «вниз» не создана (мёртвая стрелка)")
+check(not hasUp1, "у первой строки есть кнопка «вверх», хотя двигать некуда")
+CLICK["##grnd_qr_pun_dn_1"] = true
+drawSettings()
+CLICK = {}
+check(P.items[1].id == 2 and P.items[2].id == 1,
+    "стрелка «вниз» у первой строки не сработала: " .. tostring(P.items[1].id))
+drawSettings()
+-- после перестановки шаблон id=1 стал вторым (последним): у него должна
+-- появиться рабочая стрелка «вверх» и пропасть «вниз»
+local up1, dn1 = false, false
+for i = 1, #BTNS do
+    if BTNS[i] == "##grnd_qr_pun_up_1" then up1 = true end
+    if BTNS[i] == "##grnd_qr_pun_dn_1" then dn1 = true end
+end
+check(up1, "после перестановки у второй строки нет кнопки «вверх»")
+check(not dn1, "у последней строки осталась кнопка «вниз»")
+HPRINT("первая строка: «вверх» неактивна, «вниз» нажимается и меняет порядок")
 
 -- ===== 20. ESC закрывает сначала список команд, потом полосу =====
 P.comboOpen = true
