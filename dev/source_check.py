@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.20"' in s, 'версия не 1.19.20')
+need('GRND_SCRIPT_VERSION = "1.19.21"' in s, 'версия не 1.19.21')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -132,8 +132,67 @@ need('{ id = "auto",    label = "Автопилот" }' in s, 'нет под-в�
 need('"##grnd_rep_tab_" .. tb.id' in s, 'под-вкладки раздела «Репорт» не рисуются общим рядом')
 need('if menu.reportTab == "tools" then' in s, 'ветка «Инструменты» раздела «Репорт» пропала')
 need('elseif menu.reportTab == "answers" then' in s, 'ветка «Ответы на репорт» раздела «Репорт» пропала')
-need('soonCard("Автопилот",' in s, 'раздел «Автопилот» ничего не рисует')
-need('local bl = "в разработке"' in s, 'раздел «Автопилот» не помечен «в разработке»')
+# ---- v1.19.21: раздел «Автопилот» («Репорт» → «Автопилот») ----
+# настройки: триггер, ответ игроку, команда после ответа, тумблер вкл/выкл
+need('_G.grndQrAutoDraw = function(ctx)' in s, 'нет отрисовки раздела «Автопилот»')
+need('elseif rt == "auto" then' in s, 'вкладка «Автопилот» ничего не рисует')
+need('pcall(_G.grndQrAutoDraw, {' in s, 'раздел «Автопилот» не вызывается из меню «Репорт»')
+absent('soonCard("Автопилот",', 'раздел «Автопилот» всё ещё заглушка')
+need('"##grnd_qr_auto_on"' in s, 'нет тумблера включения автопилота')
+need('"##grnd_qr_auto_trigger", "autoTrigger"' in s, 'нет поля «Триггер»')
+need('"##grnd_qr_auto_answer", "autoAnswer"' in s, 'нет поля «Ответ игроку»')
+need('"##grnd_qr_auto_cmd"' in s and '"##grnd_qr_auto_cmd_" .. d.id' in s,
+     'нет выпадающего списка команд автопилота')
+need('QR.autoCmds = AUTO_CMDS' in s, 'нет списка команд для селектора')
+need('{ id = "sp",' in s and '{ id = "goto",' in s and '{ id = "none",' in s,
+     'в селекторе нет /sp, /goto и «без команды»')
+# триггер: несколько слов, регистр не важен, коды цвета не мешают
+need('function QR.autoTriggers()' in s, 'нет разбора списка триггеров')
+need('function QR.autoMatch(text)' in s, 'нет поиска триггера в тексте репорта')
+need('return "/" .. id .. " " .. pid' in s, 'команда после ответа не собирается')
+# срабатывание: ответ игроку, затем команда, и всё — через очередь репорта
+auto_part = s[s.index('function QR.autoOnReport(nick, pid, msg)'):s.index('function QR.autoTick()')]
+need('pcall(grndRepAnswer, id, line)' in auto_part, 'автопилот не отвечает игроку через /ans')
+need(auto_part.index('pcall(grndRepAnswer, id, line)') < auto_part.index('QR.queueCmd(cmd)'),
+     'команда автопилота уходит раньше ответа игроку')
+need('if not A.on then' in auto_part, 'автопилот срабатывает при выключенном тумблере')
+need('local guard = QR.autoGuard(id, os.clock())' in auto_part, 'нет предохранителей автопилота')
+# слежка: не отвечает и выключается сам
+need('function QR.autoSpectating()' in auto_part or 'function QR.autoSpectating()' in s,
+     'нет проверки слежки')
+need('QR.autoSet(false, "слежка")' in auto_part, 'в слежке автопилот не выключается')
+need('function QR.autoSet(on, reason)' in s, 'нет включения/выключения автопилота')
+need('if on and QR.autoSpectating() then' in s, 'в слежке автопилот можно включить')
+# идёт ввод текста — пропуск, чтобы не мешать набору
+need('A.lastCheck = "идёт ввод текста — пропуск"' in auto_part,
+     'автопилот не пропускает репорты во время ввода текста')
+need('QR.toast("Автопилот: пропуск — открыт чат или ввод"' in auto_part,
+     'нет предупреждения о пропуске')
+# предохранители: пауза, антидубль по ID, лимит в минуту
+need('local AUTO_GAP = 2.5' in s and 'local AUTO_PER_PID = 60' in s and 'local AUTO_PER_MIN = 12' in s,
+     'нет настроек предохранителей автопилота')
+need('return "этому игроку уже отвечали"' in s, 'нет антидубля по ID игрока')
+need('return "лимит " .. tostring(AUTO_PER_MIN) .. " в минуту"' in s, 'нет лимита срабатываний')
+# конфиг автопилота — отдельный файл, правки пишутся с задержкой
+need('function QR.autoPath()' in s and 'grnd_repauto.cfg' in s, 'нет своего файла настроек автопилота')
+need('function QR.autoLoad()' in s and 'function QR.autoSave()' in s, 'настройки автопилота не сохраняются')
+need('function QR.autoTick()' in s, 'нет тика автопилота')
+need('pcall(_G.grndQrAutoTick)' in s, 'тик автопилота не вызывается из цикла')
+need('_G.grndQrAutoOnReport = function(nick, pid, msg)' in s, 'нет хука автопилота на репорт')
+need('pcall(_G.grndQrAutoOnReport, nick, pid, msg)' in s, 'репорты не доходят до автопилота')
+# репорт ловим ДО проверки оверлея «Репорты»: автопилот работает и с выключенным оверлеем
+rephud = s[s.index('local function grndRepHudOnChat(text)'):s.index('local function grndRepHudOpenItem(')]
+need(rephud.index('pcall(_G.grndQrAutoOnReport, nick, pid, msg)') < rephud.index('if not GRND_REPHUD.enabled then return end'),
+     'автопилот видит репорты только при включённом оверлее «Репорты»')
+need('pcall(_G.grndQrAutoOnReport, nick, pid, msg)' in s[:s.index('local function grndRepHudOnChat(text)')],
+     'репорты админ-бота не доходят до автопилота')
+# команда уходит в чат в CP1251 (русская причина наказания не «закорючками»)
+need('function QR.queueCmd(cmd)' in s, 'нет общей отправки команд через очередь репорта')
+need('pcall(grndAnsiText, cmd)' in s, 'команда уходит в чат без перевода в CP1251')
+need('Q.auto.listOpen = false' in s and 'Q.auto.listOpen then' in s, 'ESC не закрывает список команд автопилота')
+# v1.19.21: все под-вкладки «Репорта» готовы — заготовок «в разработке» нет
+absent('local bl = "в разработке"', 'вернулась заготовка «в разработке» в разделе «Репорт»')
+absent('soonCard(', 'вернулись окна-заготовки разделов')
 absent('local isTools', 'осталась старая логика двух под-вкладок «Репорт»')
 
 # v1.19.16: шаблоны наказаний — как ответы, но с командой, сроком и причиной
@@ -154,12 +213,12 @@ need('и ответ игроку' in s, 'тост не сообщает про �
 need('pcall(grndRepAnswer, pid, line)' in s, 'ответ игроку не уходит командой /ans')
 pun_choose = s[s.index('function QR.punChoose(it)'):s.index('function QR.openPunPicker()')]
 tail_part = pun_choose[pun_choose.index('-- v1.19.19: сначала игроку уходит ОТВЕТ'):]
-need(tail_part.index('pcall(grndRepAnswer, pid, line)') < tail_part.index('grndRepQueue(cmd)'),
+need(tail_part.index('pcall(grndRepAnswer, pid, line)') < tail_part.index('QR.queueCmd(cmd)'),
      'наказание встаёт в очередь раньше ответа игроку')
-need('local sent = false' in pun_choose and 'grndRepQueue(cmd)' in pun_choose,
+need('local sent = QR.queueCmd(cmd)' in pun_choose,
      'наказание не идёт через очередь репорта (обгонит ответ игроку)')
 absent('QR.sendChat("/n " .. cmd)', 'перед командой наказания остался /n')
-need('QR.sendChat(cmd)' in pun_choose, 'команда наказания не отправляется')
+need('QR.queueCmd(cmd)' in pun_choose, 'команда наказания не отправляется')
 # быстрые ответы: ответ тоже через /ans, /n остаётся только как путь без ID
 need('QR.toast("Ответ игроку /ans " .. pid' in s, 'быстрые ответы не отвечают через /ans')
 choose = s[s.index('function QR.choose(it)'):s.index('function QR.openPicker()')]
