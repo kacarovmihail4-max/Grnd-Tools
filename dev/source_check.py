@@ -263,6 +263,19 @@ need('function QR.autoPath()' in s and 'grnd_repauto.cfg' in s, 'нет свое
 # v1.19.27: секция автопилота объявлена в доменах конфига — иначе open() падает
 # («Unknown configuration domain») и настройки вообще не сохраняются
 need('grnd_repauto="reportAuto"' in s, 'секция reportAuto не объявлена в GRND_CONFIG.sources')
+# аудит: КАЖДЫЙ файл настроек обязан быть доменом конфига (иначе open() падает
+# и раздел молча ничего не сохраняет — так и потерялся reportAuto)
+sources_block = s[s.index('GRND_CONFIG = {schema=1, sources={'):s.index('}}', s.index('GRND_CONFIG = {schema=1, sources={'))]
+declared_domains = set(re.findall(r'(grnd_[a-z_]+)="', sources_block))
+own_io = {'grnd_mp.cfg'}          # панель МП пишет своим io.open (свой формат CP1251)
+used_cfg = set(re.findall(r'(grnd_[a-z_]+)\.cfg', s))   # базовые имена без .cfg
+missing_domains = sorted(b + '.cfg' for b in used_cfg
+                         if b not in declared_domains and b + '.cfg' not in own_io)
+need(not missing_domains,
+     'файлы настроек без домена в GRND_CONFIG.sources: %s' % missing_domains)
+# и наоборот: объявленный домен должен где-то использоваться
+unused_domains = sorted(b for b in declared_domains if b not in used_cfg)
+need(not unused_domains, 'объявленные, но неиспользуемые домены: %s' % unused_domains)
 need('if v ~= nil then v = tostring(v) end' in s,
      'значения из config.json не приводятся к строке (числа ломают on/sel)')
 absent('"count=" .. tostring(#A.tabs)', 'в файл снова пишется лишний счётчик вкладок')
