@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.10"' in s, 'версия не 1.19.10')
+need('GRND_SCRIPT_VERSION = "1.19.11"' in s, 'версия не 1.19.11')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -95,6 +95,18 @@ choose_start = s.index('function QR.choose(it)')
 choose = s[choose_start:s.index('function QR.openPicker()', choose_start)]
 need(choose.count('QR.closeReport()') == 2, 'окно репорта закрывается не после каждой отправки шаблона')
 need('R.open = false' in choose or 'R.open = false' in s, 'окно репорта не закрывается')
+
+# v1.19.11: полоса шаблонов приклеена под нижнюю кромку окна репорта
+need('GRND_REP.winY, GRND_REP.winH = winY, H' in s, 'окно репорта не запоминает верх и высоту')
+need('local PICK_ATTACH = 10' in s, 'нет зазора до нижней кромки окна репорта')
+need('local repY, repH = tonumber(R.winY), tonumber(R.winH)' in s,
+     'полоса не читает вертикальные габариты окна репорта')
+need('y = repBottom + PICK_ATTACH' in s, 'полоса не встаёт под нижнюю кромку окна репорта')
+need('math.min(maxViewH, room)' in s, 'высота полосы не ограничивается свободным местом')
+need('if above >= 16 then y = above end' in s,
+     'полоса не переносится над окном, когда под ним нет места')
+absent('local y = math.max(16, math.min(resY - H - 40, math.floor((resY - H) * 0.72)))',
+       'осталась старая «оторванная» позиция полосы')
 
 if fails:
     for f in fails:

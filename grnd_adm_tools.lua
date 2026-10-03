@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.10"
+GRND_SCRIPT_VERSION = "1.19.11"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24243,7 +24243,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.10)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.11)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -25205,6 +25205,7 @@ local PICK_BH, PICK_GAP = 30, 6       -- высота кнопки и зазор
 local PICK_PADX, PICK_PADY = 10, 9    -- поля карточки
 local PICK_MIN_W, PICK_MAX_W = 108, 240
 local PICK_HINT_H = 18                -- строка текста под кнопками
+local PICK_ATTACH = 10                -- зазор до нижней кромки окна репорта (v1.19.11)
 
 -- Раскладка: ширина кнопки — по длине названия, перенос по строкам.
 -- Возвращает строки кнопок и ширину самой широкой строки.
@@ -25273,20 +25274,50 @@ local function pickerDraw(ctx)
     local maxW = math.min(920, math.max(240, resX - 80))
     local rows, contentW = pickerLayout(ctx, maxW - PICK_PADX * 2)
     local rowsH = math.max(rowH, #rows * rowH - PICK_GAP)
+    -- v1.19.10/v1.19.11: полоса приклеена к окну репорта — левый край ровно по
+    -- его левому краю, верхняя кромка сразу под его нижней кромкой. Габариты
+    -- отдаёт само окно репорта (GRND_REP.winX/winW/winY/winH), поэтому полоса
+    -- едет за ним; если окно ещё ни разу не рисовалось — берём его формулу
+    -- позиции (ширина 600, по центру экрана).
+    local R = _G.GRND_REP
+    local repX, repTop, repBottom
+    if type(R) == "table" then
+        repX = tonumber(R.winX)
+        local repY, repH = tonumber(R.winY), tonumber(R.winH)
+        if repY and repH and repH > 0 then repTop, repBottom = repY, repY + repH end
+    end
+    if not repX then repX = math.floor((resX - 600) / 2) end
+
     local maxViewH = math.max(rowH, math.floor(resY * 0.40))
+    if repBottom then
+        -- строки полосы не должны упираться в край экрана: лишние уходят в прокрутку.
+        -- Обычно место берём под окном репорта, но если окно стоит у нижнего края —
+        -- раскрываемся над ним, а не поверх него.
+        local roomBelow = math.floor(resY - (repBottom + PICK_ATTACH) - 10)
+            - PICK_PADY * 2 - PICK_HINT_H
+        local room = roomBelow
+        if repTop then
+            local roomAbove = math.floor(repTop - PICK_ATTACH - 16)
+                - PICK_PADY * 2 - PICK_HINT_H
+            if roomBelow < rowH and roomAbove > roomBelow then room = roomAbove end
+        end
+        if room >= rowH then maxViewH = math.min(maxViewH, room) end
+    end
     local viewH = math.min(rowsH, maxViewH)
     local W = math.max(184, math.min(maxW, contentW + PICK_PADX * 2))
     local H = PICK_PADY + viewH + PICK_HINT_H + PICK_PADY
-    -- v1.19.10: левый край полосы — ровно левый край окна репорта.
-    -- Позицию отдаёт само окно репорта (GRND_REP.winX), поэтому полоса
-    -- остаётся «приклеенной» к нему; если окно ещё ни разу не рисовалось —
-    -- считаем по той же формуле, что и оно (ширина 600, по центру экрана).
-    local repX
-    local R = _G.GRND_REP
-    if type(R) == "table" then repX = tonumber(R.winX) end
-    if not repX then repX = math.floor((resX - 600) / 2) end
     local x = math.max(10, math.min(math.max(10, resX - W - 10), repX))
-    local y = math.max(16, math.min(resY - H - 40, math.floor((resY - H) * 0.72)))
+    local y
+    if repBottom then
+        y = repBottom + PICK_ATTACH          -- сразу под нижней кромкой окна репорта
+        if repTop and y + H > resY - 10 then
+            local above = repTop - PICK_ATTACH - H
+            if above >= 16 then y = above end  -- под окном не влезло — встаём над ним
+        end
+    else
+        y = math.floor((resY - H) * 0.72)    -- окно ещё не рисовалось
+    end
+    y = math.max(16, math.min(resY - H - 10, y))
 
     pcall(im.SetNextWindowPos, im.ImVec2(x, y), ctx.always or 2)
     pcall(im.SetNextWindowSize, im.ImVec2(W, H), ctx.always or 2)
@@ -25759,7 +25790,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.10"
+        local sv = "1.19.11"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -33355,12 +33386,15 @@ function grndMainBody()
             local yChips = yInput + 30 + 9
             local H = yChips + 28 + 12
             local winX = math.floor((resX - W) / 2)
-            im.SetNextWindowPos(im.ImVec2(winX, math.floor((resY - H) / 2)), COND_ALWAYS)
+            local winY = math.floor((resY - H) / 2)
+            im.SetNextWindowPos(im.ImVec2(winX, winY), COND_ALWAYS)
             im.SetNextWindowSize(im.ImVec2(W, H), COND_ALWAYS)
-            -- v1.19.10: запоминаем габариты окна — по левому краю выравнивается
+            -- v1.19.10/v1.19.11: запоминаем габариты окна — по ним выравнивается
             -- полоса шаблонов («Быстрые ответы»): открывается вровень с окном
-            -- репорта, а не «сама по себе» по центру экрана.
+            -- репорта (левый край по левому краю, верхняя кромка сразу под
+            -- нижней кромкой), а не «сама по себе» по центру экрана.
             GRND_REP.winX, GRND_REP.winW = winX, W
+            GRND_REP.winY, GRND_REP.winH = winY, H
 
             local styleN, colorN = 0, 0
             if grndPushStyleF(im.StyleVar and im.StyleVar.WindowRounding, 10) then styleN = styleN + 1 end
