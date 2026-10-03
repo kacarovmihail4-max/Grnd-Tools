@@ -1,5 +1,5 @@
 script_name("grnd_adm_tools")
-script_version("1.19.03")
+script_version("1.19.04")
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
 require "lib.sampfuncs"
@@ -1080,9 +1080,12 @@ GRND_UIKIT = {
     },
     customRGB = {164,112,224},
     SHARED = {
-        line={255,255,255,20}, textHi={241,238,247,255},
-        text={207,202,217,255}, textDim={165,158,181,255},
-        textMuted={139,133,153,255}, itemSel={164,112,224,26},
+        -- v1.19.04: тона текста подняты — на тёмном «стекле» прежние
+        -- значения читались блекло (на это жаловались дважды: подписи
+        -- кнопок и подписи вообще). Иерархия сохранена: hi > text > dim.
+        line={255,255,255,20}, textHi={252,250,255,255},
+        text={234,230,244,255}, textDim={198,192,216,255},
+        textMuted={172,166,190,255}, itemSel={164,112,224,26},
         itemHover={255,255,255,10}, itemPress={255,255,255,18},
         card={255,255,255,5},
         -- Inner content surfaces only; outer window/sidebar stay unchanged.
@@ -23010,8 +23013,9 @@ theme = function()
     if k and type(k.TH) == "table" then return k.TH end
     return {
         bg = { 18, 17, 23, 255 }, line = { 255, 255, 255, 20 },
-        textHi = { 241, 238, 247, 255 }, text = { 207, 202, 217, 255 },
-        textDim = { 165, 158, 181, 255 }, textMuted = { 139, 133, 153, 255 },
+        -- v1.19.04: тона подняты вместе с GRND_UIKIT.SHARED (подписи блекли)
+        textHi = { 252, 250, 255, 255 }, text = { 234, 230, 244, 255 },
+        textDim = { 198, 192, 216, 255 }, textMuted = { 172, 166, 190, 255 },
         accent = { 164, 112, 224, 255 }, accent2 = { 164, 112, 224, 255 },
     }
 end
@@ -23888,7 +23892,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.03)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.04)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -25382,7 +25386,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.03"
+        local sv = "1.19.04"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -26651,129 +26655,156 @@ function grndMainBody()
     GRND_REPHUD.botWin = 12          -- сколько секунд живут пометки бота
     -- Разбор одной строки чата. true — строка распознана как сообщение
     -- админ-бота (тогда обычный разбор жалобы её уже не смотрит).
+    -- =====================================================================
+    --  РАЗБОР СООБЩЕНИЙ АДМИН-БОТА О ПРОСРОЧЕННЫХ РЕПОРТАХ (v1.19.04)
+    --
+    --  Бот пишет ТРИ строки строго в таком порядке:
+    --    1) <ADM> (уровень) Ник[ID]: >>> НА РЕПОРТ НЕ ОТВЕТИЛИ ЗА 60 СЕКУНД!
+    --    2) <ADM> (уровень) Ник[ID]: >>> Mixa_Grozz(25): дм
+    --    3) <ADM> (уровень) Ник[ID]: >>> Ответить игроку: /pm 25 текст
+    --  Порядок разбора:
+    --    * строка 1 — ПОМЕТКА «просрочен»: она копится (b.lateAt) и
+    --      накладывается на репорт, который придёт СЛЕДУЮЩИМ (строка 2),
+    --      как бот и задумал. Раньше пометка липла к «любому свежему»
+    --      репорту (< 3 c) — красная метка попадала на ЧУЖОЙ, уже отвеченный
+    --      репорт, а настоящий оставался без метки;
+    --    * строка 2 — САМ РЕПОРТ: разбираем его ЗДЕСЬ и возвращаем true.
+    --      Если отдать строку обычному разбору жалобы, тот возьмёт ник и ID
+    --      из ПРЕФИКСА админ-чата («<ADM> Ник[ID]:») — и в окне появится
+    --      ЛОЖНЫЙ репорт от имени администратора вместо игрока. Теперь
+    --      ложным репортам взяться неоткуда: строки с префиксом бота
+    --      обычный разбор вообще не смотрит;
+    --    * строка 3 — команда ответа («/pm ID»): вешается на запись игрока,
+    --      а если запись ещё не пришла — на первый репорт этого ID.
+    --  Репорт внутри «>>>» принимается в ДВУХ видах: «Ник(ID): текст» и
+    --  родной «Ник[ID]: текст [К-во репорта: N]».
+    --  Строка БЕЗ префикса админ-чата берётся только сразу после пометки
+    --  «не ответили» (< 3 c) — на случай переноса длинной строки сервером.
+    -- =====================================================================
     function grndRepHudBotOnChat(text)
         local H = GRND_REPHUD
         if not H then return false end
         local t = tostring(text or "")
         if t == "" then return false end
         local WIN = tonumber(H.botWin) or 12
-        local now = os.clock()
-        -- состояние пометок бота («не ответили» / «ответить /pm ID») живёт
-        -- на самой таблице оверлея и само протухает по таймауту
+        local tNow = os.clock()
         local b = H.bot
         if type(b) ~= "table" then b = {} H.bot = b end
-        if b.lateAt and (now - b.lateAt) > WIN then b.lateAt, b.lateSec = nil, nil end
-        if b.pmAt and (now - b.pmAt) > WIN then b.pmId, b.pmCmd, b.pmAt = nil, nil, nil end
-        -- перенести пометки на запись игрока. Пометки одноразовые: следующая
-        -- строка бота относится уже к другому репорту, поэтому снимаем их.
-        local function apply(pid)
-            if type(H.items) == "table" then
-                for i = 1, #H.items do
-                    local it = H.items[i]
-                    if tostring(it.pid) == tostring(pid) then
-                        if b.lateAt then it.late, it.lateSec = true, b.lateSec end
-                        if b.pmCmd then it.pmCmd = b.pmCmd end
-                        it.bot = true
-                    end
-                end
-            end
-            b.lateAt, b.lateSec = nil, nil
-            b.pmId, b.pmCmd, b.pmAt = nil, nil, nil
-        end
-        -- 1) строка админ-чата бота: «<ADM> … Ник[ID]: >>> …». Префикс
-        --    проверяем по первой строке (grndFormAdminLine схлопывает
-        --    переводы строк в пробелы), а ТЕЛО берём из СЫРОГО текста —
-        --    иначе многострочное сообщение бота склеилось бы в одну строку
-        --    и разобралась бы только первая его часть.
+        if b.lateAt and (tNow - b.lateAt) > WIN then b.lateAt, b.lateSec = nil, nil end
+        if b.pmAt and (tNow - b.pmAt) > WIN then b.pmId, b.pmCmd, b.pmAt = nil, nil, nil end
+
         local raw = grndRepUtf(t)
         raw = raw:gsub("{%x%x%x%x%x%x}", ""):gsub("\194\160", " "):gsub("\239\187\191", "")
-        local payload = nil
-        if type(grndFormAdminLine) == "function" then
-            local first = raw:match("^([^\n]*)") or raw
-            local okA, aNick, aId, body = pcall(grndFormAdminLine, first)
-            if okA and type(body) == "string" then
-                payload = raw:match(">%s*>%s*>%s*(.*)$")
-                if payload == "" then payload = nil end
+
+        local function markLate(pid)
+            if type(H.items) ~= "table" then return end
+            for i = 1, #H.items do
+                local it = H.items[i]
+                if tostring(it.pid) == tostring(pid) then
+                    it.late, it.lateSec, it.bot = true, b.lateSec, true
+                end
             end
         end
-        if payload then
-            -- если внутри «>>>» лежит ОБЫЧНЫЙ формат жалобы — пусть его
-            -- разбирает основной путь (не перехватываем строку)
-            if grndCatchParse(payload) then return false end
-        else
-            -- 2) строка без префикса админ-чата принимается ТОЛЬКО сразу после
-            --    пометки «не ответили за N секунд»: иначе обычный чат мог бы
-            --    подсунуть «Ник(ID): текст» с круглыми скобками
-            if not b.lateAt then return false end
-            local clean = grndRepClean(t)
-            if clean:match("^%s*[^%(%):]+%s*%(%d+%)%s*:") then payload = clean end
+        local function applyPm(pid)
+            if not b.pmCmd or type(H.items) ~= "table" then return end
+            for i = 1, #H.items do
+                local it = H.items[i]
+                if tostring(it.pid) == tostring(pid) then it.pmCmd = b.pmCmd end
+            end
         end
-        if not payload then return false end
-        -- 3) в одной строке бота может прийти сразу несколько строк («\n»)
+        -- добавить репорт бота и сразу наложить на него накопленные пометки
+        local function addReport(nick, pid, msg, cnt)
+            grndRepHudAdd(nick, pid, msg, cnt)
+            if b.lateAt then
+                markLate(pid)
+                b.lateAt, b.lateSec = nil, nil
+            end
+            applyPm(pid)
+        end
+
         local handled = false
-        for part in (payload .. "\n"):gmatch("([^\n]*)\n") do
-            local line = part:gsub("^%s+", ""):gsub("%s+$", "")
-            if line ~= "" then
-                -- если бот повторил префикс «<ADM> … >>>» в каждой строке —
-                -- снимаем его, чтобы строка разобралась как полезная часть
+        local blockPid = nil     -- репорт, добавленный в ЭТОМ ЖЕ сообщении
+
+        for line in (raw .. "\n"):gmatch("([^\n]*)\n") do
+            local text = line:gsub("^%s+", ""):gsub("%s+$", "")
+            if text ~= "" then
+                local body, hasPrefix = nil, false
                 if type(grndFormAdminLine) == "function" then
-                    local okS, sNick, sId, sBody = pcall(grndFormAdminLine, line)
-                    if okS and type(sBody) == "string" then
-                        local s2 = sBody:match("^%s*>+%s*(.*)$")
-                        if s2 and s2 ~= "" then line = s2 end
+                    local okL, lNick, lId, lBody = pcall(grndFormAdminLine, text)
+                    if okL and type(lBody) == "string" then
+                        hasPrefix = true      -- строка админ-чата, но без «>>>»
+                        body = lBody:match("^%s*>+%s*(.*)$")
+                        if body == "" then body = nil end
                     end
                 end
-                local low = grndLowerUtf(line)
-                -- Порядок разбора важен: сначала проверяем «Nick(ID): текст».
-                -- Причиной жалобы может быть и сам текст «НА РЕПОРТ НЕ
-                -- ОТВЕТИЛИ ЗА 60 СЕКУНД!» — тогда это репорт, а не пометка.
-                local clean = grndRepClean(line)
-                local nick, pid, msg = clean:match("^([^%(%):]+)%s*%((%d+)%)%s*:%s*(.*)$")
-                local secs, pmCmd, pmId
-                if not nick then
-                    secs = low:match("не ответили за%s*(%d+)")
-                    pmCmd, pmId = low:match("ответить игроку:%s*(/%a+)%s*(%d+)")
+                if (not hasPrefix) and b.lateAt and (tNow - b.lateAt) <= 3 then
+                    body = text
                 end
-                if nick and pid then
-                    -- «Nick(ID): текст» — сам репорт: ник, ID и текст жалобы
-                    nick = nick:gsub("^%s+", ""):gsub("%s+$", "")
-                    msg = grndRepClean(msg or "")
-                    if msg == "" then msg = "текст репорта" end
-                    if nick ~= "" then
-                        grndRepHudAdd(nick, pid, msg, nil)
-                        apply(pid)
-                        handled = true
+                if body then
+                    local cNick, cId, cMsg, cCnt = nil, nil, nil, nil
+                    if type(grndCatchParse) == "function" then
+                        cNick, cId, cMsg, cCnt = grndCatchParse(body)
                     end
-                elseif secs then
-                    -- «НА РЕПОРТ НЕ ОТВЕТИЛИ ЗА N СЕКУНД!» — помечаем репорт.
-                    -- Бот обычно пишет эту строку ПЕРВОЙ, но если строка с ником
-                    -- уже пришла (только что, < 3 c) — помечаем её же.
-                    local seconds = tonumber(secs) or 60
-                    local top = (type(H.items) == "table") and H.items[1] or nil
-                    -- Свежий (и ещё не помеченный) верхний репорт — почти
-                    -- наверняка тот самый, о котором говорит строка бота.
-                    -- Уже помеченный (top.late) трогать нельзя: значит, это
-                    -- повтор про прошлый репорт, а пометка — для следующего.
-                    if top and not top.late and (os.clock() - (top.at or 0)) < 3 then
-                        top.late, top.lateSec = true, seconds
+                    local low = grndLowerUtf(body)
+                    local clean = grndRepClean(body)
+                    local nick, pid, msg
+                    if not cNick then
+                        nick, pid, msg = clean:match("^([^%(%):]+)%s*%((%d+)%)%s*:%s*(.*)$")
+                    end
+                    if cNick then
+                        -- 2) родной формат жалобы внутри «>>>» — обрабатываем
+                        --    сами, чтобы строка не досталась обычному разбору
+                        addReport(cNick, cId, cMsg, cCnt)
+                        blockPid, handled = tostring(cId), true
+                    elseif nick and pid then
+                        -- 2) «Ник(ID): текст» — сам репорт
+                        nick = nick:gsub("^%s+", ""):gsub("%s+$", "")
+                        msg = grndRepClean(msg or "")
+                        if msg == "" then msg = "текст репорта" end
+                        if nick ~= "" then
+                            addReport(nick, pid, msg, nil)
+                            blockPid, handled = tostring(pid), true
+                        end
                     else
-                        b.lateAt, b.lateSec = os.clock(), seconds
-                    end
-                    handled = true
-                elseif pmCmd then
-                    -- «Ответить игроку: /pm ID …» — запоминаем команду ответа
-                    b.pmId = tostring(pmId)
-                    b.pmCmd = tostring(pmCmd) .. " " .. tostring(pmId)
-                    b.pmAt = os.clock()
-                    if type(H.items) == "table" then
-                        for i = 1, #H.items do
-                            local it = H.items[i]
-                            if tostring(it.pid) == tostring(pmId) then
-                                it.pmCmd = b.pmCmd
+                        local secs = low:match("не ответили за%s*(%d+)")
+                        if secs then
+                            -- 1) «НА РЕПОРТ НЕ ОТВЕТИЛИ ЗА N СЕКУНД!» — пометка
+                            --    для СЛЕДУЮЩЕГО репорта
+                            local seconds = tonumber(secs) or 60
+                            local fresh = nil
+                            if type(H.items) == "table" then
+                                local it0 = H.items[1]
+                                -- репорт только что (меньше секунды) — значит,
+                                -- строки блока пришли в обратном порядке
+                                if it0 and not it0.late and (os.clock() - (it0.at or 0)) < 1 then
+                                    fresh = it0.pid
+                                end
+                            end
+                            if blockPid then
+                                -- репорт пришёл раньше в ЭТОМ же сообщении
+                                b.lateSec = seconds
+                                markLate(blockPid)
+                            elseif fresh then
+                                -- ...или отдельным сообщением доли секунды назад
+                                b.lateSec = seconds
+                                markLate(fresh)
+                            else
+                                -- штатный порядок: пометка ждёт следующий репорт
+                                b.lateAt, b.lateSec = os.clock(), seconds
+                            end
+                            handled = true
+                        else
+                            local pmCmd, pmId = low:match("ответить игроку:%s*(/%a+)%s*(%d+)")
+                            if pmCmd then
+                                -- 3) «Ответить игроку: /pm ID …»
+                                b.pmId = tostring(pmId)
+                                b.pmCmd = tostring(pmCmd) .. " " .. tostring(pmId)
+                                b.pmAt = os.clock()
+                                applyPm(b.pmId)
+                                handled = true
                             end
                         end
                     end
-                    handled = true
                 end
             end
         end
@@ -33349,7 +33380,10 @@ function grndMainBody()
                                 or col32(255, 255, 255, 10))
                         bd = hovered and col32(TH.accent[1], TH.accent[2], TH.accent[3], 110)
                             or col32(255, 255, 255, 20)
-                        fg = hovered and c4(TH.textHi) or c4(TH.text)
+                        -- v1.19.04: подписи кнопок окна репорта — заметно ярче
+                        -- (прежний TH.text 207,202,217 читался блёкло)
+                        fg = hovered and c4({ 252, 250, 255, 255 })
+                            or c4({ 238, 234, 250, 255 })
                     end
                     local r = (h >= 28) and 6 or math.floor(h / 2)
                     box(x, y, w, h, bg, r)
@@ -34946,10 +34980,10 @@ function grndMainBody()
                 local hintW = rhW(hint, 0.92)
                 local chipW = math.min(hintW + 2 * chipPadX, chipMaxW)
                 local chipH = math.min(rowH - S(4), rhH(0.92) + 2 * chipPadY)
-                -- Колонка [ID] — «пилюля» с мягкой заливкой акцентом; текст в
-                -- ней светлый, а не акцентный: на заливке того же цвета
-                -- акцентная цифра терялась бы.
-                local padIdX = S(6)
+                -- v1.19.04: «намазка» (акцентная плашка) под [ID] убрана —
+                -- ID просто текст. Поля в 2 px хватает, чтобы подпись не
+                -- липла к чипу «взять репорт».
+                local padIdX = S(2)
                 local idPillW = gId + 2 * padIdX
                 local idPillH = math.min(rowH, math.max(rhH(1.0) + S(6), S(18)))
                 local gapA, gapB, gapC = S(8), S(6), S(8)
@@ -35064,15 +35098,11 @@ function grndMainBody()
                     rhText(sh + xTime, rowTy(0.94), tstr,
                         it.late and c4(TH_LATE) or c4(TH.textMuted), 0.94)
                     rhText(sh + xNick, rowTy(1.0), nick, c4(TH.textHi), 1.0)
-                    -- [ID] — пилюля: заливка акцентом, цифры светлые (на
-                    -- акцентной заливке акцентный же текст терялся бы)
-                    rfill(sh + xId - padIdX, idPillY, idPillW, idPillH,
-                        math.floor(idPillH / 2),
-                        it.late and TH_LATE[1] or TH_ACC[1],
-                        it.late and TH_LATE[2] or TH_ACC[2],
-                        it.late and TH_LATE[3] or TH_ACC[3],
-                        it.late and 64 or 42)
-                    rhText(sh + xId, idTy, idstr, c4(TH.textHi), 1.0)
+                    -- [ID] — просто текст (v1.19.04: плашку-«намазку» убрали).
+                    -- Просроченный ботом репорт по-прежнему виден: ID и
+                    -- время краснеют, ник остаётся обычным.
+                    rhText(sh + xId, idTy, idstr,
+                        it.late and c4(TH_LATE) or c4(TH_ACC), 1.0)
                     if showHint then
                         -- чип подсказки: подсвечивается, когда курсор над ним
                         if chipHov then
