@@ -1,5 +1,5 @@
 
--- ---- стенд: автопилот ответов на репорт (v1.19.21) ----
+-- ---- стенд: автопилот ответов на репорт (v1.19.22, вкладки) ----
 local Q = _G.GRND_QR
 local A = Q.auto
 local function check(c, m) if not c then error("ПРОВАЛ: " .. tostring(m), 2) end end
@@ -20,34 +20,38 @@ check(type(_G.grndQrAutoDraw) == "function", "нет отрисовки разд
 check(type(_G.grndQrAutoOnReport) == "function", "нет хука на репорт")
 check(type(_G.grndQrAutoTick) == "function", "нет тика автопилота")
 
--- ===== 1. конфиг: файл и стартовые значения =====
+-- ===== 1. конфиг: файл, стартовые значения, одна вкладка =====
 check(tostring(Q.autoPath()):find("grnd_repauto.cfg", 1, true) ~= nil,
     "файл настроек не grnd_repauto.cfg: " .. tostring(Q.autoPath()))
 Q.autoEnsure()
 check(A.on == false, "по умолчанию автопилот должен быть выключен")
-check(A.command == "sp", "команда по умолчанию не /sp: " .. tostring(A.command))
+check(#Q.autoTabs() == 1, "по умолчанию должна быть одна вкладка")
+check(Q.autoTabs()[1].command == "sp", "команда по умолчанию не /sp")
 check(#Q.autoCmds == 3, "в списке команд не три записи")
-HPRINT("конфиг: файл grnd_repauto.cfg, по умолчанию выключен, команда /sp")
+check(Q.autoLabel(1) == "Вкладка 1", "пустая вкладка подписана не «Вкладка 1»")
+HPRINT("конфиг: grnd_repauto.cfg, выключен, одна вкладка «Вкладка 1»")
 
--- ===== 2. вкладка рисуется целиком =====
+-- ===== 2. вкладка рисуется: шапка, тумблер, вкладки, три поля =====
 drawAuto()
 check(has("Автопилот"), "нет заголовка «Автопилот»: " .. texts())
+check(has("вкладок: 1"), "нет счётчика вкладок: " .. texts())
 check(has("Триггер"), "нет поля «Триггер»")
 check(has("Ответ игроку"), "нет поля «Ответ игроку»")
 check(has("Команда после ответа"), "нет селектора команды")
-check(has("Слежка"), "нет карточки «Слежка»")
-check(has("Срабатывания"), "нет истории срабатываний")
-check(has("Автопилот выключен"), "нет строки состояния")
-HPRINT("вкладка: заголовок, триггер, ответ, команда, слежка, история")
+check(has("Добавить вкладку"), "нет кнопки «Добавить вкладку»")
+check(has("Вкладка 1"), "нет самой вкладки")
+check(has("выключен"), "нет строки состояния")
+check(has("пусто — вкладка молчит"), "нет предупреждения про пустой триггер")
+check(not has("Срабатывания") and not has("Проверка триггера"),
+    "вернулись лишние карточки: " .. texts())
+HPRINT("вкладка: шапка, вкладки, триггер, ответ, команда — без лишних карточек")
 
 -- ===== 3. тумблер =====
 CLICK = { ["##grnd_qr_auto_on"] = true }
 drawAuto()
 CLICK = {}
 check(A.on == true, "тумблер не включил автопилот")
-check(TOASTS[#TOASTS] == "Автопилот включён", "нет тоста о включении: " .. tostring(TOASTS[#TOASTS]))
-drawAuto()
-check(has("Автопилот включён"), "строка состояния не переключилась")
+check(TOASTS[#TOASTS] == "Автопилот включён", "нет тоста о включении")
 check(#SWITCHPAINT > 0 and SWITCHPAINT[#SWITCHPAINT] == "##grnd_qr_auto_on",
     "тумблер нарисован не родной «пилюлей» скрипта")
 SWITCHPAINT = {}
@@ -58,30 +62,25 @@ drawAuto()
 CLICK = {}
 check(A.on == false, "запасной тумблер не выключил автопилот")
 grndUiSwitchPaint = savedPaint
-A.on = true
+Q.autoSet(true)
 HPRINT("тумблер: родная «пилюля» скрипта, запасной вариант тоже работает")
 
--- ===== 4. триггеры, ответ, подстановки =====
-TYPE["##grnd_qr_auto_trigger"] = "Помогите, help"
+-- ===== 4. поля первой вкладки: один триггер, ответ, подстановки =====
+TYPE["##grnd_qr_auto_trigger"] = "Помогите"
 drawAuto()
-check(A.trigger == "Помогите, help", "триггер не записался: " .. tostring(A.trigger))
-local trg = Q.autoTriggers()
-check(#trg == 2 and trg[1] == "помогите" and trg[2] == "help",
-    "триггеры разобраны неверно: " .. table.concat(trg, ","))
-check(Q.autoMatch("ПОМОГИТЕ!!!") == "помогите", "кириллица в верхнем регистре не найдена")
-check(Q.autoMatch("{FF0000}Help me please") == "help", "код цвета мешает поиску триггера")
-check(Q.autoMatch("обычная болтовня") == nil, "ложное срабатывание триггера")
-check(Q.autoShortTrigger() == nil, "нормальный триггер помечен «коротким»")
-A.trigger = "я, помощь"
-check(Q.autoShortTrigger() == "я", "короткий триггер не замечен")
-A.trigger = "Помогите, help"
+local t1 = Q.autoTabs()[1]
+check(t1.trigger == "Помогите", "триггер не записался: " .. tostring(t1.trigger))
+check(Q.autoLabel(1) == "Помогите", "подпись вкладки не стала триггером: " .. Q.autoLabel(1))
+check(Q.autoTriggers(t1)[1] == "помогите", "триггер не приводится к нижнему регистру")
+check(Q.autoMatchTab("ПОМОГИТЕ!!!") == 1, "кириллица в верхнем регистре не найдена")
+check(Q.autoMatchTab("{FF0000}Help me") == nil, "найдено лишнее совпадение")
 TYPE["##grnd_qr_auto_answer"] = "Приветствую, {ник}! Уже смотрю. {ид}"
 drawAuto()
-check(A.answer == "Приветствую, {ник}! Уже смотрю. {ид}",
-    "ответ не записался: " .. tostring(A.answer))
-HPRINT("поля: «Помогите, help» → два триггера, ответ с {ник}/{ид}")
+check(t1.answer == "Приветствую, {ник}! Уже смотрю. {ид}",
+    "ответ не записался: " .. tostring(t1.answer))
+HPRINT("вкладка 1: триггер «Помогите», ответ с {ник}/{ид}, подпись = триггер")
 
--- ===== 5. селектор команды и предпросмотр =====
+-- ===== 5. селектор команды и строка-предпросмотр =====
 CLICK = { ["##grnd_qr_auto_cmd"] = true }
 drawAuto()
 CLICK = {}
@@ -91,17 +90,50 @@ check(has("/goto") and has("слежка за игроком"), "в списке
 CLICK = { ["##grnd_qr_auto_cmd_goto"] = true }
 drawAuto()
 CLICK = {}
-check(A.command == "goto", "команда не переключилась: " .. tostring(A.command))
+check(t1.command == "goto", "команда не переключилась: " .. tostring(t1.command))
 check(A.listOpen == false, "список не закрылся после выбора")
-check(Q.autoCmdFor(25) == "/goto 25", "команда для ID не собралась")
-check(Q.autoCmdFor("—") == nil, "команда собралась без числового ID")
-check(Q.autoCmdLabel(A.command) == "/goto", "подпись селектора неверная")
+check(Q.autoCmdFor(25, t1) == "/goto 25", "команда для ID не собралась")
+check(Q.autoCmdFor("—", t1) == nil, "команда собралась без числового ID")
 drawAuto()
 check(has("/ans 25"), "в предпросмотре нет ответа: " .. texts())
 check(has("затем /goto 25"), "в предпросмотре нет команды")
-HPRINT("селектор: /goto, список закрывается, предпросмотр «/ans 25 … → /goto 25»")
+HPRINT("селектор: /goto, предпросмотр «/ans 25 … затем /goto 25» одной строкой")
 
--- ===== 6. выключенный автопилот репорты не трогает =====
+-- ===== 6. добавление вкладок =====
+CLICK = { ["##grnd_qr_auto_add"] = true }
+drawAuto()
+CLICK = {}
+check(#Q.autoTabs() == 2, "вкладка не добавилась: " .. tostring(#Q.autoTabs()))
+check(A.sel == 2, "после добавления не выбрана новая вкладка")
+check(Q.autoLabel(2) == "Вкладка 2", "новая вкладка подписана неверно")
+TYPE["##grnd_qr_auto_trigger"] = "дм"
+TYPE["##grnd_qr_auto_answer"] = "Не пишите в личку, отвечу в репорте"
+drawAuto()
+local t2 = Q.autoTabs()[2]
+check(t2.trigger == "дм" and t2.answer == "Не пишите в личку, отвечу в репорте",
+    "поля второй вкладки не записались")
+check(Q.autoTabs()[1].trigger == "Помогите", "поля первой вкладки испортились")
+drawAuto()
+check(has("Помогите") and has("дм"), "обе вкладки не показаны: " .. texts())
+HPRINT("вкладки: «Добавить вкладку» → вторая вкладка со своим триггером и ответом")
+
+-- ===== 7. у каждой вкладки своя команда: /sp, /goto, «без команды» =====
+CLICK = { ["##grnd_qr_auto_cmd"] = true }
+drawAuto()
+CLICK = {}
+CLICK = { ["##grnd_qr_auto_cmd_sp"] = true }
+drawAuto()
+CLICK = {}
+check(Q.autoTabs()[2].command == "sp", "команда второй вкладки не /sp")
+check(Q.autoTabs()[1].command == "goto", "команда первой вкладки испортилась")
+check(Q.autoCmdFor(77, Q.autoTabs()[1]) == "/goto 77", "первая вкладка шлёт не /goto")
+check(Q.autoCmdFor(77, Q.autoTabs()[2]) == "/sp 77", "вторая вкладка шлёт не /sp")
+Q.autoTabs()[2].command = "none"
+check(Q.autoCmdFor(77, Q.autoTabs()[2]) == nil, "«без команды» всё равно собирает команду")
+Q.autoTabs()[2].command = "sp"
+HPRINT("команды вкладок независимы: /goto у первой, /sp у второй")
+
+-- ===== 8. выключенный автопилот репорты не трогает =====
 NOW = NOW + 10
 A.perPid, A.rate = {}, {}
 Q.autoSet(false)
@@ -112,7 +144,7 @@ check(#QUEUE == 0, "выключенный автопилот что-то отп
 check(Q.autoSet(true) == true, "автопилот не включился")
 HPRINT("выключен: репорты проходят мимо, в чат ничего не уходит")
 
--- ===== 7. репорт с триггером: ответ игроку, затем команда =====
+-- ===== 9. репорт попадает в нужную вкладку =====
 NOW = NOW + 10
 A.perPid, A.rate = {}, {}
 QUEUE, ANS, CHAT, ORDER, ANSICALLS = {}, {}, {}, {}, {}
@@ -121,26 +153,30 @@ check(fired == true, "репорт с триггером не обработан
 check(hit == "помогите", "сработал не тот триггер: " .. tostring(hit))
 check(#QUEUE == 2, "в очередь встало не две строки: " .. tostring(#QUEUE))
 check(QUEUE[1] == "/ans 25 Приветствую, Mixa_Grozz! Уже смотрю. 25",
-    "первым в очереди не ответ игроку: " .. tostring(QUEUE[1]))
-check(QUEUE[2] == "/goto 25", "второй в очереди не команда: " .. tostring(QUEUE[2]))
-check(#ANSICALLS == 2 and ANSICALLS[1] == "Приветствую, Mixa_Grozz! Уже смотрю. 25",
-    "ответ игроку ушёл без конвертации в CP1251: " .. tostring(ANSICALLS[1]))
-check(ANSICALLS[2] == "/goto 25",
-    "команда ушла без конвертации в CP1251: " .. tostring(ANSICALLS[2]))
+    "первым в очереди не ответ первой вкладки: " .. tostring(QUEUE[1]))
+check(QUEUE[2] == "/goto 25", "второй в очереди не команда первой вкладки: " .. tostring(QUEUE[2]))
+check(#ANSICALLS == 2 and ANSICALLS[1] == "Приветствую, Mixa_Grozz! Уже смотрю. 25"
+    and ANSICALLS[2] == "/goto 25", "текст ушёл без перевода в CP1251")
 grndRepQueueTick()
 check(#ORDER == 2 and ORDER[1] == "ans" and ORDER[2] == "chat",
     "порядок неверный: " .. table.concat(ORDER, ","))
 check(ANS[1] == "25 Приветствую, Mixa_Grozz! Уже смотрю. 25",
     "игроку ушёл не тот ответ: " .. tostring(ANS[1]))
-check(CHAT[1] == "/goto 25", "команда в чат ушла неверно: " .. tostring(CHAT[1]))
-check(TOASTS[#TOASTS]:find("Автопилот: /ans 25", 1, true) ~= nil,
-    "нет тоста о срабатывании: " .. tostring(TOASTS[#TOASTS]))
-check(A.fired == 1, "счётчик срабатываний не вырос: " .. tostring(A.fired))
-check(#A.history == 1 and tostring(A.history[1].pid) == "25", "история не записалась")
-HPRINT("репорт: ответ игроку /ans 25, затем команда /goto 25 (в таком порядке)")
+check(A.lastCheck:find("вкладка 1", 1, true) ~= nil, "нет пометки вкладки: " .. tostring(A.lastCheck))
 
--- ===== 8. репорт без триггера / без ID / без ответа =====
-NOW = NOW + 10
+-- та же ситуация, но триггер второй вкладки
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE, ANS, CHAT, ORDER, ANSICALLS = {}, {}, {}, {}, {}
+local fired2, hit2 = Q.autoOnReport("Другой", 77, "написал в дм, ответь")
+check(fired2 == true and hit2 == "дм", "вторая вкладка не сработала: " .. tostring(hit2))
+check(#QUEUE == 2 and QUEUE[1] == "/ans 77 Не пишите в личку, отвечу в репорте"
+    and QUEUE[2] == "/sp 77", "вторая вкладка отправила не то: " .. tostring(QUEUE[1]))
+check(A.lastCheck:find("вкладка 2", 1, true) ~= nil, "нет пометки второй вкладки")
+HPRINT("срабатывание: триггер выбирает вкладку, её ответ и её команда")
+
+-- ===== 10. репорт без триггера / без ID =====
+NOW = NOW + 100
 A.perPid, A.rate = {}, {}
 QUEUE = {}
 local okNo, whyNo = Q.autoOnReport("Mixa_Grozz", 26, "как дела?")
@@ -149,9 +185,15 @@ check(A.lastCheck:find("не найден", 1, true) ~= nil, "нет поясн�
 local okId, whyId = Q.autoOnReport("Без_ид", "—", "помогите")
 check(okId == false and whyId == "нет ID", "репорт без ID обработан: " .. tostring(whyId))
 check(#QUEUE == 0, "что-то ушло в чат на репорт без ID")
-HPRINT("пропуски: нет триггера и нет ID — в чат ничего не уходит")
 
--- ===== 9. антидубль, пауза и предохранитель =====
+-- пустая вкладка молчит
+Q.autoTabs()[1].trigger = ""
+local okEmpty, whyEmpty = Q.autoOnReport("Mixa_Grozz", 26, "помогите")
+check(okEmpty == false and whyEmpty == "нет триггера", "пустая вкладка сработала: " .. tostring(whyEmpty))
+Q.autoTabs()[1].trigger = "Помогите"
+HPRINT("пропуски: нет триггера, нет ID, пустая вкладка — в чат ничего не уходит")
+
+-- ===== 11. антидубль, пауза и предохранитель =====
 NOW = NOW + 10
 A.perPid, A.rate = {}, {}
 Q.autoOnReport("Mixa_Grozz", 25, "Помогите")
@@ -163,9 +205,7 @@ local okDup, whyDup = Q.autoOnReport("Mixa_Grozz", 25, "помогите ещё 
 check(okDup == false and whyDup == "этому игроку уже отвечали", "нет антидубля: " .. tostring(whyDup))
 check(#QUEUE == 0, "пропущенные репорты всё равно ушли")
 NOW = NOW + 3
-local okNext = Q.autoOnReport("Другой", 77, "Help!")
-check(okNext == true, "после паузы не сработало")
-check(#QUEUE == 2, "после паузы ушло не две строки: " .. tostring(#QUEUE))
+check(Q.autoOnReport("Другой", 77, "Помогите!") == true, "после паузы не сработало")
 HPRINT("антидубль: тому же игроку — раз в минуту, между срабатываниями пауза")
 
 A.perPid, A.rate = {}, {}
@@ -181,7 +221,7 @@ check(sentN == 12, "предохранитель: ушло " .. tostring(sentN) 
 check(blockN == 3, "предохранитель не заблокировал поток: " .. tostring(blockN))
 HPRINT("предохранитель: 12 автоответов в минуту, дальше — стоп")
 
--- ===== 10. слежка: автопилот выключается сам и не отвечает =====
+-- ===== 12. слежка: автопилот выключается сам и не отвечает =====
 NOW = NOW + 100
 A.perPid, A.rate = {}, {}
 check(A.on == true, "перед проверкой слежки автопилот должен быть включён")
@@ -192,10 +232,10 @@ check(okSpec == false and whySpec == "слежка", "в слежке автоп
 check(A.on == false, "автопилот не выключился при входе в слежку")
 check(A.offReason == "слежка", "причина выключения не записана: " .. tostring(A.offReason))
 check(#QUEUE == 0, "в слежке ответ всё равно ушёл")
-check(TOASTS[#TOASTS] == "Автопилот выключен: слежка",
-    "нет тоста про слежку: " .. tostring(TOASTS[#TOASTS]))
+check(TOASTS[#TOASTS] == "Автопилот выключен: слежка", "нет тоста про слежку")
 check(Q.autoSet(true) == false, "автопилот включился прямо в слежке")
-check(A.on == false, "состояние в слежке переключилось")
+drawAuto()
+check(has("выключен сам: активна слежка"), "на вкладке нет причины выключения")
 setSpec(false)
 check(Q.autoSet(true) == true, "вне слежки не включился")
 setSpec(true)
@@ -205,7 +245,7 @@ check(A.on == false, "тик не выключил автопилот при в�
 setSpec(false)
 HPRINT("слежка: срабатываний нет, автопилот выключается сам (тумблер и тик)")
 
--- ===== 11. идёт ввод текста — пропуск =====
+-- ===== 13. идёт ввод текста — пропуск =====
 NOW = NOW + 100
 check(Q.autoSet(true) == true, "не включился")
 A.perPid, A.rate = {}, {}
@@ -217,57 +257,107 @@ check(#QUEUE == 0, "при вводе текста ответ всё равно 
 SERV.typing = false
 HPRINT("идёт ввод текста: репорт пропущен, в чат ничего не уходит")
 
--- ===== 12. режим «без команды» =====
+-- ===== 14. режим «без команды» во второй вкладке =====
 NOW = NOW + 100
 A.perPid, A.rate = {}, {}
-A.command = "none"
+Q.autoTabs()[2].command = "none"
 CHAT, QUEUE = {}, {}
-check(Q.autoCmdFor(25) == nil, "команда «без команды» всё равно собирается")
-local okNone = Q.autoOnReport("Тихий", 500, "помогите")
-check(okNone == true, "с режимом «без команды» ответ не ушёл")
+check(Q.autoCmdFor(500, Q.autoTabs()[2]) == nil, "команда «без команды» всё равно собирается")
+check(Q.autoOnReport("Тихий", 500, "в дм пишет") == true, "вторая вкладка не сработала")
 check(#QUEUE == 1, "в очереди лишние строки: " .. tostring(#QUEUE))
 grndRepQueueTick()
 check(#CHAT == 0, "при «без команды» в чат всё равно ушла команда")
-A.command = "goto"
+Q.autoTabs()[2].command = "sp"
 HPRINT("«без команды»: уходит только ответ игроку")
 
--- ===== 13. конфиг: запись и чтение =====
+-- ===== 15. конфиг: вкладки записаны и прочитаны =====
 Q.autoSave()
 local body = FILES[Q.autoPath()] or ""
-check(body:find("trigger=Помогите, help", 1, true) ~= nil, "в файле нет триггеров: " .. body)
-check(body:find("command=goto", 1, true) ~= nil, "в файле нет команды: " .. body)
-check(body:find("answer=Приветствую", 1, true) ~= nil, "в файле нет ответа")
+check(body:find("count=2", 1, true) ~= nil, "в файле нет count: " .. body)
+check(body:find("t1_trigger=Помогите", 1, true) ~= nil, "в файле нет триггера 1-й вкладки")
+check(body:find("t2_trigger=дм", 1, true) ~= nil, "в файле нет триггера 2-й вкладки")
+check(body:find("t1_command=goto", 1, true) ~= nil, "в файле нет команды 1-й вкладки")
+check(body:find("t2_command=sp", 1, true) ~= nil, "в файле нет команды 2-й вкладки")
 check(body:find("on=1", 1, true) ~= nil, "в файле нет on=1")
-A.on, A.trigger, A.answer, A.command, A.loaded = false, "", "", "sp", false
-A.perPid, A.rate, A.history = {}, {}, {}
+A.on, A.sel, A.loaded = false, 1, false
+A.tabs = nil
 check(Q.autoLoad() == true, "конфиг не прочитался")
+check(#Q.autoTabs() == 2, "вкладки не восстановились: " .. tostring(#Q.autoTabs()))
+check(Q.autoTabs()[1].trigger == "Помогите" and Q.autoTabs()[1].command == "goto",
+    "первая вкладка восстановилась неверно")
+check(Q.autoTabs()[2].trigger == "дм" and Q.autoTabs()[2].answer == "Не пишите в личку, отвечу в репорте",
+    "вторая вкладка восстановилась неверно")
 check(A.on == true, "on не восстановился")
-check(A.trigger == "Помогите, help", "триггеры не восстановились: " .. tostring(A.trigger))
-check(A.answer == "Приветствую, {ник}! Уже смотрю. {ид}", "ответ не восстановился")
-check(A.command == "goto", "команда не восстановилась: " .. tostring(A.command))
-HPRINT("конфиг: on / trigger / answer / command записаны и прочитаны обратно")
+HPRINT("конфиг: две вкладки со своими триггерами/ответами/командами пережили перезапуск")
 
--- ===== 14. задержанное сохранение тиком =====
-A.trigger = "помоги"
+-- ===== 16. файл старого формата читается как первая вкладка =====
+FILES[Q.autoPath()] = "on=1\ntrigger=старый\nanswer=старый ответ\ncommand=sp\n"
+A.loaded, A.tabs, A.sel, A.on = false, nil, 1, false
+check(Q.autoLoad() == true, "старый конфиг не прочитался")
+check(#Q.autoTabs() == 1 and Q.autoTabs()[1].trigger == "старый"
+    and Q.autoTabs()[1].answer == "старый ответ", "старый формат потерялся")
+HPRINT("совместимость: файл прошлой версии читается как первая вкладка")
+
+-- ===== 17. задержанное сохранение тиком =====
+Q.autoTabs()[1].trigger = "помоги"
 A.dirtyAt = NOW
 NOW = NOW + 1
 Q.autoTick()
-check((FILES[Q.autoPath()] or ""):find("trigger=помоги", 1, true) ~= nil,
+check((FILES[Q.autoPath()] or ""):find("t1_trigger=помоги", 1, true) ~= nil,
     "тик не сохранил правки из полей")
 HPRINT("тик: правки из полей сохраняются с задержкой")
 
--- ===== 15. очередь репорта недоступна — команда уходит напрямую =====
+-- ===== 18. удаление вкладки: подтверждение и сдвиг =====
+Q.autoEnsure()
+Q.autoAdd()                     -- вторая вкладка: есть что удалять
+Q.autoTabs()[2].trigger = "дм"
+A.sel = 1
+CLICK = { ["##grnd_qr_auto_del"] = true }
+drawAuto()
+CLICK = {}
+check(A.delArm == true, "первое нажатие «Удалить» не включило подтверждение")
+drawAuto()
+check(has("Точно удалить?"), "нет подтверждения на кнопке: " .. texts())
+check(#Q.autoTabs() == 2, "вкладка удалилась без подтверждения")
+CLICK = { ["##grnd_qr_auto_del"] = true }
+drawAuto()
+CLICK = {}
+check(#Q.autoTabs() == 1, "вкладка не удалилась: " .. tostring(#Q.autoTabs()))
+check(Q.autoLabel(1) == "дм", "после удаления осталась не та вкладка: " .. Q.autoLabel(1))
+check(pcall(_G.grndQrAutoDraw, CTX), "после удаления раздел не рисуется")
+-- последняя вкладка не исчезает, а очищается: пустая вкладка честно молчит
+CLICK = { ["##grnd_qr_auto_del"] = true }
+drawAuto()
+CLICK = {}
+check(A.delArm == true and #Q.autoTabs() == 1, "кнопки «Удалить» нет при одной вкладке")
+CLICK = { ["##grnd_qr_auto_del"] = true }
+drawAuto()
+CLICK = {}
+check(#Q.autoTabs() == 1 and Q.autoTabs()[1].trigger == "" and Q.autoTabs()[1].answer == "",
+    "последняя вкладка должна очищаться, а не исчезать")
+HPRINT("удаление: подтверждение подписью кнопки, последняя вкладка очищается")
+
+-- ===== 19. предел вкладок =====
+for i = 2, 8 do Q.autoAdd() end
+check(#Q.autoTabs() == 8, "не набралось 8 вкладок: " .. tostring(#Q.autoTabs()))
+check(Q.autoAdd() == nil, "появилась 9-я вкладка")
+check(#Q.autoTabs() == 8, "вкладок стало больше предела")
+HPRINT("предел: 8 вкладок, дальше отказ с тостом")
+
+-- ===== 20. очередь репорта недоступна — команда уходит напрямую =====
 NOW = NOW + 100
 A.on, A.perPid, A.rate = true, {}, {}
+Q.autoTabs()[1].trigger = "помогите"
+Q.autoTabs()[1].answer = "уже смотрю"
+Q.autoTabs()[1].command = "goto"
 CHAT, ANS, QUEUE, ORDER, ANSICALLS = {}, {}, {}, {}, {}
 SERV.failQueue = true
-local okFb = Q.autoOnReport("Фолбэк", 400, "помогите")
-check(okFb == true, "при недоступной очереди автопилот не сработал")
+check(Q.autoOnReport("Фолбэк", 400, "помогите") == true, "при недоступной очереди не сработало")
 check(#CHAT == 1 and CHAT[1] == "/goto 400", "команда не ушла напрямую: " .. tostring(CHAT[1]))
 SERV.failQueue = false
 HPRINT("очередь недоступна: команда уходит напрямую в чат")
 
--- ===== 16. QR.queueCmd: русский текст конвертируется =====
+-- ===== 21. QR.queueCmd: русский текст конвертируется =====
 ANSICALLS = {}
 check(Q.queueCmd("/mute 25 60 флуд в чате") == true, "queueCmd не отправил команду")
 check(#ANSICALLS == 1 and ANSICALLS[1] == "/mute 25 60 флуд в чате",
@@ -275,29 +365,29 @@ check(#ANSICALLS == 1 and ANSICALLS[1] == "/mute 25 60 флуд в чате",
 check(Q.queueCmd("") == false, "пустая команда ушла")
 HPRINT("queueCmd: русская причина наказания уходит через CP1251")
 
--- ===== 17. ошибки наружу не выходят =====
+-- ===== 22. ошибки наружу не выходят =====
 NOW = NOW + 100
 A.perPid, A.rate = {}, {}
+Q.autoTabs()[1].trigger = "помогите"
 local savedAns = grndRepAnswer
 grndRepAnswer = function() error("тест: сбой ответа") end
-local okBoom = Q.autoOnReport("Сбой", 600, "помогите")
-check(okBoom == true, "сбой ответа сломал срабатывание (команда не ушла)")
+check(Q.autoOnReport("Сбой", 600, "помогите") == true, "сбой ответа сломал срабатывание")
 grndRepAnswer = savedAns
 local savedFn = Q.autoOnReport
 Q.autoOnReport = function() error("тест: падение разбора") end
-local okWrap = _G.grndQrAutoOnReport("Ник", 700, "помогите")
-check(okWrap == false, "обёртка не вернула false при падении")
+check(_G.grndQrAutoOnReport("Ник", 700, "помогите") == false, "обёртка не вернула false при падении")
 check(type(Q.auto.err) == "string", "ошибка не записана в Q.auto.err")
 Q.autoOnReport = savedFn
 HPRINT("сбой внутри: команда всё равно уходит, обёртка не роняет скрипт")
 
--- ===== 18. ESC закрывает список команд =====
+-- ===== 23. ESC закрывает список команд =====
 A.listOpen = true
 check(_G.grndQrOnEsc() == true, "ESC не обработал список команд")
 check(A.listOpen == false, "ESC не закрыл список команд")
+check(_G.grndQrOnEsc() == false, "ESC на закрытом списке вернул true")
 HPRINT("ESC: список команд автопилота закрывается")
 
--- ===== 19. маленькая область и мусор на входе =====
+-- ===== 24. маленькая область и мусор на входе =====
 local small = makeCtx()
 small.w, small.h = 200, 120
 check(_G.grndQrAutoDraw(small) == false, "раздел нарисовался в слишком маленькой области")

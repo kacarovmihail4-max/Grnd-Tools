@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.21"
+GRND_SCRIPT_VERSION = "1.19.22"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24347,7 +24347,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.21)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.22)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -24418,21 +24418,20 @@ local QR = {
         pickFocus = false,
         left = 0,          -- сколько раз рисовали полосу
     },
-    -- v1.19.21: автопилот ответов на репорт (вкладка «Репорт» → «Автопилот»)
+    -- v1.19.21: автопилот ответов на репорт (вкладка «Репорт» → «Автопилот»).
+    -- v1.19.22: во вкладках — в каждой свой триггер, ответ и команда.
     auto = {
         loaded = false,    -- конфиг автопилота прочитан
         on = false,        -- включён ли
-        trigger = "",      -- слова-триггеры через запятую
-        answer = "",       -- текст ответа игроку (/ans ID текст)
-        command = "sp",    -- sp | goto | none — что отправить после ответа
+        tabs = nil,        -- вкладки: { {trigger=, answer=, command=}, … }
+        sel = 1,           -- выбранная вкладка
+        delArm = false,    -- кнопка «Удалить» ждёт подтверждения
         listOpen = false,  -- открыт выпадающий список команд
         offReason = nil,   -- почему выключен («слежка» и т.п.)
         fired = 0,         -- сколько раз сработал
         lastAt = 0,        -- время последнего срабатывания
         perPid = {},       -- id -> время последнего ответа (антидубль)
         rate = {},         -- времена срабатываний (предохранитель 12/мин)
-        history = {},      -- последние срабатывания для вкладки
-        lastReport = nil,  -- последний пришедший репорт
         lastCheck = nil,   -- чем закончилась последняя проверка
         dirtyAt = nil,     -- есть несохранённые правки (пишем с задержкой)
         err = nil,         -- последняя ошибка (диагностика)
@@ -26934,11 +26933,12 @@ do
 end
 
 -- =====================================================================
---  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.21) — «Репорт» → «Автопилот»
+--  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.22) — «Репорт» → «Автопилот»
 -- =====================================================================
---  Что делает: пришёл репорт с триггером («помогите») — сразу уходит ОТВЕТ
---  игроку штатной командой /ans ID текст (в CP1251, без «закорючек»), а
---  следом — выбранная команда: /sp ID или /goto ID.
+--  Вкладки: в каждой — ОДИН триггер, свой текст ответа и своя команда после
+--  ответа. Пришёл репорт — ищем триггер по вкладкам по порядку; первая
+--  подошедшая отвечает игроку штатной /ans ID текст (в CP1251, без
+--  «закорючек») и сразу отправляет свою команду (/sp ID или /goto ID).
 --
 --  Чтобы поведение было предсказуемым:
 --    * слежка — стоп: в слежке автопилот не срабатывает и САМ выключается
@@ -26952,13 +26952,16 @@ end
 --    * репорт должен быть настоящим («… [К-во репорта: N]» или формат
 --      админ-бота «Ник(ID): текст») — обычная болтовня в чате не считается.
 --
---  Конфиг: grnd_repauto.cfg (on / trigger / answer / command).
+--  Конфиг: grnd_repauto.cfg (on / sel / count / t1_trigger / t1_answer /
+--  t1_command / …). Файл старого формата (один trigger=…) читается как
+--  первая вкладка, ничего не теряется.
+--
 --  Локальные имена живут в do-блоке: у Lua в функции не больше 200 локальных.
 --  Отладка: QR.auto.lastCheck и QR.auto.err; ошибки отрисовки — в /mp diag.
 -- =====================================================================
 do
-    local MAX_ATRIG = 128      -- символов в строке триггеров
-    local AUTO_HIST = 5        -- сколько срабатываний держим в истории
+    local MAX_ATRIG = 128      -- символов в триггере
+    local MAX_TABS = 8         -- сколько вкладок можно завести
     local AUTO_GAP = 2.5       -- пауза между срабатываниями (сек)
     local AUTO_PER_PID = 60    -- одному игроку — один ответ в минуту
     local AUTO_PER_MIN = 12    -- предохранитель: не больше 12 автоответов в минуту
@@ -27024,9 +27027,90 @@ do
         return "/sp"
     end
 
-    -- Триггеры: строка «помогите, help» → { "помогите", "help" }.
-    function QR.autoTriggers()
-        local raw = tostring(QR.auto.trigger or "")
+    -- ---------- вкладки ----------
+
+    -- Пустая вкладка: триггер, ответ, команда. Триггер — ОДИН на вкладку.
+    function QR.autoNewTab()
+        return { trigger = "", answer = "", command = "sp" }
+    end
+
+    -- Вкладки всегда есть: минимум одна. Возвращает массив.
+    function QR.autoTabs()
+        local A = QR.auto
+        if type(A.tabs) ~= "table" then A.tabs = {} end
+        local out = {}
+        for i = 1, #A.tabs do
+            local t = A.tabs[i]
+            if type(t) == "table" then out[#out + 1] = t end
+        end
+        if #out == 0 then out[1] = QR.autoNewTab() end
+        while #out > MAX_TABS do table.remove(out) end
+        A.tabs = out
+        A.sel = math.max(1, math.min(#out, math.floor(tonumber(A.sel) or 1)))
+        return out
+    end
+
+    function QR.autoTab(i)
+        local tabs = QR.autoTabs()
+        i = math.floor(tonumber(i) or QR.auto.sel or 1)
+        if i < 1 then i = 1 end
+        if i > #tabs then i = #tabs end
+        return tabs[i], i
+    end
+
+    -- Подпись вкладки — её триггер; без триггера — «Вкладка N».
+    function QR.autoLabel(i)
+        local t = QR.auto.tabs and QR.auto.tabs[i]
+        local trg = t and tostring(t.trigger or "") or ""
+        if trim(trg) ~= "" then return trim(trg) end
+        return "Вкладка " .. tostring(i)
+    end
+
+    function QR.autoAdd()
+        local tabs = QR.autoTabs()
+        if #tabs >= MAX_TABS then
+            QR.toast("Больше " .. tostring(MAX_TABS) .. " вкладок не нужно", "warn", 2.6)
+            return nil
+        end
+        tabs[#tabs + 1] = QR.autoNewTab()
+        QR.auto.sel = #tabs
+        QR.auto.delArm = false
+        QR.auto.listOpen = false
+        pcall(QR.autoSave)
+        return QR.auto.sel
+    end
+
+    -- Удаление вкладки. Последнюю не удаляем — очищаем: пустая вкладка честно
+    -- показана как «Вкладка N», и автопилот просто молчит.
+    function QR.autoDel(i)
+        local tabs = QR.autoTabs()
+        i = math.floor(tonumber(i) or QR.auto.sel or 1)
+        if i < 1 or i > #tabs then return false end
+        if #tabs <= 1 then
+            tabs[1] = QR.autoNewTab()
+            QR.auto.sel = 1
+        else
+            table.remove(tabs, i)
+            if QR.auto.sel > #tabs then QR.auto.sel = #tabs end
+        end
+        QR.auto.delArm = false
+        QR.auto.listOpen = false
+        -- буферы полей привязаны к номеру вкладки — после сдвига их надо
+        -- перечитать из модели
+        if type(QR.bufs) == "table" then
+            for k in pairs(QR.bufs) do
+                if tostring(k):find("^auto") then QR.bufs[k] = nil end
+            end
+        end
+        pcall(QR.autoSave)
+        return true
+    end
+
+    -- Триггеры вкладки (в одной вкладке триггер один, но в поле можно
+    -- перечислить синонимы через запятую).
+    function QR.autoTriggers(tab)
+        tab = tab or QR.autoTab()
+        local raw = tostring(tab and tab.trigger or "")
         local out = {}
         for piece in (raw .. ","):gmatch("([^,;\n]*)[,;\n]") do
             local w = trim(autoLower(autoPlain(piece)))
@@ -27035,31 +27119,47 @@ do
         return out
     end
 
-    -- Есть ли триггер в тексте репорта. Возвращает найденный триггер.
-    function QR.autoMatch(text)
+    -- Первая вкладка, чей триггер есть в тексте репорта. Возвращает её номер
+    -- и найденный триггер.
+    function QR.autoMatchTab(text)
         local low = autoLower(autoPlain(text))
         if low == "" then return nil end
-        local list = QR.autoTriggers()
-        for i = 1, #list do
-            if low:find(list[i], 1, true) then return list[i] end
+        local tabs = QR.autoTabs()
+        for i = 1, #tabs do
+            local list = QR.autoTriggers(tabs[i])
+            for k = 1, #list do
+                if low:find(list[k], 1, true) then return i, list[k] end
+            end
         end
         return nil
     end
 
-    -- Самая короткая «опасная» настройка: односимвольный триггер ловит всё.
-    function QR.autoShortTrigger()
-        local list = QR.autoTriggers()
+    -- Слишком короткий триггер ловит почти всё — предупреждаем.
+    function QR.autoShortTrigger(tab)
+        local list = QR.autoTriggers(tab)
         for i = 1, #list do
             if utf8Len(list[i]) < 3 then return list[i] end
         end
         return nil
     end
 
+    -- Сводка по вкладкам: сколько готовых (с триггером и ответом).
+    function QR.autoReady()
+        local tabs, ready = QR.autoTabs(), 0
+        for i = 1, #tabs do
+            if #QR.autoTriggers(tabs[i]) > 0 and trim(tostring(tabs[i].answer or "")) ~= "" then
+                ready = ready + 1
+            end
+        end
+        return ready, #tabs
+    end
+
     -- Что уйдёт после ответа: «/sp 25», «/goto 25» или nil.
-    function QR.autoCmdFor(pid)
+    function QR.autoCmdFor(pid, tab)
         pid = tostring(pid or "")
         if pid:match("^%d+$") == nil then return nil end
-        local id = QR.autoCmdId(QR.auto.command)
+        tab = tab or QR.autoTab()
+        local id = QR.autoCmdId(tab and tab.command)
         if id == "none" then return nil end
         return "/" .. id .. " " .. pid
     end
@@ -27068,14 +27168,16 @@ do
         local A = QR.auto
         if type(A) ~= "table" then A = {} QR.auto = A end
         A.on = A.on and true or false
-        A.trigger = clampText(oneLine(utf(A.trigger or "")), MAX_ATRIG)
-        A.answer = clampText(cleanText(utf(A.answer or "")), MAX_TEXT)
-        A.command = QR.autoCmdId(A.command)
         A.fired = math.max(0, math.floor(tonumber(A.fired) or 0))
         if type(A.perPid) ~= "table" then A.perPid = {} end
         if type(A.rate) ~= "table" then A.rate = {} end
-        if type(A.history) ~= "table" then A.history = {} end
-        while #A.history > AUTO_HIST do table.remove(A.history, 1) end
+        local tabs = QR.autoTabs()
+        for i = 1, #tabs do
+            local t = tabs[i]
+            t.trigger = clampText(oneLine(utf(t.trigger or "")), MAX_ATRIG)
+            t.answer = clampText(cleanText(utf(t.answer or "")), MAX_TEXT)
+            t.command = QR.autoCmdId(t.command)
+        end
         return A
     end
 
@@ -27083,23 +27185,37 @@ do
         local A = QR.auto
         if A.loaded then return true end
         A.loaded = true
-        local on, trigger, answer, command = nil, nil, nil, nil
+        local on, sel, legacy = nil, nil, nil
+        local tabs = {}
         local ok, f = pcall(GRND_CONFIG.open, QR.autoPath(), "r")
         if ok and f then
             for line in f:lines() do
                 local k, v = tostring(line or ""):match("^([%w_]+)=(.*)$")
-                if k == "on" then on = (v == "1" or v == "true")
-                elseif k == "trigger" then trigger = unesc(v)
-                elseif k == "answer" then answer = unesc(v)
-                elseif k == "command" then command = v
-                elseif k == "fired" then A.fired = tonumber(v) end
+                -- k может быть nil: сначала строка, потом разбор — «k and
+                -- k:match()» вернул бы только первый захват
+                local idx, field = tostring(k or ""):match("^t(%d+)_(%a+)$")
+                if idx then
+                    local n = tonumber(idx)
+                    if n and n >= 1 and n <= MAX_TABS then
+                        tabs[n] = tabs[n] or QR.autoNewTab()
+                        if field == "trigger" then tabs[n].trigger = unesc(v)
+                        elseif field == "answer" then tabs[n].answer = unesc(v)
+                        elseif field == "command" then tabs[n].command = v end
+                    end
+                elseif k == "on" then on = (v == "1" or v == "true")
+                elseif k == "sel" then sel = tonumber(v)
+                elseif k == "fired" then A.fired = tonumber(v)
+                elseif k == "trigger" or k == "answer" or k == "command" then
+                    legacy = legacy or QR.autoNewTab()
+                    legacy[k] = unesc(v)
+                end
             end
             pcall(f.close, f)
         end
+        if #tabs == 0 and legacy then tabs[1] = legacy end   -- файл старого формата
+        if #tabs == 0 then tabs[1] = QR.autoNewTab() end
+        A.tabs, A.sel = tabs, sel
         if on ~= nil then A.on = on end
-        if trigger then A.trigger = trigger end
-        if answer then A.answer = answer end
-        if command then A.command = command end
         QR.autoNormalize()
         return true
     end
@@ -27116,11 +27232,15 @@ do
         A.dirtyAt = nil
         local ok, f = pcall(GRND_CONFIG.open, QR.autoPath(), "w")
         if not ok or not f then return false end
-        local escv = esc
         f:write("on=" .. (A.on and "1" or "0") .. "\n")
-        f:write("trigger=" .. escv(A.trigger or "") .. "\n")
-        f:write("answer=" .. escv(A.answer or "") .. "\n")
-        f:write("command=" .. tostring(A.command or "sp") .. "\n")
+        f:write("sel=" .. tostring(A.sel or 1) .. "\n")
+        f:write("count=" .. tostring(#A.tabs) .. "\n")
+        for i = 1, #A.tabs do
+            local t = A.tabs[i]
+            f:write("t" .. i .. "_trigger=" .. esc(t.trigger or "") .. "\n")
+            f:write("t" .. i .. "_answer=" .. esc(t.answer or "") .. "\n")
+            f:write("t" .. i .. "_command=" .. tostring(t.command or "sp") .. "\n")
+        end
         pcall(f.close, f)
         if GRND_CONFIG and type(GRND_CONFIG.flush) == "function" then
             pcall(GRND_CONFIG.flush)
@@ -27192,7 +27312,6 @@ do
         local A = QR.auto
         nick, pid = tostring(nick or ""), tostring(pid or "")
         local text = autoPlain(msg)
-        A.lastReport = { nick = nick, id = pid, text = text, at = os.clock() }
         if not A.on then
             A.lastCheck = "выключен"
             return false, "выключен"
@@ -27212,16 +27331,13 @@ do
             A.lastCheck = "пустой текст репорта"
             return false, "пусто"
         end
-        if #QR.autoTriggers() == 0 then
-            A.lastCheck = "не заданы триггеры"
-            return false, "нет триггеров"
-        end
-        local hit = QR.autoMatch(text)
-        if not hit then
+        local idx, hit = QR.autoMatchTab(text)
+        if not idx then
             A.lastCheck = "триггер не найден в «" .. utf8Cut(text, 40) .. "»"
             return false, "нет триггера"
         end
-        A.lastCheck = "триггер «" .. hit .. "» найден"
+        local tab = QR.autoTab(idx)
+        A.lastCheck = "вкладка " .. tostring(idx) .. ": триггер «" .. hit .. "» найден"
         if type(grndIsTyping) == "function" then
             local okT, typing = pcall(grndIsTyping)
             if okT and typing then
@@ -27238,10 +27354,10 @@ do
 
         -- что уйдёт игроку и на сервер
         local rep = { nick = nick, id = id }
-        local line = oneLine(QR.apply(A.answer, rep))
-        local cmd = QR.autoCmdFor(id)
+        local line = oneLine(QR.apply(tab.answer, rep))
+        local cmd = QR.autoCmdFor(id, tab)
         if line == "" and not cmd then
-            A.lastCheck = "пусто: не заполнен ответ"
+            A.lastCheck = "вкладка " .. tostring(idx) .. ": не заполнен ответ"
             return false, "пусто"
         end
 
@@ -27258,19 +27374,12 @@ do
         A.lastAt, A.perPid[id] = now, now
         A.rate[#A.rate + 1] = now
         A.fired = (A.fired or 0) + 1
-        A.history[#A.history + 1] = {
-            time = os.date("%H:%M:%S"), nick = nick, pid = id, trig = hit,
-            what = (sentAns and ("/ans " .. id) or "")
-                .. ((sentAns and sentCmd) and " + " or "")
-                .. (sentCmd and cmd or ""),
-            ok = (sentAns or sentCmd) and true or false,
-        }
-        while #A.history > AUTO_HIST do table.remove(A.history, 1) end
         A.lastCheck = (sentAns or sentCmd)
-            and ("отправлено: триггер «" .. hit .. "»") or "не удалось отправить"
+            and ("вкладка " .. tostring(idx) .. ": отправлено, триггер «" .. hit .. "»")
+            or "не удалось отправить"
         if sentAns or sentCmd then
             QR.toast("Автопилот: /ans " .. id .. (sentCmd and (" + " .. tostring(cmd)) or "")
-                .. " · триггер «" .. hit .. "»", "ok", 3.6)
+                .. " · «" .. hit .. "»", "ok", 3.6)
         else
             QR.toast("Автопилот: отправить не удалось", "warn", 3)
         end
@@ -27297,7 +27406,7 @@ do
     -- ---------- отрисовка вкладки ----------
 
     -- Клик «мимо» списка команд — закрыть список (координаты локальные).
-    local function autoOutsideClick(im, x, y, w, h, keepY, keepH)
+    local function autoOutsideClick(im, x, y, w, h)
         local alive = _G and _G.grndClickAlive
         if type(alive) ~= "function" then return false end
         local ok, hit = pcall(alive)
@@ -27313,10 +27422,6 @@ do
         local px, py = (wp and wp.x or 0), (wp and wp.y or 0)
         local sx, sy = px + x, py + y
         if mx >= sx and mx <= sx + w and my >= sy and my <= sy + h then return false end
-        if mx >= sx and mx <= sx + w
-            and my >= py + keepY and my <= py + keepY + (keepH or 0) then
-            return false
-        end
         return true
     end
 
@@ -27343,15 +27448,6 @@ do
         return clicked
     end
 
-    -- Карточка-подложка раздела (как строки в «Настройках»).
-    local function autoCard(ctx, x, y, w, h)
-        ctx.roundRect(ctx.dl, ctx.at(x, y), ctx.at(x + w, y + h), ctx.col32(255, 255, 255, 10), 9)
-        if ctx.dl.AddRect then
-            pcall(ctx.dl.AddRect, ctx.dl, ctx.at(x + 0.5, y + 0.5),
-                ctx.at(x + w - 0.5, y + h - 0.5), ctx.col32(255, 255, 255, 16), 9, 0, 1)
-        end
-    end
-
     _G.grndQrAutoDraw = function(ctx)
         if type(ctx) ~= "table" then return false end
         local im = ctx.im
@@ -27361,8 +27457,9 @@ do
         local TH = theme()
         QR.autoEnsure()
         local A = QR.auto
+        local tabs = QR.autoTabs()
         local x, y, w, h = ctx.x, ctx.y, ctx.w, ctx.h
-        if not (x and y and w and h) or w < 320 or h < 240 then return false end
+        if not (x and y and w and h) or w < 320 or h < 200 then return false end
 
         local hi  = ctx.col32(TH.textHi[1], TH.textHi[2], TH.textHi[3], 255)
         local dim = ctx.col32(TH.textDim[1], TH.textDim[2], TH.textDim[3], 255)
@@ -27372,7 +27469,7 @@ do
         local warnC = ctx.col32(255, 176, 96, 255)
         local okC   = ctx.col32(120, 220, 160, 255)
 
-        -- ---------- шапка ----------
+        -- ---------- шапка: название, счётчик, тумблер ----------
         ctx.uiText(x, y + 1, "Автопилот", hi, 1.0)
         local tw = 0
         if type(ctx.drawnW) == "function" then
@@ -27380,196 +27477,204 @@ do
             if okM and type(v) == "number" then tw = v end
         end
         if tw <= 0 then tw = 74 end
-        chip(ctx, x + tw + 10, y - 2, "срабатываний: " .. tostring(A.fired or 0))
+        chip(ctx, x + tw + 10, y - 2, "вкладок: " .. tostring(#tabs) ..
+            " · срабатываний: " .. tostring(A.fired or 0))
 
-        -- ---------- строка состояния + тумблер ----------
-        local rowH = 60
-        local rowY = y + 34
-        autoCard(ctx, x, rowY, w, rowH)
         local on = A.on and true or false
+        local stY = y + 30
         local dotC = on and okC or (A.offReason and warnC or ctx.col32(255, 255, 255, 70))
-        ctx.dl:AddCircleFilled(ctx.at(x + 22, rowY + rowH / 2), 5, dotC)
-        ctx.uiText(x + 38, rowY + 10, on and "Автопилот включён" or "Автопилот выключен",
-            on and hi or ctx.col32(TH.text[1], TH.text[2], TH.text[3], 255), 1.02)
+        ctx.dl:AddCircleFilled(ctx.at(x + 8, stY + 12), 5, dotC)
+        ctx.uiText(x + 22, stY + 2, on and "включён" or "выключен",
+            on and hi or dim, 0.95)
         local note
         if on then
-            note = "Репорт с триггером → ответ /ans ID и команда " .. QR.autoCmdLabel(A.command)
+            note = "при репорте: ответ игроку и команда выбранной вкладки"
         elseif A.offReason == "слежка" then
-            note = "Выключен автоматически: активна слежка. Включите заново после выхода."
+            note = "выключен сам: активна слежка, после выхода включите заново"
         else
-            note = "Включите тумблером — ответы пойдут сами, без открытия окна репорта."
+            note = "репорты проходят мимо — включите тумблером"
         end
-        ctx.uiText(x + 38, rowY + 32, fit(note, w - 110, ctx.drawnW, 0.88),
-            A.offReason == "слежка" and warnC or mut, 0.88)
-        if autoSwitch(ctx, x + w - 60, rowY + (rowH - 24) / 2, on, "##grnd_qr_auto_on") then
+        if type(ctx.drawnW) == "function" then
+            local okM, v = pcall(ctx.drawnW, note, 0.86)
+            if okM and type(v) == "number" then
+                ctx.uiText(x + 96, stY + 4, fit(note, w - 96 - 70, ctx.drawnW, 0.86),
+                    A.offReason == "слежка" and warnC or mut, 0.86)
+            end
+        end
+        if autoSwitch(ctx, x + w - 56, stY, on, "##grnd_qr_auto_on") then
             QR.autoSet(not on)
         end
 
-        -- ---------- две колонки ----------
-        local yy0 = rowY + rowH + 12
-        local gap = 14
-        local leftW = math.floor((w - gap) * 0.56)
-        if leftW < 260 then leftW = 260 end
-        if leftW > w - 190 then leftW = math.max(180, w - 190) end
-        local rightX = x + leftW + gap
-        local rightW = w - leftW - gap
+        -- ---------- полоса вкладок ----------
+        -- Каждая вкладка — один триггер со своим ответом и командой. Вкладок
+        -- может быть много, поэтому полоса переносится на след. строку, а не
+        -- вылезает за окно.
+        local tabH, tgap = 30, 6
+        local tabW = math.floor((w - tgap * (#tabs - 1)) / #tabs)
+        if tabW > 190 then tabW = 190 end
+        if tabW < 88 then tabW = 88 end
+        local tx, ty = x, stY + 32
+        for i = 1, #tabs do
+            if tx + tabW > x + w + 0.5 then tx, ty = x, ty + tabH + tgap end
+            local sel = (i == A.sel)
+            im.SetCursorPos(im.ImVec2(tx, ty))
+            local clicked = im.InvisibleButton("##grnd_qr_auto_tab_" .. i,
+                im.ImVec2(tabW, tabH)) and true or false
+            local hov = (im.IsItemHovered and im.IsItemHovered()) or false
+            ctx.roundRect(ctx.dl, ctx.at(tx, ty), ctx.at(tx + tabW, ty + tabH),
+                sel and ctx.col32(ac[1], ac[2], ac[3], 52)
+                    or (hov and ctx.col32(255, 255, 255, 22) or ctx.col32(255, 255, 255, 12)), 6)
+            if ctx.dl.AddRect then
+                pcall(ctx.dl.AddRect, ctx.dl, ctx.at(tx + 0.5, ty + 0.5),
+                    ctx.at(tx + tabW - 0.5, ty + tabH - 0.5),
+                    sel and ctx.col32(ac[1], ac[2], ac[3], 170) or ctx.col32(255, 255, 255, 46),
+                    6, 0, 1)
+            end
+            local lbl = fit(QR.autoLabel(i), tabW - 18, ctx.drawnW, 0.88)
+            local lw = 0
+            if type(ctx.drawnW) == "function" then
+                local okM, v = pcall(ctx.drawnW, lbl, 0.88)
+                if okM and type(v) == "number" then lw = v end
+            end
+            ctx.uiText(tx + math.floor((tabW - lw) / 2), ty + (tabH - lineH(ctx, 0.88)) / 2,
+                lbl, sel and hi or dim, 0.88)
+            if clicked and not sel then
+                A.sel = i
+                A.delArm = false
+                A.listOpen = false
+            end
+            tx = tx + tabW + tgap
+        end
+        -- кнопки «добавить» и «удалить» — сразу после последней вкладки.
+        -- «Удалить» видна всегда: когда вкладка одна, она просто очищается.
+        local addW, delW = 128, 118
+        local need = addW + delW + tgap
+        if tx + need > x + w + 0.5 then tx, ty = x, ty + tabH + tgap end
+        im.SetCursorPos(im.ImVec2(tx, ty))
+        local addClick = im.InvisibleButton("##grnd_qr_auto_add", im.ImVec2(addW, tabH)) and true or false
+        local addHov = (im.IsItemHovered and im.IsItemHovered()) or false
+        ctx.roundRect(ctx.dl, ctx.at(tx, ty), ctx.at(tx + addW, ty + tabH),
+            addHov and ctx.col32(ac[1], ac[2], ac[3], 46) or ctx.col32(ac[1], ac[2], ac[3], 22), 6)
+        if ctx.dl.AddRect then
+            pcall(ctx.dl.AddRect, ctx.dl, ctx.at(tx + 0.5, ty + 0.5),
+                ctx.at(tx + addW - 0.5, ty + tabH - 0.5), ctx.col32(ac[1], ac[2], ac[3], 150), 6, 0, 1)
+        end
+        ctx.uiText(tx + 12, ty + (tabH - lineH(ctx, 0.88)) / 2, "Добавить вкладку",
+            addHov and hi or acC, 0.88)
+        if addClick then QR.autoAdd() end
+        do
+            tx = tx + addW + tgap
+            im.SetCursorPos(im.ImVec2(tx, ty))
+            local delClick = im.InvisibleButton("##grnd_qr_auto_del", im.ImVec2(delW, tabH)) and true or false
+            local delHov = (im.IsItemHovered and im.IsItemHovered()) or false
+            ctx.roundRect(ctx.dl, ctx.at(tx, ty), ctx.at(tx + delW, ty + tabH),
+                A.delArm and ctx.col32(255, 96, 96, 60)
+                    or (delHov and ctx.col32(255, 96, 96, 26) or ctx.col32(255, 255, 255, 10)), 6)
+            if ctx.dl.AddRect then
+                pcall(ctx.dl.AddRect, ctx.dl, ctx.at(tx + 0.5, ty + 0.5),
+                    ctx.at(tx + delW - 0.5, ty + tabH - 0.5),
+                    A.delArm and ctx.col32(255, 110, 110, 200) or ctx.col32(255, 255, 255, 40),
+                    6, 0, 1)
+            end
+            ctx.uiText(tx + 12, ty + (tabH - lineH(ctx, 0.86)) / 2,
+                A.delArm and "Точно удалить?" or ("Удалить (" .. QR.autoLabel(A.sel) .. ")"),
+                A.delArm and ctx.col32(255, 150, 150, 255) or mut, 0.86)
+            if delClick then
+                if A.delArm then QR.autoDel(A.sel) else A.delArm = true end
+            end
+        end
 
-        -- ЛЕВО: настройки
-        local ix, iw = x, leftW
-        local yy = yy0
-        ctx.uiText(ix, yy, "Триггер", dim, 0.82)
-        local thint = "слова через запятую · регистр не важен"
+        -- ---------- поля выбранной вкладки ----------
+        local yy = ty + tabH + 14
+        local iw = w
+        ctx.uiText(x, yy, "Триггер", dim, 0.84)
+        local sel2 = QR.autoTab()
+        local shortTrig = QR.autoShortTrigger(sel2)
+        local hintTxt, hintCol
+        if shortTrig then
+            hintTxt, hintCol = "слишком короткий — сработает почти на всё", warnC
+        elseif #QR.autoTriggers(sel2) == 0 then
+            hintTxt, hintCol = "пусто — вкладка молчит", warnC
+        else
+            hintTxt, hintCol = "регистр не важен", mut
+        end
         if type(ctx.drawnW) == "function" then
-            local okM, v = pcall(ctx.drawnW, thint, 0.78)
+            local okM, v = pcall(ctx.drawnW, hintTxt, 0.8)
             if okM and type(v) == "number" then
-                ctx.uiText(ix + iw - v, yy + 2, thint, mut, 0.78)
+                ctx.uiText(x + math.max(0, iw - v), yy + 2, hintTxt, hintCol, 0.8)
             end
         end
         yy = yy + 17
-        field(ctx, "##grnd_qr_auto_trigger", "autoTrigger", MAX_ATRIG + 1,
-            ix, yy, iw, 28, "помогите, помоги", false, A.trigger)
-        local trigVal = trim(bufText("autoTrigger"))
-        if trigVal ~= A.trigger then
-            A.trigger = trigVal
+        local trigW = math.min(360, iw)
+        local tkey, tid = "autoTrigger" .. A.sel, "##grnd_qr_auto_trigger"
+        field(ctx, tid, tkey, MAX_ATRIG + 1, x, yy, trigW, 28, "напр. помогите", false, sel2.trigger)
+        local trigVal = trim(bufText(tkey))
+        if trigVal ~= sel2.trigger then
+            sel2.trigger = trigVal
             A.dirtyAt = os.clock()
         end
-        yy = yy + 24
-        local shortTrig = QR.autoShortTrigger()
-        if shortTrig then
-            ctx.uiText(ix, yy, "Короткий триггер «" .. shortTrig
-                .. "» будет срабатывать почти на всё", warnC, 0.8)
-        else
-            local ntrg = #QR.autoTriggers()
-            ctx.uiText(ix, yy, ntrg == 0 and "Триггеров нет — автопилот молчит"
-                or ("Триггеров: " .. tostring(ntrg)), ntrg == 0 and warnC or mut, 0.8)
-        end
-        yy = yy + 20
+        yy = yy + 40
 
-        ctx.uiText(ix, yy, "Ответ игроку", dim, 0.82)
-        local ahint = "{ник} · {ид} подставятся сами"
+        ctx.uiText(x, yy, "Ответ игроку", dim, 0.84)
+        local ahint = "{ник} и {ид} подставятся сами"
         if type(ctx.drawnW) == "function" then
-            local okM, v = pcall(ctx.drawnW, ahint, 0.78)
+            local okM, v = pcall(ctx.drawnW, ahint, 0.8)
             if okM and type(v) == "number" then
-                ctx.uiText(ix + iw - v, yy + 2, ahint, mut, 0.78)
+                ctx.uiText(x + math.max(0, iw - v), yy + 2, ahint, mut, 0.8)
             end
         end
         yy = yy + 17
-        local ansH = 88
-        field(ctx, "##grnd_qr_auto_answer", "autoAnswer", 1024,
-            ix, yy, iw, ansH, "Приветствую, {ник}, уже смотрю…", true, A.answer)
-        local ansVal = clampText(cleanText(bufText("autoAnswer")), MAX_TEXT)
-        if ansVal ~= A.answer then
-            A.answer = ansVal
+        local ansH = 92
+        local akey, aid = "autoAnswer" .. A.sel, "##grnd_qr_auto_answer"
+        field(ctx, aid, akey, 1024, x, yy, iw, ansH, "Приветствую, {ник}, уже смотрю…", true, sel2.answer)
+        local ansVal = clampText(cleanText(bufText(akey)), MAX_TEXT)
+        if ansVal ~= sel2.answer then
+            sel2.answer = ansVal
             A.dirtyAt = os.clock()
         end
         yy = yy + ansH + 12
 
-        ctx.uiText(ix, yy, "Команда после ответа", dim, 0.82)
+        ctx.uiText(x, yy, "Команда после ответа", dim, 0.84)
         yy = yy + 17
-        local selW = math.min(280, iw)
-        local selH = 30
+        local selW, selH = math.min(280, iw), 30
         local selY = yy
-        im.SetCursorPos(im.ImVec2(ix, selY))
+        im.SetCursorPos(im.ImVec2(x, selY))
         local selClick = im.InvisibleButton("##grnd_qr_auto_cmd", im.ImVec2(selW, selH)) and true or false
         local selHov = (im.IsItemHovered and im.IsItemHovered()) or false
-        ctx.roundRect(ctx.dl, ctx.at(ix, selY), ctx.at(ix + selW, selY + selH),
+        ctx.roundRect(ctx.dl, ctx.at(x, selY), ctx.at(x + selW, selY + selH),
             (selHov or A.listOpen) and ctx.col32(255, 255, 255, 26) or ctx.col32(255, 255, 255, 12), 6)
         if ctx.dl.AddRect then
-            pcall(ctx.dl.AddRect, ctx.dl, ctx.at(ix + 0.5, selY + 0.5),
-                ctx.at(ix + selW - 0.5, selY + selH - 0.5),
+            pcall(ctx.dl.AddRect, ctx.dl, ctx.at(x + 0.5, selY + 0.5),
+                ctx.at(x + selW - 0.5, selY + selH - 0.5),
                 (selHov or A.listOpen) and ctx.col32(ac[1], ac[2], ac[3], 150)
                     or ctx.col32(255, 255, 255, 46), 6, 0, 1)
         end
-        ctx.uiText(ix + 10, selY + (selH - lineH(ctx, 0.9)) / 2, QR.autoCmdLabel(A.command),
-            hi, 0.9)
-        tri(ctx.dl, ctx.at, ix + selW - 14, selY + selH / 2, 4, "down",
+        ctx.uiText(x + 10, selY + (selH - lineH(ctx, 0.9)) / 2, QR.autoCmdLabel(sel2.command), hi, 0.9)
+        tri(ctx.dl, ctx.at, x + selW - 14, selY + selH / 2, 4, "down",
             (selHov or A.listOpen) and acC or mut)
         if selClick then A.listOpen = not A.listOpen end
-        yy = selY + selH + 12
+        yy = selY + selH + 10
 
-        -- предпросмотр: что именно уйдёт
-        local repId, repText = "", ""
-        if type(_G.GRND_REP) == "table" then
-            repId = tostring(_G.GRND_REP.playerId or "")
-            repText = autoPlain(_G.GRND_REP.question or "")
-        end
+        -- одна строка-предпросмотр вместо отдельной карточки
+        local repId = ""
+        if type(_G.GRND_REP) == "table" then repId = tostring(_G.GRND_REP.playerId or "") end
         local sampleId = repId:match("^%d+$") or "25"
-        local sampleLine = oneLine(QR.apply(A.answer, { nick = "Ник", id = sampleId }))
-        local cmdLine = QR.autoCmdFor(sampleId)
-        local prevH = 62
-        autoCard(ctx, ix, yy, iw, prevH)
-        ctx.uiText(ix + 12, yy + 9, "Что уйдёт при срабатывании", mut, 0.8)
-        local l1
+        local sampleLine = oneLine(QR.apply(sel2.answer, { nick = "Ник", id = sampleId }))
+        local cmdLine = QR.autoCmdFor(sampleId, sel2)
+        local prev
         if sampleLine == "" then
-            l1 = "ответ не заполнен — уйдёт только команда"
+            prev = cmdLine and ("ответ пуст — уйдёт только " .. cmdLine) or "пусто: не заполнены ответ и команда"
         else
-            l1 = "/ans " .. sampleId .. " · " .. utf8Cut(sampleLine, 46)
+            prev = "/ans " .. sampleId .. " · " .. utf8Cut(sampleLine, 40)
+                .. (cmdLine and (" · затем " .. cmdLine) or " · команды нет")
         end
-        ctx.uiText(ix + 12, yy + 26, fit(l1, iw - 24, ctx.drawnW, 0.88), hi, 0.88)
-        ctx.uiText(ix + 12, yy + 42,
-            cmdLine and ("затем " .. cmdLine) or "затем — ничего (только ответ)",
-            cmdLine and acC or mut, 0.88)
+        ctx.uiText(x, yy, fit(prev, iw, ctx.drawnW, 0.86), sampleLine == "" and warnC or mut, 0.86)
 
-        -- ПРАВО: слежка, проверка, история
-        local rx, ry = rightX, yy0
-        local cardH = 74
-        autoCard(ctx, rx, ry, rightW, cardH)
-        ctx.dl:AddCircleFilled(ctx.at(rx + 14, ry + 18), 4, acC)
-        ctx.uiText(rx + 26, ry + 10, "Слежка", hi, 0.95)
-        ctx.uiText(rx + 12, ry + 32,
-            fit("Автопилот выключается автоматически — в слежке он не мешает", rightW - 24,
-                ctx.drawnW, 0.82), mut, 0.82)
-        local spec = QR.autoSpectating()
-        ctx.uiText(rx + 12, ry + 50, spec and "сейчас: слежка активна" or "сейчас: слежки нет",
-            spec and warnC or mut, 0.82)
-
-        ry = ry + cardH + 10
-        local chkH = 76
-        autoCard(ctx, rx, ry, rightW, chkH)
-        ctx.uiText(rx + 12, ry + 9, "Проверка триггера", mut, 0.8)
-        local lastTxt = (A.lastReport and A.lastReport.text) or repText
-        local lastNick = (A.lastReport and A.lastReport.nick) or ""
-        if lastTxt and lastTxt ~= "" then
-            local hit = QR.autoMatch(lastTxt)
-            local who = lastNick ~= "" and (lastNick .. ": ") or ""
-            ctx.uiText(rx + 12, ry + 27,
-                fit(who .. "«" .. lastTxt .. "»", rightW - 24, ctx.drawnW, 0.84), dim, 0.84)
-            ctx.uiText(rx + 12, ry + 47, hit and ("триггер «" .. hit .. "» найден")
-                or "триггер не найден", hit and okC or warnC, 0.84)
-            if A.lastCheck then
-                ctx.uiText(rx + 12, ry + 62, fit(A.lastCheck, rightW - 24, ctx.drawnW, 0.78), mut, 0.78)
-            end
-        else
-            ctx.uiText(rx + 12, ry + 27, "Репортов ещё не было —", dim, 0.84)
-            ctx.uiText(rx + 12, ry + 45, "проверим на первом же.", dim, 0.84)
-        end
-
-        ry = ry + chkH + 10
-        local histH = math.max(70, (y + h) - ry)
-        autoCard(ctx, rx, ry, rightW, histH)
-        ctx.uiText(rx + 12, ry + 9, "Срабатывания", mut, 0.8)
-        local list = A.history or {}
-        if #list == 0 then
-            ctx.uiText(rx + 12, ry + 30, "Пока пусто.", dim, 0.84)
-        end
-        local nrow = math.min(#list, math.max(1, math.floor((histH - 34) / 34)))
-        for i = #list, #list - nrow + 1, -1 do
-            local it = list[i]
-            if not it then break end
-            local rowY2 = ry + 28 + (#list - i) * 34
-            if rowY2 + 30 > ry + histH - 4 then break end
-            ctx.dl:AddCircleFilled(ctx.at(rx + 14, rowY2 + 7), 3, it.ok and okC or warnC)
-            ctx.uiText(rx + 24, rowY2, fit(it.time .. " · " .. it.nick .. " (" .. tostring(it.pid) .. ")",
-                rightW - 40, ctx.drawnW, 0.84), hi, 0.84)
-            ctx.uiText(rx + 24, rowY2 + 15, fit("триггер «" .. tostring(it.trig or "") .. "» → "
-                .. tostring(it.what or ""), rightW - 40, ctx.drawnW, 0.78), mut, 0.78)
-        end
-
-        -- Список команд рисуем ПОСЛЕДНИМ: он ложится поверх остальных полей и
-        -- клики попадают в него, а не в поле под ним.
+        -- Список команд рисуем ПОСЛЕДНИМ: он ложится поверх полей и клики
+        -- попадают в него, а не в поле под ним.
         if A.listOpen then
             local ddH = 30
-            local ddX, ddY, ddW = ix, selY + selH + 4, selW
+            local ddX, ddY, ddW = x, selY + selH + 4, selW
             local viewH = #AUTO_CMDS * (ddH + 2) - 2
             ctx.roundRect(ctx.dl, ctx.at(ddX - 2, ddY - 2), ctx.at(ddX + ddW + 2, ddY + viewH + 2),
                 ctx.col32(16, 17, 24, 252), 8)
@@ -27584,12 +27689,12 @@ do
                 local clicked = im.InvisibleButton("##grnd_qr_auto_cmd_" .. d.id,
                     im.ImVec2(ddW, ddH)) and true or false
                 local hov = (im.IsItemHovered and im.IsItemHovered()) or false
-                local sel = (d.id == QR.autoCmdId(A.command))
+                local sel3 = (d.id == QR.autoCmdId(sel2.command))
                 ctx.roundRect(ctx.dl, ctx.at(ddX, ryr), ctx.at(ddX + ddW, ryr + ddH),
-                    sel and ctx.col32(ac[1], ac[2], ac[3], 46)
+                    sel3 and ctx.col32(ac[1], ac[2], ac[3], 46)
                         or (hov and ctx.col32(255, 255, 255, 20) or ctx.col32(255, 255, 255, 0)), 6)
                 ctx.uiText(ddX + 12, ryr + (ddH - lineH(ctx, 0.9)) / 2, d.label,
-                    sel and hi or (hov and hi or dim), 0.9)
+                    sel3 and hi or dim, 0.9)
                 local hw = 0
                 if type(ctx.drawnW) == "function" then
                     local okM, v = pcall(ctx.drawnW, d.hint, 0.78)
@@ -27597,12 +27702,12 @@ do
                 end
                 ctx.uiText(ddX + ddW - 12 - hw, ryr + (ddH - lineH(ctx, 0.78)) / 2, d.hint, mut, 0.78)
                 if clicked then
-                    A.command = d.id
+                    sel2.command = d.id
                     A.listOpen = false
                     pcall(QR.autoSave)
                 end
             end
-            if autoOutsideClick(im, ddX, ddY, ddW, viewH, selY, selH) then
+            if autoOutsideClick(im, ddX, ddY, ddW, viewH) then
                 A.listOpen = false
             end
         end
@@ -27663,7 +27768,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.21"
+        local sv = "1.19.22"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -28991,7 +29096,7 @@ function grndMainBody()
         end
         -- добавить репорт бота и сразу наложить на него накопленные пометки
         local function addReport(nick, pid, msg, cnt)
-            -- v1.19.21: автопилот — ответ /ans и команда по триггеру
+            -- v1.19.21: автопилот — ответ /ans и команда по триггеру вкладки
             if type(_G.grndQrAutoOnReport) == "function" then
                 pcall(_G.grndQrAutoOnReport, nick, pid, msg)
             end
@@ -29098,7 +29203,7 @@ function grndMainBody()
         local okBot, botHit = pcall(grndRepHudBotOnChat, text)
         if okBot and botHit then return end
         local nick, pid, msg, cnt = grndCatchParse(text)
-        -- v1.19.21: автопилот работает и при выключенном оверлее «Репорты»:
+        -- v1.19.22: автопилот работает и при выключенном оверлее «Репорты»:
         -- строка жалобы распознана — отдаём её автопилоту.
         if nick and type(_G.grndQrAutoOnReport) == "function" then
             pcall(_G.grndQrAutoOnReport, nick, pid, msg)
@@ -33691,8 +33796,9 @@ function grndMainBody()
                         menu.reportTab = menu.reportTab or "tools"
                         -- v1.19.15: под-вкладок стало четыре — «Инструменты»,
                         -- «Ответы на репорт», «Наказания» и «Автопилот».
-                        -- v1.19.21: «Автопилот» готов — триггер, ответ /ans ID
-                        -- и команда /sp или /goto после него.
+                        -- v1.19.21: «Автопилот» — вкладки, в каждой свой
+                        -- триггер, ответ /ans ID и команда /sp или /goto.
+                        -- v1.19.22: вкладок может быть сколько нужно.
                         local topY = cardY + 16
                         local topBtnH = 34
                         local b1X = cardX + 20
@@ -33980,7 +34086,7 @@ function grndMainBody()
                             end
                         else
                             -- =========================================
-                            --  ПОД-ВКЛАДКИ «РЕПОРТА» (v1.19.21): «Ответы на
+                            --  ПОД-ВКЛАДКИ «РЕПОРТА» (v1.19.22): «Ответы на
                             --  репорт», «Наказания» и «Автопилот» — все три
                             --  рисуются своими модулями внутри GRND_QR.
                             -- =========================================
@@ -34014,9 +34120,9 @@ function grndMainBody()
                                         "Модуль наказаний не загружен", c4(TH.textDim), 0.95)
                                 end
                             elseif rt == "auto" then
-                                -- v1.19.21: настройка автопилота (триггер, ответ
-                                -- /ans ID, команда /sp или /goto, авто-выключение
-                                -- в слежке) — свой модуль в GRND_QR.
+                                -- v1.19.21: настройка автопилота — свой модуль в
+                                -- GRND_QR. v1.19.22: вкладки, в каждой свой
+                                -- триггер, ответ /ans ID и команда после него.
                                 if type(_G.grndQrAutoDraw) == "function" then
                                     local okAu = pcall(_G.grndQrAutoDraw, {
                                         im = im, dl = dl, at = at,

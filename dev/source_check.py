@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.21"' in s, 'версия не 1.19.21')
+need('GRND_SCRIPT_VERSION = "1.19.22"' in s, 'версия не 1.19.22')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -139,16 +139,41 @@ need('elseif rt == "auto" then' in s, 'вкладка «Автопилот» н�
 need('pcall(_G.grndQrAutoDraw, {' in s, 'раздел «Автопилот» не вызывается из меню «Репорт»')
 absent('soonCard("Автопилот",', 'раздел «Автопилот» всё ещё заглушка')
 need('"##grnd_qr_auto_on"' in s, 'нет тумблера включения автопилота')
-need('"##grnd_qr_auto_trigger", "autoTrigger"' in s, 'нет поля «Триггер»')
-need('"##grnd_qr_auto_answer", "autoAnswer"' in s, 'нет поля «Ответ игроку»')
+need('"##grnd_qr_auto_trigger"' in s and '"autoTrigger" .. A.sel' in s, 'нет поля «Триггер»')
+need('"##grnd_qr_auto_answer"' in s and '"autoAnswer" .. A.sel' in s, 'нет поля «Ответ игроку»')
+# v1.19.22: во вкладках — свой триггер, ответ и команда
+need('function QR.autoNewTab()' in s, 'нет пустой вкладки автопилота')
+need('function QR.autoTabs()' in s, 'нет списка вкладок автопилота')
+need('function QR.autoLabel(i)' in s, 'вкладка не подписана своим триггером')
+need('function QR.autoAdd()' in s, 'нет кнопки «Добавить вкладку»')
+need('function QR.autoDel(i)' in s, 'вкладка не удаляется')
+need('local MAX_TABS = 8' in s, 'нет предела числа вкладок')
+need('"##grnd_qr_auto_tab_" .. i' in s, 'вкладки не нажимаются')
+need('"##grnd_qr_auto_add"' in s, 'нет кнопки добавления вкладки')
+need('"##grnd_qr_auto_del"' in s, 'нет кнопки удаления вкладки')
+need('if A.delArm then QR.autoDel(A.sel) else A.delArm = true end' in s,
+     'удаление вкладки без подтверждения')
+need('A.delArm and "Точно удалить?"' in s, 'подтверждение удаления показано не на кнопке')
+need('tabs[1] = QR.autoNewTab()' in s, 'последняя вкладка удаляется вместо очистки')
+# триггер ищем по вкладкам, первая подошедшая — её ответ и её команда
+need('function QR.autoMatchTab(text)' in s, 'нет поиска триггера по вкладкам')
+need('local tab = QR.autoTab(idx)' in s, 'срабатывание не привязано к вкладке')
+need('local cmd = QR.autoCmdFor(id, tab)' in s, 'команда берётся не из вкладки')
+need('local line = oneLine(QR.apply(tab.answer, rep))' in s, 'ответ берётся не из вкладки')
+need('A.lastCheck = "вкладка " .. tostring(idx)' in s, 'в подсказке нет номера вкладки')
+# конфиг: вкладки как t<N>_trigger / t<N>_answer / t<N>_command
+need('"t" .. i .. "_trigger="' in s and '"t" .. i .. "_answer="' in s and '"t" .. i .. "_command="' in s,
+     'вкладки не пишутся в конфиг')
+need('tostring(k or ""):match("^t(%d+)_(%a+)$")' in s, 'вкладки не читаются из конфига')
+need('legacy' in s and 'файл старого формата' in s,
+     'нет чтения файла старого формата (один триггер)')
 need('"##grnd_qr_auto_cmd"' in s and '"##grnd_qr_auto_cmd_" .. d.id' in s,
      'нет выпадающего списка команд автопилота')
 need('QR.autoCmds = AUTO_CMDS' in s, 'нет списка команд для селектора')
 need('{ id = "sp",' in s and '{ id = "goto",' in s and '{ id = "none",' in s,
      'в селекторе нет /sp, /goto и «без команды»')
 # триггер: несколько слов, регистр не важен, коды цвета не мешают
-need('function QR.autoTriggers()' in s, 'нет разбора списка триггеров')
-need('function QR.autoMatch(text)' in s, 'нет поиска триггера в тексте репорта')
+need('function QR.autoTriggers(tab)' in s, 'нет разбора триггера вкладки')
 need('return "/" .. id .. " " .. pid' in s, 'команда после ответа не собирается')
 # срабатывание: ответ игроку, затем команда, и всё — через очередь репорта
 auto_part = s[s.index('function QR.autoOnReport(nick, pid, msg)'):s.index('function QR.autoTick()')]
