@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.09"
+GRND_SCRIPT_VERSION = "1.19.10"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24243,7 +24243,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.09)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.10)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -24857,6 +24857,18 @@ function QR.sendChat(cmd)
 end
 
 -- Выбор шаблона: /n (тест) / вставить в поле ответа / ответить игроку.
+-- Закрыть окно репорта вместе с полосой шаблонов: ответ отправлен, держать
+-- окно на экране незачем (v1.19.10).
+function QR.closeReport()
+    local R = _G.GRND_REP
+    if type(R) == "table" then
+        R.open = false
+        R.focused = false
+    end
+    QR.pickOpen, QR.pickFocus = false, false
+    return true
+end
+
 function QR.choose(it)
     if type(it) ~= "table" then return false end
     local rep = QR.repInfo()
@@ -24896,6 +24908,7 @@ function QR.choose(it)
             local okA, res = pcall(grndRepAnswer, pid, text)
             if okA and res ~= false then
                 QR.toast("Ответ игроку ID " .. pid .. ": «" .. utf8Cut(label, 20) .. "»", "ok", 2.6)
+                QR.closeReport()      -- ответ ушёл: окно репорта тоже закрываем
                 return true
             end
         end
@@ -24911,6 +24924,9 @@ function QR.choose(it)
     end
     if QR.sendChat("/n " .. line) then
         QR.toast("В /n: «" .. utf8Cut(label, 22) .. "»", "ok", 2.6)
+        -- v1.19.10: шаблон отправлен — основное окно репорта закрывается.
+        -- В режиме «в поле ответа» окно НЕ закрываем: там ещё правят текст.
+        QR.closeReport()
         return true
     end
     QR.toast("Не удалось отправить шаблон в чат", "warn", 3)
@@ -25261,7 +25277,15 @@ local function pickerDraw(ctx)
     local viewH = math.min(rowsH, maxViewH)
     local W = math.max(184, math.min(maxW, contentW + PICK_PADX * 2))
     local H = PICK_PADY + viewH + PICK_HINT_H + PICK_PADY
-    local x = math.max(10, math.floor((resX - W) / 2))
+    -- v1.19.10: левый край полосы — ровно левый край окна репорта.
+    -- Позицию отдаёт само окно репорта (GRND_REP.winX), поэтому полоса
+    -- остаётся «приклеенной» к нему; если окно ещё ни разу не рисовалось —
+    -- считаем по той же формуле, что и оно (ширина 600, по центру экрана).
+    local repX
+    local R = _G.GRND_REP
+    if type(R) == "table" then repX = tonumber(R.winX) end
+    if not repX then repX = math.floor((resX - 600) / 2) end
+    local x = math.max(10, math.min(math.max(10, resX - W - 10), repX))
     local y = math.max(16, math.min(resY - H - 40, math.floor((resY - H) * 0.72)))
 
     pcall(im.SetNextWindowPos, im.ImVec2(x, y), ctx.always or 2)
@@ -25735,7 +25759,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.09"
+        local sv = "1.19.10"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -33330,9 +33354,13 @@ function grndMainBody()
             local yInput = yFollow + followRow
             local yChips = yInput + 30 + 9
             local H = yChips + 28 + 12
-            im.SetNextWindowPos(im.ImVec2(math.floor((resX - W) / 2),
-                math.floor((resY - H) / 2)), COND_ALWAYS)
+            local winX = math.floor((resX - W) / 2)
+            im.SetNextWindowPos(im.ImVec2(winX, math.floor((resY - H) / 2)), COND_ALWAYS)
             im.SetNextWindowSize(im.ImVec2(W, H), COND_ALWAYS)
+            -- v1.19.10: запоминаем габариты окна — по левому краю выравнивается
+            -- полоса шаблонов («Быстрые ответы»): открывается вровень с окном
+            -- репорта, а не «сама по себе» по центру экрана.
+            GRND_REP.winX, GRND_REP.winW = winX, W
 
             local styleN, colorN = 0, 0
             if grndPushStyleF(im.StyleVar and im.StyleVar.WindowRounding, 10) then styleN = styleN + 1 end

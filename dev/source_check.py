@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.09"' in s, 'версия не 1.19.09')
+need('GRND_SCRIPT_VERSION = "1.19.10"' in s, 'версия не 1.19.10')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -83,6 +83,18 @@ need('at(accentX, sh), at(accentX + accentW, sh + accentH)' not in s,
      'вернулась полоска сверху в оверлее «РЕПОРТЫ» (ImGui-путь)')
 need('local accentH = math.max(2, S(3))' not in s, 'вернулся расчёт полоски оверлея «РЕПОРТЫ»')
 need('script_version(GRND_SCRIPT_VERSION)' in s, 'script_version не из переменной')
+
+# v1.19.10: полоса шаблонов вровень с левым краем окна репорта + окно закрывается
+need('GRND_REP.winX, GRND_REP.winW = winX, W' in s, 'окно репорта не запоминает левый край')
+need('if not repX then repX = math.floor((resX - 600) / 2) end' in s,
+     'нет фолбэка позиции полосы шаблонов')
+need('math.min(math.max(10, resX - W - 10), repX)' in s,
+     'полоса шаблонов не выравнивается по левому краю окна репорта')
+need('function QR.closeReport()' in s, 'нет функции закрытия окна репорта из полосы шаблонов')
+choose_start = s.index('function QR.choose(it)')
+choose = s[choose_start:s.index('function QR.openPicker()', choose_start)]
+need(choose.count('QR.closeReport()') == 2, 'окно репорта закрывается не после каждой отправки шаблона')
+need('R.open = false' in choose or 'R.open = false' in s, 'окно репорта не закрывается')
 
 if fails:
     for f in fails:
