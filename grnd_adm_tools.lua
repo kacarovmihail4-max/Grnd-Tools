@@ -1,5 +1,5 @@
 script_name("grnd_adm_tools")
-script_version("1.19.04")
+script_version("1.19.05")
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
 require "lib.sampfuncs"
@@ -22822,6 +22822,34 @@ local function itemRect(im, fbX, fbY, fbW, fbH)
     return fbX, fbY, fbW, fbH
 end
 
+-- Обёртки над push/pop самого ImGui. Панель собирает ctx сама и хелперов
+-- окна (grndPushCol/grndPushStyleF) у неё нет — поэтому пушим напрямую и
+-- считаем, что удалось, чтобы потом снять ровно столько же.
+local function mpPushCol(im, idx, r, g, b, a)
+    if not (im and im.PushStyleColor and idx ~= nil and im.ImVec4) then return false end
+    return pcall(im.PushStyleColor, idx,
+        im.ImVec4(r / 255, g / 255, b / 255, (a or 255) / 255))
+end
+local function mpPushVar2(im, idx, vx, vy)
+    if not (im and idx ~= nil) then return false end
+    local v = im.ImVec2 and im.ImVec2(vx, vy) or { x = vx, y = vy }
+    if im.PushStyleVarVec2 and pcall(im.PushStyleVarVec2, idx, v) then return true end
+    if im.PushStyleVar and pcall(im.PushStyleVar, idx, v) then return true end
+    return false
+end
+local function mpPushVarF(im, idx, val)
+    if not (im and idx ~= nil) then return false end
+    if im.PushStyleVarFloat and pcall(im.PushStyleVarFloat, idx, val) then return true end
+    if im.PushStyleVar and pcall(im.PushStyleVar, idx, val) then return true end
+    return false
+end
+
+-- Поле ввода.
+-- v1.19.05: выглядит как поле «Название» в «Репорт → Ответы на репорт»:
+-- тёмная заливка, отступ текста 9 px, тонкая рамка (белая — спокойно,
+-- ярче — при наведении, акцентная — в фокусе). Раньше цвета задавались
+-- через grndBinderPushColors (в этой сборке его может не быть), высота
+-- подгонялась «на глаз», и поле отличалось от остальных разделов.
 local function textInput(ctx, key, id, cap, value, x, y, w, h, hint, onChange)
     local im = ctx.im
     local f = fieldBuf(key, cap, value)
@@ -22853,43 +22881,24 @@ local function textInput(ctx, key, id, cap, value, x, y, w, h, hint, onChange)
     local multilineUsed = useMultiline
     -- поле делаем заметно крупнее: высота InputText = шрифт + 2*FramePadding.y,
     -- поэтому поднимаем вертикальный паддинг под высоту строки
+    -- Отступы текста внутри поля и тонкая рамка ImGui — как у поля
+    -- «Название»: 9 px слева, строка по центру высоты поля.
     local padN = 0
-    local svPad = im.StyleVar and im.StyleVar.FramePadding or nil
-    if svPad and im.PushStyleVar and im.PopStyleVar then
-        local fontH = tonumber(im.FontSize) or 0
-        if fontH <= 0 and type(im.GetStyle) == "function" then
-            local okS, st = pcall(im.GetStyle)
-            if okS and st then fontH = tonumber(st.FontSize) or tonumber(st.fontSize) or 0 end
-        end
-        if fontH <= 0 and im.CalcTextSize then
-            local okS, sz = pcall(im.CalcTextSize, "X")
-            if okS and sz then fontH = tonumber(sz.y) or 0 end
-        end
-        if fontH <= 0 then fontH = 14 end
-        if fontH > 0 then
-            -- Для однострочного содержимого держим базовую строку по центру
-            -- тонкого поля, а не у верхнего края Multiline.
-            local padY = math.max(2, math.floor((h - fontH) / 2))
-            local v = im.ImVec2 and im.ImVec2(10, padY) or { 10, padY }
-            local pushedPad = false
-            -- Стандартная сигнатура mimgui — PushStyleVar(enum, ImVec2).
-            if im.PushStyleVar then pushedPad = pcall(im.PushStyleVar, svPad, v) end
-            if not pushedPad and im.PushStyleVarVec2 then
-                pushedPad = pcall(im.PushStyleVarVec2, svPad, v)
-            end
-            if pushedPad then padN = 1 end
-        end
+    if im.StyleVar and im.StyleVar.FramePadding and not useMultiline then
+        if mpPushVar2(im, im.StyleVar.FramePadding, 9,
+            math.max(2, math.floor((h - 14) / 2))) then padN = 1 end
     end
-    local pushed = 0
-    local push = _G.grndBinderPushColors
-    if type(push) == "function" then
-        pushed = push(im, {
-            { im.Col and im.Col.FrameBg, 13, 15, 20, 255 },
-            { im.Col and im.Col.FrameBgHovered, 18, 21, 29, 255 },
-            { im.Col and im.Col.FrameBgActive, 22, 26, 34, 255 },
-            { im.Col and im.Col.Text, 233, 237, 246, 255 },
-            { im.Col and im.Col.Border, 255, 255, 255, 40 },
-        })
+    local borderN = 0
+    if im.StyleVar and im.StyleVar.FrameBorderSize then
+        if mpPushVarF(im, im.StyleVar.FrameBorderSize, 1) then borderN = 1 end
+    end
+    local nCol = 0
+    if im.Col then
+        if mpPushCol(im, im.Col.FrameBg, 12, 15, 22, 255) then nCol = nCol + 1 end
+        if mpPushCol(im, im.Col.FrameBgHovered, 18, 22, 31, 255) then nCol = nCol + 1 end
+        if mpPushCol(im, im.Col.FrameBgActive, 21, 26, 36, 255) then nCol = nCol + 1 end
+        if mpPushCol(im, im.Col.Text, 233, 237, 246, 255) then nCol = nCol + 1 end
+        if mpPushCol(im, im.Col.Border, 255, 255, 255, 36) then nCol = nCol + 1 end
     end
 
     local function callMultiline()
@@ -22960,21 +22969,21 @@ local function textInput(ctx, key, id, cap, value, x, y, w, h, hint, onChange)
         FIELD_H = rh
     end
 
-    local pop = _G.grndBinderPopColors
-    if pushed and type(pop) == "function" then pop(im, pushed) end
-    if padN > 0 and im.PopStyleVar then pcall(im.PopStyleVar, padN) end
+    if nCol > 0 and im.PopStyleColor then pcall(im.PopStyleColor, nCol) end
+    if (padN + borderN) > 0 and im.PopStyleVar then pcall(im.PopStyleVar, padN + borderN) end
     if pushedWidth and im.PopItemWidth then pcall(im.PopItemWidth) end
 
-    -- рамка по настоящим габаритам поля: двойного контура и перекоса не будет
-    frameRect(ctx.dl, ctx.at(rx + 0.5, ry + 0.5), ctx.at(rx + rw - 0.5, ry + rh - 0.5),
-        col32(255, 255, 255, 28), 6, 1)
+    -- Рамка по фактическим габаритам поля — как у «Название»: спокойная
+    -- белая, ярче при наведении, акцентная в фокусе (одна рамка, не две).
     local hov, act = false, false
     if im.IsItemHovered then pcall(function() hov = im.IsItemHovered() and true or false end) end
     if im.IsItemActive then pcall(function() act = im.IsItemActive() and true or false end) end
-    if hov or act then
-        local ac = theme().accent
-        frameRect(ctx.dl, ctx.at(rx + 0.5, ry + 0.5), ctx.at(rx + rw - 0.5, ry + rh - 0.5),
-            col32(ac[1], ac[2], ac[3], act and 150 or 90), 6, 1)
+    local accentCol = (theme().accent) or { 164, 112, 224, 255 }
+    local edge = act and col32(accentCol[1], accentCol[2], accentCol[3], 190)
+        or (hov and col32(255, 255, 255, 60) or col32(255, 255, 255, 30))
+    if ctx.dl.AddRect then
+        pcall(ctx.dl.AddRect, ctx.dl, ctx.at(rx + 0.5, ry + 0.5),
+            ctx.at(rx + rw - 0.5, ry + rh - 0.5), edge, 6, 0, 1)
     end
 
     -- У Multiline нет InputTextWithHint; рисуем подсказку поверх пустого
@@ -23076,15 +23085,19 @@ local function button(ctx, id, x, y, w, h, label, opts)
     -- позже/раньше своего состояния. Берём собственную координату мыши как
     -- резерв: это не заменяет ImGui, а только спасает hover/click именно
     -- внутри этой кнопки.
+    -- Курсор внутри кнопки?
+    -- ВАЖНО (v1.19.05): обе «мыши» — и ImGui.GetIO().MousePos, и WM lParam —
+    -- приходят в ОДНИХ координатах (клиентская область окна игры), а
+    -- ctx.x/ctx.y — позиция окна меню в тех же координатах. Раньше здесь
+    -- была ВТОРАЯ проверка «как будто мышь задана в локальных координатах
+    -- окна»: она совпадала почти с любой точкой экрана, и кнопки панели
+    -- нажимались «в рандомном месте» (клик у верхнего левого угла попадал
+    -- в кнопку, нарисованную ниже). Вторую проверку убрали совсем.
     local function pointInside(mx, my)
         local ox, oy = tonumber(ctx.x), tonumber(ctx.y)
-        if not mx or not my then return false end
-        -- IO.MousePos обычно экранный, а WM lParam на некоторых сборках
-        -- клиентский. Принимаем оба варианта координат.
-        local abs = ox and oy and mx >= ox + x and mx <= ox + x + w
+        if not mx or not my or not ox or not oy then return false end
+        return mx >= ox + x and mx <= ox + x + w
             and my >= oy + y and my <= oy + y + h
-        local localPos = mx >= x and mx <= x + w and my >= y and my <= y + h
-        return abs or localPos
     end
     local function ioMousePos()
         local im = ctx.im
@@ -23134,6 +23147,12 @@ local function button(ctx, id, x, y, w, h, label, opts)
     end
     local function ownMouseClick()
         if not ownMouseInside() then return false end
+        -- и курсор должен быть над ОКНОМ панели: без этого «сырой» клик,
+        -- который проглотило другое окно поверх панели, нажимал кнопку
+        if im.IsWindowHovered then
+            local okW, overWindow = pcall(im.IsWindowHovered)
+            if okW and overWindow == false then return false end
+        end
         if ioMouseClicked() then return true end
         if type(_G.grndClickAlive) == "function" and _G.grndClickAlive() then
             if _G.GRND_MOUSE and _G.GRND_MOUSE.clicked then return true end
@@ -23266,6 +23285,18 @@ local GIVE_POPUP_TITLE = {
     hp = "ЗДОРОВЬЕ",
     skin = "СКИН",
 }
+
+-- Ширина подписи в панели: текст рисуется кеглем 0.92, поэтому ширину из
+-- tsize умножаем на тот же коэффициент (иначе шестерёнка «уезжает»).
+local function mpTextW(ctx, s, scale)
+    local w = 0
+    if type(ctx.tsize) == "function" then
+        local ok, v = pcall(ctx.tsize, tostring(s or ""))
+        if ok and type(v) == "number" then w = v end
+    end
+    if w <= 0 then w = #tostring(s or "") * 7 end
+    return w * (tonumber(scale) or 1)
+end
 
 -- Небольшая интерактивная шестерёнка. Она не меняет тумблер — только
 -- открывает компактное окно ручного ввода строк конкретной выдачи.
@@ -23612,7 +23643,9 @@ function MP.drawInner(raw)
         local cat = GIVE_CATS[i]
         local G = MP.give[cat.key]
         local headerY = y
-        -- Тумблер слева, название рядом, шестерёнка справа.
+        -- Тумблер слева, название рядом, шестерёнка — сразу за названием
+        -- (v1.19.05: раньше она стояла у правого края карточки, далеко от
+        -- той выдачи, к которой относится).
         if switchRow(ctx, "sw_" .. cat.key, cx + 4, headerY + 5, G.on) then
             G.on = not G.on
             if G.on and #G.rows == 0 then G.rows[1] = "" end
@@ -23620,8 +23653,9 @@ function MP.drawInner(raw)
         end
         ctx.uiText(cx + 62, headerY + 8, string.upper(cat.title),
             ctx.c4(G.on and theme().textHi or theme().textDim), 0.92)
-        if gearButton(ctx, cat.key, cx + cw - 15, headerY + 17,
-            G.on or MP.givePopup == cat.key) then
+        if gearButton(ctx, cat.key,
+            cx + 62 + mpTextW(ctx, string.upper(cat.title), 0.92) + 18,
+            headerY + 17, G.on or MP.givePopup == cat.key) then
             MP.givePopup = (MP.givePopup == cat.key) and nil or cat.key
         end
         y = headerY + M_ROW
@@ -23892,7 +23926,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.04)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.05)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -25386,7 +25420,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.04"
+        local sv = "1.19.05"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
