@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.16"' in s, 'версия не 1.19.16')
+need('GRND_SCRIPT_VERSION = "1.19.17"' in s, 'версия не 1.19.17')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -140,11 +140,17 @@ absent('local isTools', 'осталась старая логика двух п�
 need('grnd_reppunish="reportPunish"' in s, 'нет секции конфига для шаблонов наказаний')
 need("section=='reportTemplates' or section=='reportPunish'" in s, 'читалка конфига не знает reportPunish')
 need('local punCmds = {' in s, 'нет списка команд наказаний')
-for c in ('{ id = "ban"', '{ id = "mute"', '{ id = "rmute"', '{ id = "jail"', '{ id = "kick"', '{ id = "warn"'):
+for c in ('{ id = "ban"', '{ id = "mute"', '{ id = "rmute"'):
     need(c in s, 'в селекторе нет команды ' + c)
+# v1.19.17: /jail, /kick и /warn из селектора убраны
+for c in ('{ id = "jail"', '{ id = "kick"', '{ id = "warn"'):
+    absent(c, 'в селекторе осталась убранная команда ' + c)
 need('function QR.punDef(id)' in s, 'нет разбора команды наказания')
 need('function QR.punCommand(it, rep)' in s, 'нет сборки команды наказания')
 need('QR.sendChat("/n " .. cmd)' in s, 'наказание не проверяется через /n (тестовый режим)')
+# v1.19.17: в тестовом режиме в /n уходит и ответ на репорт
+need('QR.sendChat("/n " .. line)' in s, 'ответ на репорт не уходит в /n вместе с командой')
+need('и ответ игроку' in s, 'тост не сообщает про оба сообщения в /n')
 need('ID игрока не распознан — наказание не отправлено' in s, 'наказание уходит без проверки ID')
 need('ctx.uiText(ix, yy, "Время, " .. tostring(def.unit or ""), dim, 0.82)' in s,
      'в редакторе наказания нет поля «Время» с единицами')

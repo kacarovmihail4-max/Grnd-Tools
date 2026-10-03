@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.16"
+GRND_SCRIPT_VERSION = "1.19.17"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24243,7 +24243,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» И ШАБЛОНЫ НАКАЗАНИЙ (v1.19.16)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» И ШАБЛОНЫ НАКАЗАНИЙ (v1.19.17)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -25502,13 +25502,12 @@ end
 do
     -- Команды наказаний для селектора. time — нужен срок, reason — причина,
     -- unit — как подписывать поле «Время».
+    -- v1.19.17: список сокращён до команд со сроком — /jail, /warn и /kick
+    -- убраны по просьбе заказчика. У всех трёх есть и время, и причина.
     local punCmds = {
         { id = "ban",   time = true,  unit = "дней",  reason = true },
         { id = "mute",  time = true,  unit = "минут", reason = true },
         { id = "rmute", time = true,  unit = "минут", reason = true },
-        { id = "jail",  time = true,  unit = "минут", reason = true },
-        { id = "kick",  time = false, unit = nil,     reason = true },
-        { id = "warn",  time = false, unit = nil,     reason = true },
     }
     local punById = {}
     for i = 1, #punCmds do punById[punCmds[i].id] = punCmds[i] end
@@ -25785,9 +25784,20 @@ do
             return false
         end
 
-        -- тестовый режим: команда уходит в /n, чтобы проверить шаблон
+        -- тестовый режим: в /n уходит И команда наказания, И ответ на репорт —
+        -- так видно, что именно уйдёт игроку и что уйдёт на сервер (v1.19.17)
         if QR.sendChat("/n " .. cmd) then
-            QR.toast("Проверка: в /n — «" .. utf8Cut(cmd, 56) .. "»", "warn", 3.6)
+            local line = oneLine(text)
+            if line ~= "" then
+                if utf8Len(line) > MAX_CHAT then
+                    line = utf8Cut(line, MAX_CHAT - 1) .. "…"
+                end
+                QR.sendChat("/n " .. line)
+                QR.toast("Проверка: в /n — «" .. utf8Cut(cmd, 44) .. "» и ответ игроку",
+                    "warn", 3.8)
+            else
+                QR.toast("Проверка: в /n — «" .. utf8Cut(cmd, 56) .. "»", "warn", 3.6)
+            end
             QR.closeReport()
             return true
         end
@@ -26798,7 +26808,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.16"
+        local sv = "1.19.17"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
