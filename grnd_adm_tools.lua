@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.12"
+GRND_SCRIPT_VERSION = "1.19.13"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24243,7 +24243,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.12)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.13)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -25199,8 +25199,9 @@ end
 --  кнопки шаблонов: клик отправляет ответ и закрывает полосу. Ничего
 --  лишнего — без шапки, поиска, списка и строки-подсказки внизу. Полный текст
 --  шаблона — во всплывающей подсказке при наведении (v1.19.12).
---  Шаблонов много — полоса растёт ВНИЗ новыми рядами кнопок (до нижнего края
---  экрана, дальше — прокрутка колесом), а не урезается по окну репорта.
+--  Ширина полосы — не больше окна репорта: что не влезло в ряд, переносится
+--  на следующий, и полоса растёт ВНИЗ новыми рядами кнопок (до нижнего края
+--  экрана, дальше — прокрутка колесом), а не разъезжается вширь.
 --  Шаблонов нет — полоса не открывается вовсе, QR.openPicker даёт тост.
 -- =====================================================================
 local PICK_BH, PICK_GAP = 30, 6       -- высота кнопки и зазор между кнопками
@@ -25273,26 +25274,32 @@ local function pickerDraw(ctx)
     local resX, resY = getScreenResolution()
     resX, resY = tonumber(resX) or 1920, tonumber(resY) or 1080
     local rowH = PICK_BH + PICK_GAP
-    local maxW = math.min(920, math.max(240, resX - 80))
-    local rows, contentW = pickerLayout(ctx, maxW - PICK_PADX * 2)
-    local rowsH = math.max(rowH, #rows * rowH - PICK_GAP)
-    -- v1.19.10/v1.19.11: полоса приклеена к окну репорта — левый край ровно по
+    -- v1.19.10…v1.19.13: полоса приклеена к окну репорта — левый край ровно по
     -- его левому краю, верхняя кромка сразу под его нижней кромкой. Габариты
     -- отдаёт само окно репорта (GRND_REP.winX/winW/winY/winH), поэтому полоса
-    -- едет за ним; если окно ещё ни разу не рисовалось — берём его формулу
-    -- позиции (ширина 600, по центру экрана).
-    -- v1.19.12: высота больше НЕ ограничена габаритами окна репорта: шаблонов
-    -- много — полоса растёт вниз новыми рядами кнопок. Предел один — нижний
-    -- край экрана, дальше строки уходят в прокрутку колесом.
+    -- едет за ним; если окно ещё ни разу не рисовалось — берём его штатные
+    -- размеры (ширина 600, по центру экрана).
     local R = _G.GRND_REP
-    local repX, repBottom
+    local repX, repW, repBottom
     if type(R) == "table" then
         repX = tonumber(R.winX)
+        repW = tonumber(R.winW)
         local repY, repH = tonumber(R.winY), tonumber(R.winH)
         if repY and repH and repH > 0 then repBottom = repY + repH end
     end
-    if not repX then repX = math.floor((resX - 600) / 2) end
+    if not repW or repW <= 0 then repW = 600 end
+    repW = math.max(240, math.min(repW, resX - 40))
+    if not repX then repX = math.floor((resX - repW) / 2) end
 
+    -- v1.19.13: ширина полосы — НЕ БОЛЬШЕ окна репорта. Раньше она разъезжалась
+    -- вширь (до 920 px) и вылезала за края окна; теперь всё, что не влезло в ряд,
+    -- переносится на следующий — полоса растёт ВНИЗ новыми рядами кнопок.
+    local maxW = math.min(920, math.max(240, resX - 80), repW)
+    local rows, contentW = pickerLayout(ctx, maxW - PICK_PADX * 2)
+    local rowsH = math.max(rowH, #rows * rowH - PICK_GAP)
+
+    -- v1.19.12: высота НЕ ограничена габаритами окна репорта: предел один —
+    -- нижний край экрана, дальше строки уходят в прокрутку колесом.
     local minH = PICK_PADY * 2 + rowH      -- ниже одного ряда полоса не сжимается
     local y
     if repBottom then
@@ -25776,7 +25783,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.12"
+        local sv = "1.19.13"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end

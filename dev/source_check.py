@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.12"' in s, 'версия не 1.19.12')
+need('GRND_SCRIPT_VERSION = "1.19.13"' in s, 'версия не 1.19.13')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -86,7 +86,7 @@ need('script_version(GRND_SCRIPT_VERSION)' in s, 'script_version не из пе�
 
 # v1.19.10: полоса шаблонов вровень с левым краем окна репорта + окно закрывается
 need('GRND_REP.winX, GRND_REP.winW = winX, W' in s, 'окно репорта не запоминает левый край')
-need('if not repX then repX = math.floor((resX - 600) / 2) end' in s,
+need('if not repX then repX = math.floor((resX - repW) / 2) end' in s,
      'нет фолбэка позиции полосы шаблонов')
 need('math.min(math.max(10, resX - W - 10), repX)' in s,
      'полоса шаблонов не выравнивается по левому краю окна репорта')
@@ -112,6 +112,12 @@ absent('math.min(maxViewH, room)', 'высота полосы всё ещё ре
 absent('math.floor(resY * 0.40)', 'остался старый потолок в 40% высоты экрана')
 need('pcall(im.SetTooltip, oneLine(hoverIt.text or ""))' in s,
      'полный текст шаблона не показывается подсказкой')
+# v1.19.13: полоса не шире окна репорта — лишние кнопки уходят на новый ряд
+need('repW = tonumber(R.winW)' in s, 'полоса не читает ширину окна репорта')
+need('local maxW = math.min(920, math.max(240, resX - 80), repW)' in s,
+     'полоса не ограничена шириной окна репорта')
+absent('local rows, contentW = pickerLayout(ctx, math.min(920, math.max(240, resX - 80)) - PICK_PADX * 2)',
+       'раскладка полосы считается по старой ширине')
 absent('local y = math.max(16, math.min(resY - H - 40, math.floor((resY - H) * 0.72)))',
        'осталась старая «оторванная» позиция полосы')
 

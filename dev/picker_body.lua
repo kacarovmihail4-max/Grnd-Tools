@@ -79,16 +79,29 @@ check(_G.grndQrPickerDraw(makeCtx()) == true, "полоса не нарисов�
 check(POS.x == 400 and POS.y == 410,
     "полоса не следует за окном репорта: " .. tostring(POS.x) .. "," .. tostring(POS.y))
 
+-- 2b. семь кнопок, как в скрине с игры: полоса НЕ разъезжается шире окна репорта,
+--     лишние кнопки уходят на второй ряд (полоса растёт вниз)
+setItems(7, "тест")
+GRND_REP.winX, GRND_REP.winW, GRND_REP.winY, GRND_REP.winH = 120, 600, 340, 300
+Q.pickOpen = true
+check(_G.grndQrPickerDraw(makeCtx()) == true, "полоса не нарисовалась (2b)")
+check(POS.w <= 600, "полоса шире окна репорта: " .. tostring(POS.w))
+check(POS.h > 9 * 2 + 30, "семь кнопок не перенеслись на второй ряд: " .. tostring(POS.h))
+HPRINT(("7 кнопок при окне 600: ширина полосы=%s (<=600), высота=%s — второй ряд есть")
+    :format(tostring(POS.w), tostring(POS.h)))
+
 -- 3. много шаблонов: полоса растёт ВНИЗ новыми рядами, а не режется по окну репорта
 setItems(40, "Шаблон быстрого ответа")
 GRND_REP.winX, GRND_REP.winY, GRND_REP.winH = 660, 300, 400
 Q.pickOpen = true
 check(_G.grndQrPickerDraw(makeCtx()) == true, "полоса не нарисовалась (3)")
 check(POS.y == 710, "полоса уехала от окна репорта: " .. tostring(POS.y))
+check(POS.w <= GRND_REP.winW, "полоса шире окна репорта: " .. tostring(POS.w))
 check(POS.y + POS.h <= RESY - 10, "полоса не влезла в экран: " .. tostring(POS.y + POS.h))
 check(POS.h > hTwo, "при большом списке полоса не выросла: " .. tostring(POS.h))
-HPRINT(("40 шаблонов: y=%s высота=%s (низ %s при экране %s)")
-    :format(tostring(POS.y), tostring(POS.h), tostring(POS.y + POS.h), tostring(RESY)))
+HPRINT(("40 шаблонов: y=%s высота=%s ширина=%s (низ %s при экране %s)")
+    :format(tostring(POS.y), tostring(POS.h), tostring(POS.w),
+        tostring(POS.y + POS.h), tostring(RESY)))
 
 -- 3b. шаблонов столько, что не влезает даже до низа экрана: остальное — прокрутка
 setItems(80, "Очень длинное название шаблона для ответа игроку номер")
