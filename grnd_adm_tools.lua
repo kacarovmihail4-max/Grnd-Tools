@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.25"
+GRND_SCRIPT_VERSION = "1.19.26"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24347,7 +24347,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.25)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.26)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -24426,7 +24426,7 @@ local QR = {
         tabs = nil,        -- вкладки: { {trigger=, answer=, command=}, … }
         sel = 1,           -- выбранная вкладка
         listOpen = false,  -- открыт выпадающий список команд
-        offReason = nil,   -- почему выключен («слежка» и т.п.)
+        paused = nil,      -- причина паузы: «слежка» | «мероприятие» | nil
         fired = 0,         -- сколько раз сработал
         lastAt = 0,        -- время последнего срабатывания
         perPid = {},       -- id -> время последнего ответа (антидубль)
@@ -26917,7 +26917,7 @@ do
 end
 
 -- =====================================================================
---  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.25) — «Репорт» → «Автопилот»
+--  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.26) — «Репорт» → «Автопилот»
 -- =====================================================================
 --  Вкладки (до 15): в каждой — ОДИН триггер, свой текст ответа и своя команда
 --  после ответа. Пришёл репорт — ищем триггер по всем вкладкам; срабатывает
@@ -26929,8 +26929,10 @@ end
 --  (/sp ID или /goto ID).
 --
 --  Чтобы поведение было предсказуемым:
---    * слежка — стоп: в слежке автопилот не срабатывает и САМ выключается
---      (иначе телепорт посреди наблюдения ломает и слежку, и ответы);
+--    * слежка и мероприятие — пауза: автопилот молчит, но настройку не
+--      выключает, тумблер остаётся включённым и ответы возвращаются сами,
+--      как только причина уходит (телепорт посреди наблюдения сломал бы и
+--      слежку, и ответы; на мероприятии ответы админам-МП не нужны);
 --    * идёт ввод текста (чат, диалог, поле ImGui) — пропускаем, не мешаем;
 --    * одному игроку — один автоответ в минуту, пауза 2.5 с между
 --      срабатываниями, максимум 12 автоответов в минуту;
@@ -27136,15 +27138,6 @@ do
         return hits[1].idx, hits[1].trig
     end
 
-    -- Слишком короткий триггер ловит почти всё — предупреждаем.
-    function QR.autoShortTrigger(tab)
-        local list = QR.autoTriggers(tab)
-        for i = 1, #list do
-            if utf8Len(list[i]) < 3 then return list[i] end
-        end
-        return nil
-    end
-
     -- Сводка по вкладкам: сколько готовых (с триггером и ответом).
     function QR.autoReady()
         local tabs, ready = QR.autoTabs(), 0
@@ -27264,25 +27257,56 @@ do
         return false
     end
 
-    -- Включение/выключение автопилота. Причина выключения («слежка») видна
-    -- на вкладке. В слежке включить нельзя — телепорт сломал бы наблюдение.
-    function QR.autoSet(on, reason)
+    -- Почему автопилот сейчас НА ПАУЗЕ (или nil). Слежка и мероприятие — не
+    -- повод выключать настройку: тумблер остаётся включённым, ответы просто
+    -- ждут. В слежке телепорт сломал бы наблюдение, на мероприятии ответы
+    -- админам-МП не нужны — автопилот молчит и возвращается сам, когда
+    -- причина уходит.
+    function QR.autoPauseReason()
+        if QR.autoSpectating() then return "слежка" end
+        local M = _G.GRND_MP
+        if type(M) == "table" and M.active then return "мероприятие" end
+        return nil
+    end
+
+    -- Обновляет состояние паузы и сообщает о переходах тостами.
+    -- Возвращает причину паузы или nil.
+    function QR.autoPauseTick()
+        QR.autoEnsure()
+        local A = QR.auto
+        local reason = QR.autoPauseReason()
+        if reason ~= A.paused then
+            A.paused = reason
+            if A.on then
+                if reason == "слежка" then
+                    QR.toast("Автопилот на паузе: слежка", "warn", 3.2)
+                elseif reason == "мероприятие" then
+                    QR.toast("Автопилот на паузе: идёт мероприятие", "warn", 3.2)
+                else
+                    QR.toast("Автопилот снова работает", "ok", 2.6)
+                end
+            end
+        end
+        return reason
+    end
+
+    -- Включение/выключение автопилота тумблером.
+    function QR.autoSet(on)
         QR.autoEnsure()
         local A = QR.auto
         on = on and true or false
-        if on and QR.autoSpectating() then
-            A.offReason = "слежка"
-            QR.toast("Автопилот в слежке недоступен", "warn", 3)
-            return false
-        end
         if A.on == on then return A.on end
         A.on = on
-        A.offReason = (not on) and (reason or nil) or nil
+        A.paused = on and QR.autoPauseReason() or nil
         pcall(QR.autoSave)
         if on then
-            QR.toast("Автопилот включён", "ok", 2.6)
-        elseif reason == "слежка" then
-            QR.toast("Автопилот выключен: слежка", "warn", 3.6)
+            if A.paused == "слежка" then
+                QR.toast("Автопилот включён · пауза: слежка", "ok", 2.8)
+            elseif A.paused == "мероприятие" then
+                QR.toast("Автопилот включён · пауза: мероприятие", "ok", 2.8)
+            else
+                QR.toast("Автопилот включён", "ok", 2.6)
+            end
         else
             QR.toast("Автопилот выключен", "info", 2.4)
         end
@@ -27318,11 +27342,11 @@ do
             A.lastCheck = "выключен"
             return false, "выключен"
         end
-        if QR.autoSpectating() then
-            -- слежка: сначала выключаемся, потом уже ничего не отправляем
-            QR.autoSet(false, "слежка")
-            A.lastCheck = "слежка — автопилот выключен"
-            return false, "слежка"
+        -- слежка / мероприятие: молчим, но настройку не трогаем — пауза
+        local pause = QR.autoPauseTick()
+        if pause then
+            A.lastCheck = "пауза: " .. pause
+            return false, pause
         end
         local id = pid:match("^%d+$")
         if not id then
@@ -27413,8 +27437,9 @@ do
         return sentOk, hit
     end
 
-    -- Тик из основного цикла: задержанное сохранение и авто-выключение
-    -- при входе в слежку.
+    -- Тик из основного цикла: задержанное сохранение и слежение за паузой
+    -- (слежка, мероприятие). Как только причина уходит — автопилот сам
+    -- продолжает работать, тумблер не трогаем.
     function QR.autoTick()
         QR.autoEnsure()
         local A = QR.auto
@@ -27422,12 +27447,12 @@ do
         if A.dirtyAt and (now - A.dirtyAt) > 0.6 then
             pcall(QR.autoSave)
         end
-        if not A.on then return false end
-        if QR.autoSpectating() then
-            QR.autoSet(false, "слежка")
-            return true
+        if not A.on then
+            A.paused = nil
+            return false
         end
-        return false
+        local reason = QR.autoPauseTick()
+        return reason ~= nil
     end
 
     -- ---------- отрисовка вкладки ----------
@@ -27500,20 +27525,21 @@ do
         ctx.uiText(x, y + 1, "Автопилот", hi, 1.0)
 
         local on = A.on and true or false
+        local paused = on and (A.paused or QR.autoPauseReason()) or nil
         local stY = y + 30
-        local dotC = on and okC or (A.offReason and warnC or ctx.col32(255, 255, 255, 70))
+        local dotC = paused and warnC or (on and okC or ctx.col32(255, 255, 255, 70))
         ctx.dl:AddCircleFilled(ctx.at(x + 8, stY + 12), 5, dotC)
-        ctx.uiText(x + 22, stY + 2, on and "включён" or "выключен",
-            on and hi or dim, 0.95)
-        -- v1.19.25: у включённого автопилота подписи под строкой состояния
-        -- больше нет. Остаётся только важная причина авто-выключения.
-        local note, noteCol
-        if not on and A.offReason == "слежка" then
-            note, noteCol = "выключен сам: активна слежка, после выхода включите заново", warnC
+        local stateTxt
+        if paused == "слежка" then
+            stateTxt = "на паузе — слежка, вернётся сам"
+        elseif paused == "мероприятие" then
+            stateTxt = "на паузе — идёт мероприятие, вернётся сам"
+        elseif on then
+            stateTxt = "включён"
+        else
+            stateTxt = "выключен"
         end
-        if note and type(ctx.drawnW) == "function" then
-            ctx.uiText(x + 96, stY + 4, fit(note, w - 96 - 70, ctx.drawnW, 0.86), noteCol, 0.86)
-        end
+        ctx.uiText(x + 22, stY + 2, stateTxt, paused and warnC or (on and hi or dim), 0.95)
         if autoSwitch(ctx, x + w - 56, stY, on, "##grnd_qr_auto_on") then
             QR.autoSet(not on)
         end
@@ -27612,21 +27638,10 @@ do
         -- ---------- поля выбранной вкладки ----------
         local yy = ty + tabH + 14
         local iw = w
+        -- v1.19.26: подсказок у поля «Триггер» нет — по просьбе владельца.
+        -- Триггер можно ставить любой длины, включая совсем короткий.
         ctx.uiText(x, yy, "Триггер", dim, 0.84)
         local sel2 = QR.autoTab()
-        local shortTrig = QR.autoShortTrigger(sel2)
-        local hintTxt, hintCol
-        if shortTrig then
-            hintTxt, hintCol = "слишком короткий — сработает почти на всё", warnC
-        elseif #QR.autoTriggers(sel2) > 0 then
-            hintTxt, hintCol = "репорт целиком · регистр не важен", mut
-        end
-        if hintTxt and type(ctx.drawnW) == "function" then
-            local okM, v = pcall(ctx.drawnW, hintTxt, 0.8)
-            if okM and type(v) == "number" then
-                ctx.uiText(x + math.max(0, iw - v), yy + 2, hintTxt, hintCol, 0.8)
-            end
-        end
         yy = yy + 17
         local trigW = math.min(360, iw)
         local tkey, tid = "autoTrigger" .. A.sel, "##grnd_qr_auto_trigger"
@@ -27784,7 +27799,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.25"
+        local sv = "1.19.26"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -33818,6 +33833,7 @@ function grndMainBody()
                         -- v1.19.23: у вкладки крестик удаления, добавление — «+».
                         -- v1.19.24: триггер совпадает с репортом целиком.
                         -- v1.19.25: вкладок до 15, срабатывают все совпавшие.
+                        -- v1.19.26: слежка и мероприятие — пауза, а не выключение.
                         local topY = cardY + 16
                         local topBtnH = 34
                         local b1X = cardX + 20
@@ -34105,7 +34121,7 @@ function grndMainBody()
                             end
                         else
                             -- =========================================
-                            --  ПОД-ВКЛАДКИ «РЕПОРТА» (v1.19.25): «Ответы на
+                            --  ПОД-ВКЛАДКИ «РЕПОРТА» (v1.19.26): «Ответы на
                             --  репорт», «Наказания» и «Автопилот» — все три
                             --  рисуются своими модулями внутри GRND_QR.
                             -- =========================================
@@ -34147,6 +34163,7 @@ function grndMainBody()
                                 -- v1.19.24: триггер — только весь репорт целиком.
                                 -- v1.19.25: вкладок до 15, срабатывают все,
                                 -- у кого триггер совпал.
+                                -- v1.19.26: слежка/мероприятие — авто-пауза.
                                 if type(_G.grndQrAutoDraw) == "function" then
                                     local okAu = pcall(_G.grndQrAutoDraw, {
                                         im = im, dl = dl, at = at,

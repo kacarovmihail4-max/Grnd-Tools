@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.25"' in s, 'версия не 1.19.25')
+need('GRND_SCRIPT_VERSION = "1.19.26"' in s, 'версия не 1.19.26')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -180,7 +180,9 @@ need('planTabsTxt' in s, 'в подсказке нет списка сработ
 # у включённого автопилота нет подписи «при репорте: …»
 auto_draw_src2 = s[s.index('_G.grndQrAutoDraw = function(ctx)'):s.index('_G.grndQrAutoOnReport = function')]
 need('при репорте' not in auto_draw_src2, 'вернулась строка «при репорте: …» под тумблером')
-need('выключен сам: активна слежка' in auto_draw_src2, 'пропала причина авто-выключения в слежке')
+need('на паузе — слежка, вернётся сам' in auto_draw_src2, 'пропало состояние паузы в слежке')
+need('на паузе — идёт мероприятие, вернётся сам' in auto_draw_src2,
+     'пропало состояние паузы на мероприятии')
 need('if low == list[k] then' in s and 'out[#out + 1] = { idx = i, trig = list[k] }' in s,
      'триггер снова ищется как подстрока — репорт с лишними словами сработает')
 absent('low:find(list[k], 1, true)', 'вернулся поиск триггера подстрокой')
@@ -195,7 +197,8 @@ need('"Приветствую, уже смотрю…", true, sel2.answer' in s,
      'подсказка поля «Ответ игроку» снова с {ник}')
 auto_draw_src = s[s.index('_G.grndQrAutoDraw = function(ctx)'):s.index('_G.grndQrAutoOnReport = function')]
 need('{ник}' not in auto_draw_src, 'в разделе «Автопилот» снова подсказка с {ник}')
-need('репорт целиком' in auto_draw_src, 'нет подсказки, что репорт должен совпасть целиком')
+need('репорт целиком' not in auto_draw_src,
+     'вернулась подсказка «репорт целиком» (v1.19.26 убрал её по просьбе)')
 need('local tab = QR.autoTab(hits[k].idx)' in s, 'срабатывание не привязано к вкладке')
 need('local cmd = QR.autoCmdFor(id, tab)' in s, 'команда берётся не из вкладки')
 need('local line = oneLine(QR.apply(tab.answer, rep))' in s, 'ответ берётся не из вкладки')
@@ -224,9 +227,27 @@ need('local guard = QR.autoGuard(id, os.clock())' in auto_part, 'нет пред
 # слежка: не отвечает и выключается сам
 need('function QR.autoSpectating()' in auto_part or 'function QR.autoSpectating()' in s,
      'нет проверки слежки')
-need('QR.autoSet(false, "слежка")' in auto_part, 'в слежке автопилот не выключается')
-need('function QR.autoSet(on, reason)' in s, 'нет включения/выключения автопилота')
-need('if on and QR.autoSpectating() then' in s, 'в слежке автопилот можно включить')
+need('function QR.autoSet(on)' in s, 'нет включения/выключения автопилота')
+absent('QR.autoSet(false, "слежка")', 'в слежке автопилот всё ещё выключается')
+absent('A.offReason', 'осталась старая причина выключения (offReason)')
+need('function QR.autoPauseReason()' in s, 'нет проверки причин паузы')
+need('if QR.autoSpectating() then return "слежка" end' in s, 'слежка не ставит на паузу')
+need('if type(M) == "table" and M.active then return "мероприятие" end' in s,
+     'мероприятие (панель МП) не ставит автопилот на паузу')
+need('local pause = QR.autoPauseTick()' in auto_part, 'репорт не проверяет паузу')
+need('A.lastCheck = "пауза: " .. pause' in auto_part, 'нет пометки паузы в подсказке')
+need('local reason = QR.autoPauseTick()' in s, 'тик не следит за паузой')
+need('A.paused = on and QR.autoPauseReason() or nil' in s, 'тумблер не помечает паузу')
+# состояние на вкладке говорит про паузу, а не про выключение
+need('на паузе — слежка, вернётся сам' in s, 'на вкладке нет состояния паузы (слежка)')
+need('на паузе — идёт мероприятие, вернётся сам' in s,
+     'на вкладке нет состояния паузы (мероприятие)')
+# v1.19.26: подсказок у поля «Триггер» нет, короткий триггер разрешён
+trigger_src = s[s.index('ctx.uiText(x, yy, "Триггер", dim, 0.84)'):s.index('Команда после ответа')]
+need('слишком короткий' not in trigger_src, 'вернулась подпись про короткий триггер')
+need('репорт целиком' not in trigger_src, 'вернулась подпись «репорт целиком»')
+absent('function QR.autoShortTrigger', 'осталась проверка «слишком короткий триггер»')
+need('if low == list[k] then' in s, 'полное совпадение триггера пропало')
 # идёт ввод текста — пропуск, чтобы не мешать набору
 need('A.lastCheck = "идёт ввод текста — пропуск"' in auto_part,
      'автопилот не пропускает репорты во время ввода текста')
