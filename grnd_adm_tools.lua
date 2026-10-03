@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.32"
+GRND_SCRIPT_VERSION = "1.19.33"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24350,7 +24350,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.32)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.33)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -24615,6 +24615,38 @@ end
 local function fit(s, maxW, measure, scale)
     local shown = fitW(s, maxW, measure, scale)
     return shown
+end
+
+-- v1.19.33: перенос длинного текста по словам под ширину — для подсказки под
+-- полем «Триггер» (одной строкой длинная фраза не помещается). Каждая строка
+-- не шире maxW; слишком длинное одиночное слово подрезается, как во fitW.
+local function wrapW(s, maxW, measure, scale)
+    s = tostring(s or "")
+    scale = tonumber(scale) or 1
+    local out, line = {}, ""
+    local function width(t)
+        if type(measure) == "function" then
+            local ok, w = pcall(measure, t, scale)
+            if ok and type(w) == "number" then return w end
+        end
+        return #tostring(t) * 7 * scale
+    end
+    for word in s:gmatch("%S+") do
+        if line == "" then
+            line = word
+        else
+            local cand = line .. " " .. word
+            if width(cand) <= maxW then
+                line = cand
+            else
+                out[#out + 1] = line
+                line = word
+            end
+        end
+        if width(line) > maxW then line = fitW(line, maxW, measure, scale) end
+    end
+    if line ~= "" then out[#out + 1] = line end
+    return out
 end
 
 -- Высота строки текста в этой сборке ImGui.
@@ -26920,7 +26952,7 @@ do
 end
 
 -- =====================================================================
---  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.32) — «Репорт» → «Автопилот»
+--  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.33) — «Репорт» → «Автопилот»
 -- =====================================================================
 --  Вкладки (до 15): в каждой — ОДИН триггер, свой текст ответа и своя команда
 --  после ответа. Пришёл репорт — ищем триггер по всем вкладкам; совпадение
@@ -27677,20 +27709,30 @@ do
         -- ---------- поля выбранной вкладки ----------
         local yy = ty + tabH + 14
         local iw = w
-        -- v1.19.26: подсказок у поля «Триггер» нет — по просьбе владельца.
-        -- Триггер можно ставить любой длины, включая совсем короткий.
+        -- v1.19.26: у поля «Триггер» нет подписи про длину — короткий триггер
+        -- разрешён. v1.19.33: вместо placeholder «напр. помогите» под полем
+        -- подсказка про синонимы через запятую (её длинный текст переносится
+        -- по словам, чтобы помещался целиком).
         ctx.uiText(x, yy, "Триггер", dim, 0.84)
         local sel2 = QR.autoTab()
         yy = yy + 17
         local trigW = math.min(360, iw)
         local tkey, tid = "autoTrigger" .. A.sel, "##grnd_qr_auto_trigger"
-        field(ctx, tid, tkey, MAX_ATRIG + 1, x, yy, trigW, 28, "напр. помогите", false, sel2.trigger)
+        field(ctx, tid, tkey, MAX_ATRIG + 1, x, yy, trigW, 28, "", false, sel2.trigger)
         local trigVal = trim(bufText(tkey))
         if trigVal ~= sel2.trigger then
             sel2.trigger = trigVal
             A.dirtyAt = os.clock()
         end
-        yy = yy + 40
+        local tHintSc = 0.72
+        local tHintLines = wrapW(
+            "Можно ввести триггер и похожие слова к триггеру, на которые скрипт тоже будет так реагировать",
+            iw, ctx.drawnW, tHintSc)
+        local tHintStep = lineH(ctx, tHintSc) + 2
+        for li = 1, #tHintLines do
+            ctx.uiText(x, yy + 32 + (li - 1) * tHintStep, tHintLines[li], mut, tHintSc)
+        end
+        yy = yy + 32 + math.max(1, #tHintLines) * tHintStep + 4
 
         ctx.uiText(x, yy, "Ответ игроку", dim, 0.84)
         yy = yy + 17
@@ -27858,7 +27900,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.32"
+        local sv = "1.19.33"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
