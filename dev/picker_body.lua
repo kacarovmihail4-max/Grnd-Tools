@@ -90,6 +90,33 @@ check(POS.h > 9 * 2 + 30, "семь кнопок не перенеслись н�
 HPRINT(("7 кнопок при окне 600: ширина полосы=%s (<=600), высота=%s — второй ряд есть")
     :format(tostring(POS.w), tostring(POS.h)))
 
+-- 2c. один шаблон: полоса обжимает кнопку, справа пустого места нет
+setItems(1, "Тест")                       -- кнопка выйдет минимальной (108 px)
+local function benchW(name)
+    -- ровно та же формула, что в модуле: ширина подписи + 28, но не меньше 108
+    return math.max(108, math.floor(#name * 7 * 0.94 + 28))
+end
+GRND_REP.winX, GRND_REP.winW, GRND_REP.winY, GRND_REP.winH = 660, 600, 400, 260
+Q.pickOpen = true
+POS.x, POS.y, POS.w, POS.h = nil, nil, nil, nil
+check(_G.grndQrPickerDraw(makeCtx()) == true, "полоса не нарисовалась (2c)")
+check(POS.w == benchW("Тест 1") + 20,
+    "у полосы с одним шаблоном осталась лишняя ширина: " .. tostring(POS.w))
+check(POS.x == GRND_REP.winX, "полоса с одним шаблоном потеряла левый край окна: " .. tostring(POS.x))
+HPRINT(("один шаблон: ширина полосы %s px (кнопка %s + поля карточки), по левому краю окна")
+    :format(tostring(POS.w), tostring(benchW("Тест 1"))))
+
+-- 2d. длинное название: полоса тоже ровно по кнопке (кнопка упирается в предел 240)
+setItems(1, "Очень длинное название шаблона")
+Q.pickOpen = true
+POS.x, POS.y, POS.w, POS.h = nil, nil, nil, nil
+check(_G.grndQrPickerDraw(makeCtx()) == true, "полоса не нарисовалась (2d)")
+check(POS.w == 240 + 20, "длинное название не обжато до предела: " .. tostring(POS.w))
+check(POS.x == GRND_REP.winX, "полоса потеряла левый край окна (2d): " .. tostring(POS.x))
+HPRINT(("одно длинное название: ширина полосы %s px (кнопка 240 + поля), пустоты справа нет")
+    :format(tostring(POS.w)))
+setItems(2, "Шаблон")
+
 -- 3. много шаблонов: полоса растёт ВНИЗ новыми рядами, а не режется по окну репорта
 setItems(40, "Шаблон быстрого ответа")
 GRND_REP.winX, GRND_REP.winY, GRND_REP.winH = 660, 300, 400

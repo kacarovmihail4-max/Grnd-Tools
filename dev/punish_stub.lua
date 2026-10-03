@@ -2,6 +2,7 @@
 HPRINT = print
 function print(...) end
 CHAT, ANS, TOASTS, TXT, BTNS = {}, {}, {}, {}, {}
+ORDER = {}          -- порядок вызовов: ans (ответ игроку) / chat (отправка)
 TYPE = {}                        -- «набор текста»: id поля -> строка (один раз)
 CLICK = {}                       -- какие InvisibleButton «нажаты» в этом кадре
 FILES = {}                       -- фальшивый config.json: путь -> тело файла
@@ -54,12 +55,12 @@ GRND_UIKIT = { TH = nil }
 function grndStorageRead() return nil end
 function grndToUtf(s) return tostring(s) end
 function grndUtf8ToCp1251(s) return tostring(s) end
-function grndChatSend(s) CHAT[#CHAT + 1] = tostring(s) return true end
-function sampSendChat(s) CHAT[#CHAT + 1] = tostring(s) end
+function grndChatSend(s) CHAT[#CHAT + 1] = tostring(s) ORDER[#ORDER + 1] = "chat" return true end
+function sampSendChat(s) CHAT[#CHAT + 1] = tostring(s) ORDER[#ORDER + 1] = "chat" end
 function getScreenResolution() return 1920, 1080 end
 function grndBinderWriteCBuf(buf, cap, text) buf.v = tostring(text) return true end
 function grndBinderReadCBuf(buf) return tostring(buf.v or "") end
-function grndRepAnswer(pid, text) ANS[#ANS + 1] = tostring(pid) .. "|" .. tostring(text) return true end
+function grndRepAnswer(pid, text) ANS[#ANS + 1] = tostring(pid) .. "|" .. tostring(text) ORDER[#ORDER + 1] = "ans" return true end
 function isKeyDown() return false end
 function isMouseButtonDown() return false end
 GRND_REP = { open = true, author = "Тестовый", playerId = "25", question = "дм", focused = false }

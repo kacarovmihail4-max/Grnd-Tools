@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.17"' in s, 'версия не 1.19.17')
+need('GRND_SCRIPT_VERSION = "1.19.18"' in s, 'версия не 1.19.18')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -151,6 +151,21 @@ need('QR.sendChat("/n " .. cmd)' in s, 'наказание не проверяе
 # v1.19.17: в тестовом режиме в /n уходит и ответ на репорт
 need('QR.sendChat("/n " .. line)' in s, 'ответ на репорт не уходит в /n вместе с командой')
 need('и ответ игроку' in s, 'тост не сообщает про оба сообщения в /n')
+# v1.19.18: порядок — сначала ответ игроку, потом наказание
+need('QR.sendChat("/n " .. line)          -- ответ на репорт — первым' in s,
+     'в /n ответ на репорт уходит не первым')
+need('pcall(grndRepAnswer, pid, line)' in s, 'в бою ответ игроку не уходит перед наказанием')
+pun_choose = s[s.index('function QR.punChoose(it)'):s.index('function QR.openPunPicker()')]
+need(pun_choose.index('pcall(grndRepAnswer, pid, line)') < pun_choose.index('if QR.sendChat(cmd) then'),
+     'в бою наказание уходит раньше ответа игроку')
+test_part = pun_choose[pun_choose.index('-- Тестовый режим: в /n уходит И ответ'):]
+need(test_part.index('QR.sendChat("/n " .. line)') < test_part.index('if QR.sendChat("/n " .. cmd) then'),
+     'в тесте команда уходит раньше ответа игроку')
+# полоса обжимает кнопки: минимум ширины снижен, пустоты справа нет
+absent('local W = math.max(184, math.min(maxW, contentW + PICK_PADX * 2))',
+       'вернулась полоса шириной минимум 184 px (пустота справа)')
+need(s.count('local W = math.max(96, math.min(maxW, contentW + PICK_PADX * 2))') == 2,
+     'полоса не обжимает кнопки')
 need('ID игрока не распознан — наказание не отправлено' in s, 'наказание уходит без проверки ID')
 need('ctx.uiText(ix, yy, "Время, " .. tostring(def.unit or ""), dim, 0.82)' in s,
      'в редакторе наказания нет поля «Время» с единицами')

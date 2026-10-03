@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.17"
+GRND_SCRIPT_VERSION = "1.19.18"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24243,7 +24243,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» И ШАБЛОНЫ НАКАЗАНИЙ (v1.19.17)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» И ШАБЛОНЫ НАКАЗАНИЙ (v1.19.18)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -25350,7 +25350,10 @@ local function pickerDraw(ctx)
     -- ряды кнопок: от верхней кромки до нижнего края экрана помещается всё, что влезло
     local maxViewH = math.max(rowH, math.floor(resY - y - PICK_SCREEN_GAP) - PICK_PADY * 2)
     local viewH = math.min(rowsH, maxViewH)
-    local W = math.max(184, math.min(maxW, contentW + PICK_PADX * 2))
+    -- v1.19.18: ширина — ровно по кнопкам (плюс поля карточки). Раньше снизу
+    -- держался минимум 184 px, и у полосы с одним-двумя шаблонами справа
+    -- оставалась пустая полоса.
+    local W = math.max(96, math.min(maxW, contentW + PICK_PADX * 2))
     local H = PICK_PADY + viewH + PICK_PADY
     local x = math.max(10, math.min(math.max(10, resX - W - 10), repX))
 
@@ -25770,12 +25773,15 @@ do
             return false
         end
 
-        -- боевой режим: команда уходит как есть, игроку — ответ на репорт
+        -- Боевой режим: v1.19.18 — сначала игроку уходит ответ на репорт,
+        -- и только следом команда наказания (так и просил заказчик: человек
+        -- получает пояснение раньше, чем наказание).
         if mode == "ans" then
+            local line = oneLine(text)
+            if line ~= "" and type(grndRepAnswer) == "function" then
+                pcall(grndRepAnswer, pid, line)
+            end
             if QR.sendChat(cmd) then
-                if oneLine(text) ~= "" and type(grndRepAnswer) == "function" then
-                    pcall(grndRepAnswer, pid, text)
-                end
                 QR.toast("Наказание «" .. utf8Cut(label, 20) .. "» по ID " .. pid, "ok", 3)
                 QR.closeReport()
                 return true
@@ -25784,15 +25790,18 @@ do
             return false
         end
 
-        -- тестовый режим: в /n уходит И команда наказания, И ответ на репорт —
-        -- так видно, что именно уйдёт игроку и что уйдёт на сервер (v1.19.17)
+        -- Тестовый режим: в /n уходит И ответ на репорт, И команда наказания —
+        -- ровно в том же порядке, что и в бою (v1.19.18): сначала ответ игроку,
+        -- следом наказание. Так видно, что именно уйдёт игроку и что на сервер.
+        local line = oneLine(text)
+        if line ~= "" then
+            if utf8Len(line) > MAX_CHAT then
+                line = utf8Cut(line, MAX_CHAT - 1) .. "…"
+            end
+            QR.sendChat("/n " .. line)          -- ответ на репорт — первым
+        end
         if QR.sendChat("/n " .. cmd) then
-            local line = oneLine(text)
             if line ~= "" then
-                if utf8Len(line) > MAX_CHAT then
-                    line = utf8Cut(line, MAX_CHAT - 1) .. "…"
-                end
-                QR.sendChat("/n " .. line)
                 QR.toast("Проверка: в /n — «" .. utf8Cut(cmd, 44) .. "» и ответ игроку",
                     "warn", 3.8)
             else
@@ -25884,7 +25893,8 @@ do
         y = math.max(16, math.min(resY - minH - PICK_SCREEN_GAP, y))
         local maxViewH = math.max(rowH, math.floor(resY - y - PICK_SCREEN_GAP) - PICK_PADY * 2)
         local viewH = math.min(rowsH, maxViewH)
-        local W = math.max(184, math.min(maxW, contentW + PICK_PADX * 2))
+        -- v1.19.18: как и у быстрых ответов — ширина ровно по кнопкам
+        local W = math.max(96, math.min(maxW, contentW + PICK_PADX * 2))
         local H = PICK_PADY + viewH + PICK_PADY
         -- v1.19.16: полоса наказаний — ПОСРЕДИНЕ окна репорта (быстрые ответы
         -- прижаты к его левому краю, а эта центрируется).
@@ -26808,7 +26818,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.17"
+        local sv = "1.19.18"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end

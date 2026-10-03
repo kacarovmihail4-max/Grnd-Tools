@@ -253,7 +253,20 @@ check(POS.y == 300 + 260 + 10, "полоса не под нижней кромк
 HPRINT(("полоса: окно 660…1260, полоса %s…%s (по центру), y=%s")
     :format(tostring(POS.x), tostring(POS.x + POS.w), tostring(POS.y)))
 
--- ===== 12. тестовый режим: в /n уходит И команда, И ответ на репорт =====
+-- ===== 11b. один шаблон: полоса обжимает кнопку, справа пустоты нет =====
+P.items = { { id = 1, name = "Мут", text = "Ответ", cmd = "mute", time = "60", reason = "флуд" } }
+GRND_REP.winX, GRND_REP.winW, GRND_REP.winY, GRND_REP.winH = 660, 600, 300, 260
+P.pickOpen = true
+POS.x, POS.y, POS.w, POS.h = nil, nil, nil, nil
+drawPicker()
+-- кнопка «Мут» = минимум 108 px, поля карточки 10+10 → полоса ровно 128 px
+check(POS.w == 128, "у полосы с одним шаблоном осталась лишняя ширина: " .. tostring(POS.w))
+check(POS.x == 660 + math.floor((600 - 128) / 2),
+    "полоса не по центру окна: " .. tostring(POS.x))
+HPRINT(("один шаблон: полоса %s px (кнопка 108 + поля), по центру окна репорта")
+    :format(tostring(POS.w)))
+
+-- ===== 12. тестовый режим: сначала ответ игроку, потом наказание =====
 setPunItems()
 GRND_REP.open = true
 Q.mode = "test"
@@ -263,15 +276,15 @@ CLICK = { ["##grnd_qr_pun_q_1"] = true }
 drawPicker()
 CLICK = {}
 check(#CHAT == before + 2, "в /n ушло не два сообщения: " .. tostring(#CHAT - before))
-check(CHAT[#CHAT - 1] == "/n /mute 25 60 флуд в чате",
-    "команда ушла неверно: " .. tostring(CHAT[#CHAT - 1]))
-check(CHAT[#CHAT] == "/n Приветствую, мут за флуд",
-    "ответ на репорт не ушёл в /n: " .. tostring(CHAT[#CHAT]))
+check(CHAT[#CHAT - 1] == "/n Приветствую, мут за флуд",
+    "первым должен уходить «ответ игроку»: " .. tostring(CHAT[#CHAT - 1]))
+check(CHAT[#CHAT] == "/n /mute 25 60 флуд в чате",
+    "вторым должно уходить наказание: " .. tostring(CHAT[#CHAT]))
 check(TOASTS[#TOASTS]:find("и ответ игроку", 1, true) ~= nil,
     "тост не сообщил про оба сообщения: " .. tostring(TOASTS[#TOASTS]))
 check(GRND_REP.open == false, "после наказания окно репорта не закрылось")
 check(P.pickOpen == false, "полоса наказаний не закрылась")
-HPRINT("тестовый режим: «" .. CHAT[#CHAT - 1] .. "» и «" .. CHAT[#CHAT] .. "»")
+HPRINT("тестовый режим: «" .. CHAT[#CHAT - 1] .. "» и «" .. CHAT[#CHAT] .. "» (ответ → наказание)")
 
 -- ===== 13. пустой «Ответ на репорт»: в /n уходит только команда =====
 P.items[1].text = ""
@@ -295,19 +308,21 @@ before = #CHAT
 CLICK = { ["##grnd_qr_pun_q_9"] = true }
 drawPicker()
 CLICK = {}
-check(CHAT[#CHAT - 1] == "/n /ban 77 7 читы, ID 77",
-    "подстановки в команде не сработали: " .. tostring(CHAT[#CHAT - 1]))
-check(CHAT[#CHAT] == "/n Бан по ID 77", "подстановки в ответе не сработали: " .. tostring(CHAT[#CHAT]))
+check(CHAT[#CHAT - 1] == "/n Бан по ID 77",
+    "подстановки в ответе не сработали: " .. tostring(CHAT[#CHAT - 1]))
+check(CHAT[#CHAT] == "/n /ban 77 7 читы, ID 77",
+    "подстановки в команде не сработали: " .. tostring(CHAT[#CHAT]))
 HPRINT("подстановки: «" .. CHAT[#CHAT - 1] .. "» + «" .. CHAT[#CHAT] .. "»")
 P.items[3] = nil
 setPunItems()
 
--- ===== 15. боевой режим: команда как есть, ответ — игроку (без /n) =====
+-- ===== 15. боевой режим: ответ игроку первым, затем команда как есть =====
 GRND_REP.open = true
 GRND_REP.playerId = "25"
 Q.mode = "ans"
 P.pickOpen = true
 before = #CHAT
+ORDER = {}
 CLICK = { ["##grnd_qr_pun_q_1"] = true }
 drawPicker()
 CLICK = {}
@@ -315,8 +330,10 @@ check(#CHAT == before + 1, "в боевом режиме ушло больше �
 check(CHAT[#CHAT] == "/mute 25 60 флуд в чате", "боевая команда ушла неверно: " .. tostring(CHAT[#CHAT]))
 check(#ANS == 1 and ANS[1] == "25|Приветствую, мут за флуд",
     "игроку ушёл не тот ответ: " .. tostring(ANS[1]))
+check(ORDER[1] == "ans" and ORDER[2] == "chat",
+    "в бою ответ игроку должен уходить ДО наказания: " .. table.concat(ORDER, ","))
 check(GRND_REP.open == false, "в боевом режиме окно репорта не закрылось")
-HPRINT("боевой режим: «" .. CHAT[#CHAT] .. "» + ответ игроку")
+HPRINT("боевой режим: ответ игроку → «" .. CHAT[#CHAT] .. "» (в таком порядке)")
 
 -- ===== 16. режим «в поле ответа»: текст в поле, команда в /n, окно открыто =====
 GRND_REP.open = true
