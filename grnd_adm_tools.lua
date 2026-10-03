@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.14"
+GRND_SCRIPT_VERSION = "1.19.15"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -25780,7 +25780,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.14"
+        local sv = "1.19.15"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -31798,48 +31798,58 @@ function grndMainBody()
                         --  «Ответы на репорт» (как в «Настройках»)
                         -- =====================================================
                         menu.reportTab = menu.reportTab or "tools"
-                        local isTools = (menu.reportTab == "tools")
+                        -- v1.19.15: под-вкладок стало четыре — «Инструменты»,
+                        -- «Ответы на репорт», «Наказания» и «Автопилот». Последние
+                        -- две пока заготовки: раздел в разработке.
                         local topY = cardY + 16
                         local topBtnH = 34
                         local b1X = cardX + 20
-                        local lbl1, lbl2 = "Инструменты", "Ответы на репорт"
-                        local w1 = math.max(150, tsize(lbl1) + 40)
-                        local w2 = math.max(150, tsize(lbl2) + 40)
-                        local b2X = b1X + w1 + 10
-
-                        im.SetCursorPos(im.ImVec2(b1X, topY))
-                        if im.InvisibleButton("##grnd_rep_tab_tools", im.ImVec2(w1, topBtnH)) then
-                            menu.reportTab = "tools"
+                        local RTABS = {
+                            { id = "tools",   label = "Инструменты" },
+                            { id = "answers", label = "Ответы на репорт" },
+                            { id = "punish",  label = "Наказания" },
+                            { id = "auto",    label = "Автопилот" },
+                        }
+                        local rtGap = 10
+                        local rtSum = rtGap * (#RTABS - 1)
+                        for i = 1, #RTABS do
+                            local lw = tsize(RTABS[i].label)
+                            RTABS[i].w = math.max(120, lw + 34)
+                            rtSum = rtSum + RTABS[i].w
                         end
-                        local rhov1 = (im.IsItemHovered and im.IsItemHovered()) or false
-                        roundRect(dl, at(b1X, topY), at(b1X + w1, topY + topBtnH),
-                            isTools and c32(TH.itemSel) or (rhov1 and c32(TH.itemHover) or col32(255, 255, 255, 10)), 8)
-                        if isTools then
-                            roundRect(dl, at(b1X + 18, topY + topBtnH - 3), at(b1X + w1 - 18, topY + topBtnH - 1), c32(TH.accent), 2)
+                        -- узкое окно: поджимаем кнопки, чтобы все четыре влезли в ряд
+                        local rtAvail = cardW - 40
+                        if rtSum > rtAvail then
+                            local k = rtAvail / rtSum
+                            for i = 1, #RTABS do RTABS[i].w = math.max(84, math.floor(RTABS[i].w * k)) end
                         end
-                        local rtw1, rth1 = tsize(lbl1)
-                        uiText(b1X + (w1 - rtw1) / 2, topY + (topBtnH - rth1) / 2, lbl1,
-                            isTools and c4(TH.textHi) or (rhov1 and c4(TH.text) or c4(TH.textDim)))
-
-                        im.SetCursorPos(im.ImVec2(b2X, topY))
-                        if im.InvisibleButton("##grnd_rep_tab_answers", im.ImVec2(w2, topBtnH)) then
-                            menu.reportTab = "answers"
+                        local rx = b1X
+                        for i = 1, #RTABS do
+                            local tb = RTABS[i]
+                            local on = (menu.reportTab == tb.id)
+                            im.SetCursorPos(im.ImVec2(rx, topY))
+                            if im.InvisibleButton("##grnd_rep_tab_" .. tb.id, im.ImVec2(tb.w, topBtnH)) then
+                                menu.reportTab = tb.id
+                                on = true
+                            end
+                            local rhov = (im.IsItemHovered and im.IsItemHovered()) or false
+                            roundRect(dl, at(rx, topY), at(rx + tb.w, topY + topBtnH),
+                                on and c32(TH.itemSel) or (rhov and c32(TH.itemHover) or col32(255, 255, 255, 10)), 8)
+                            if on then
+                                roundRect(dl, at(rx + 18, topY + topBtnH - 3), at(rx + tb.w - 18, topY + topBtnH - 1),
+                                    c32(TH.accent), 2)
+                            end
+                            local lw, lh = tsize(tb.label)
+                            uiText(rx + (tb.w - lw) / 2, topY + (topBtnH - lh) / 2, tb.label,
+                                on and c4(TH.textHi) or (rhov and c4(TH.text) or c4(TH.textDim)))
+                            rx = rx + tb.w + rtGap
                         end
-                        local rhov2 = (im.IsItemHovered and im.IsItemHovered()) or false
-                        roundRect(dl, at(b2X, topY), at(b2X + w2, topY + topBtnH),
-                            (not isTools) and c32(TH.itemSel) or (rhov2 and c32(TH.itemHover) or col32(255, 255, 255, 10)), 8)
-                        if not isTools then
-                            roundRect(dl, at(b2X + 18, topY + topBtnH - 3), at(b2X + w2 - 18, topY + topBtnH - 1), c32(TH.accent), 2)
-                        end
-                        local rtw2, rth2 = tsize(lbl2)
-                        uiText(b2X + (w2 - rtw2) / 2, topY + (topBtnH - rth2) / 2, lbl2,
-                            (not isTools) and c4(TH.textHi) or (rhov2 and c4(TH.text) or c4(TH.textDim)))
 
                         local sepY = topY + topBtnH + 14
                         dl:AddRectFilled(at(cardX + 20, sepY), at(cardX + cardW - 20, sepY + 1), c32(TH.line))
                         local secY = sepY + 14
 
-                        if isTools then
+                        if menu.reportTab == "tools" then
                         -- =========================================
                         --  ИНСТРУМЕНТЫ: «Быстрый /arep»
                         -- =========================================
@@ -32046,7 +32056,7 @@ function grndMainBody()
                             uiText(rowX + rowW - 20 - valW, c3Y + rowH + 10, valTxt,
                                 c4(TH.accent), 0.9)
                         end
-                        else
+                        elseif menu.reportTab == "answers" then
                             -- =========================================
                             --  ОТВЕТЫ НА РЕПОРТ: шаблоны быстрых ответов
                             --  (редактор живёт в модуле GRND_QR: список слева,
@@ -32075,6 +32085,43 @@ function grndMainBody()
                             else
                                 uiText(cardX + 20, secY + 6,
                                     "Модуль шаблонов не загружен", c4(TH.textDim), 0.95)
+                            end
+                        else
+                            -- =========================================
+                            --  ЗАГОТОВКИ РАЗДЕЛОВ (v1.19.15): «Наказания» и
+                            --  «Автопилот». Содержимое добавим отдельно, пока
+                            --  разделы честно помечены как «в разработке».
+                            -- =========================================
+                            local function soonCard(title, note)
+                                local bx, by = cardX + 20, secY
+                                local bw, bh = cardW - 40, 96
+                                roundRect(dl, at(bx, by), at(bx + bw, by + bh),
+                                    col32(255, 255, 255, 10), 9)
+                                if dl.AddRect then
+                                    pcall(dl.AddRect, dl, at(bx, by), at(bx + bw, by + bh),
+                                        col32(255, 255, 255, 14), 9)
+                                end
+                                dl:AddCircleFilled(at(bx + 22, by + 32), 4.5, c32(TH.accent))
+                                local tw = tsize(title)
+                                uiText(bx + 36, by + 20, title, c4(TH.textHi), 1.08)
+                                local bl = "в разработке"
+                                local blw = tsize(bl)
+                                local badX = bx + 36 + tw + 12
+                                roundRect(dl, at(badX, by + 18), at(badX + blw + 18, by + 40),
+                                    col32(TH.accent[1], TH.accent[2], TH.accent[3], 34), 11)
+                                uiText(badX + 9, by + 22, bl, c4(TH.accent), 0.85)
+                                uiText(bx + 36, by + 52, note, c4(TH.textMuted), 0.9)
+                                uiText(bx + 36, by + 71,
+                                    "Раздел пока пуст — наполнение добавим позже.",
+                                    c4(TH.textDim), 0.84)
+                            end
+                            local rt = menu.reportTab
+                            if rt == "punish" then
+                                soonCard("Наказания",
+                                    "Здесь будут шаблоны наказаний и готовые причины для формы.")
+                            else
+                                soonCard("Автопилот",
+                                    "Здесь будут авто-действия: ответы шаблоном, передача в /a, отчёты.")
                             end
                         end
                     elseif tab.id == "recon" then

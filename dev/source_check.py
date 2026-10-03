@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.14"' in s, 'версия не 1.19.14')
+need('GRND_SCRIPT_VERSION = "1.19.15"' in s, 'версия не 1.19.15')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -125,6 +125,17 @@ need('if QR.note and (os.clock() - (QR.noteAt or 0)) < 6 then' not in s,
 need('local btnH, footH = 32, 12' in s, 'место нижних строк не отдано полю «Текст ответа»')
 need('QR.toast("Шаблон удалён", "ok", 2.2)' in s, 'удаление шаблона не сообщается тостом')
 need("QR.toast(\"Введите текст ответа\", \"warn\", 2.6)" in s, 'предупреждение редактора не ушло в тост')
+
+# v1.19.15: в разделе «Репорт» четыре под-вкладки, две из них — заготовки
+need('{ id = "punish",  label = "Наказания" }' in s, 'нет под-вкладки «Наказания» в разделе «Репорт»')
+need('{ id = "auto",    label = "Автопилот" }' in s, 'нет под-вкладки «Автопилот» в разделе «Репорт»')
+need('"##grnd_rep_tab_" .. tb.id' in s, 'под-вкладки раздела «Репорт» не рисуются общим рядом')
+need('if menu.reportTab == "tools" then' in s, 'ветка «Инструменты» раздела «Репорт» пропала')
+need('elseif menu.reportTab == "answers" then' in s, 'ветка «Ответы на репорт» раздела «Репорт» пропала')
+need('soonCard("Наказания",' in s, 'раздел «Наказания» ничего не рисует')
+need('soonCard("Автопилот",' in s, 'раздел «Автопилот» ничего не рисует')
+need('local bl = "в разработке"' in s, 'разделы-заготовки не помечены «в разработке»')
+absent('local isTools', 'осталась старая логика двух под-вкладок «Репорт»')
 absent('local rows, contentW = pickerLayout(ctx, math.min(920, math.max(240, resX - 80)) - PICK_PADX * 2)',
        'раскладка полосы считается по старой ширине')
 absent('local y = math.max(16, math.min(resY - H - 40, math.floor((resY - H) * 0.72)))',
