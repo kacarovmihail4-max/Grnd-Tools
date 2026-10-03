@@ -35186,25 +35186,11 @@ function grndMainBody()
                         roundRect(dl, p1, p2, col32(17, 14, 26, 252), rad)
                     end
                 end
-                -- ГРАДИЕНТНАЯ ЛИНИЯ-АКЦЕНТ: заметная полоса по верхнему краю
-                -- панели (раньше акцентом была лишь черта в 3 px под самым
-                -- краем — выглядела случайной)
-                local accentH = math.max(2, S(3))
-                local accentW = contentR - contentL
-                local accentX = sh + contentL
-                if dxMode then
-                    H.dxHGrad(px + accentX, py + sh, accentW, accentH,
-                        TH_ACC[1], TH_ACC[2], TH_ACC[3], 245,
-                        TH_ACC2[1], TH_ACC2[2], TH_ACC2[3], 245, 8)
-                else
-                    local ac1 = col32(TH_ACC[1], TH_ACC[2], TH_ACC[3], 245)
-                    local ac2 = col32(TH_ACC2[1], TH_ACC2[2], TH_ACC2[3], 245)
-                    if not H.hgrad(dl, at(accentX, sh), at(accentX + accentW, sh + accentH),
-                        ac1, ac2) then
-                        roundRect(dl, at(accentX, sh), at(accentX + accentW, sh + accentH),
-                            ac1, 1)
-                    end
-                end
+                -- v1.19.09: градиентная линия-акцент по верхнему краю панели
+                -- убрана (просьба заказчика: лишняя полоса сверху). Раньше
+                -- здесь рисовалась полоса 3 px акцентом темы — и в ImGui-пути,
+                -- и в DX-пути (render-библиотека). Панель остаётся чистой
+                -- градиентной плашкой со скруглением.
 
                 local headTy = math.max(0, math.floor((headH - lineH) / 2)) + sh
                 local headCy = headTy + math.floor(lineH / 2)

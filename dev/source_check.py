@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Проверка исходника: кнопки видны без наведения, наведение из одного источника,
 снятие стилей один-в-один, «песочница» панели, диагностика, отсутствие голых im."""
-import io, sys
+import io, sys, re
 SRC = sys.argv[1] if len(sys.argv) > 1 else '/home/user/Grnd-Tools/grnd_adm_tools.lua'
 s = io.open(SRC, encoding='utf-8').read()
 fails = []
@@ -67,7 +67,21 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.08"' in s, 'версия не 1.19.08')
+need('GRND_SCRIPT_VERSION = "1.19.09"' in s, 'версия не 1.19.09')
+
+# верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
+top_strips = []
+for m in re.finditer(r'(?:gradRect|AddRectFilled)\s*\(\s*(?:at|eat|bat|aat)\(\s*[^,]+,\s*([0-9.]+)\s*\)\s*,\s*(?:at|eat|bat|aat)\(\s*[^,]+,\s*([0-9.]+)\s*\)', s):
+    y1, y2 = float(m.group(1)), float(m.group(2))
+    if y1 <= 4.5 and y2 <= 4.5 and y2 > y1:
+        top_strips.append(s[:m.start()].count('\n') + 1)
+need(not top_strips, 'вернулась акцентная полоска сверху (строки: %s)' % top_strips)
+need('box(0, 0, W, 3, 0xFF00D6AA)' not in s, 'вернулась полоска сверху в аварийной отрисовке рекона')
+# оверлей «РЕПОРТЫ» на экране: полоса рисовалась градиент-хелперами, а не gradRect
+need('H.dxHGrad(px + accentX' not in s, 'вернулась полоска сверху в оверлее «РЕПОРТЫ» (DX-путь)')
+need('at(accentX, sh), at(accentX + accentW, sh + accentH)' not in s,
+     'вернулась полоска сверху в оверлее «РЕПОРТЫ» (ImGui-путь)')
+need('local accentH = math.max(2, S(3))' not in s, 'вернулся расчёт полоски оверлея «РЕПОРТЫ»')
 need('script_version(GRND_SCRIPT_VERSION)' in s, 'script_version не из переменной')
 
 if fails:
