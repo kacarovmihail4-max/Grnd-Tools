@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.11"' in s, 'версия не 1.19.11')
+need('GRND_SCRIPT_VERSION = "1.19.12"' in s, 'версия не 1.19.12')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -102,9 +102,16 @@ need('local PICK_ATTACH = 10' in s, 'нет зазора до нижней кр�
 need('local repY, repH = tonumber(R.winY), tonumber(R.winH)' in s,
      'полоса не читает вертикальные габариты окна репорта')
 need('y = repBottom + PICK_ATTACH' in s, 'полоса не встаёт под нижнюю кромку окна репорта')
-need('math.min(maxViewH, room)' in s, 'высота полосы не ограничивается свободным местом')
-need('if above >= 16 then y = above end' in s,
-     'полоса не переносится над окном, когда под ним нет места')
+# v1.19.12: строки-подсказки нет, полоса растёт вниз рядами кнопок до края экрана
+absent('клик — отправить · ESC — закрыть', 'вернулась строка-подсказка под кнопками')
+absent('PICK_HINT_H', 'осталась высота строки-подсказки')
+need('local PICK_SCREEN_GAP = 10' in s, 'нет зазора до нижнего края экрана')
+need('math.floor(resY - y - PICK_SCREEN_GAP) - PICK_PADY * 2' in s,
+     'высота полосы не растёт до нижнего края экрана')
+absent('math.min(maxViewH, room)', 'высота полосы всё ещё режется по окну репорта')
+absent('math.floor(resY * 0.40)', 'остался старый потолок в 40% высоты экрана')
+need('pcall(im.SetTooltip, oneLine(hoverIt.text or ""))' in s,
+     'полный текст шаблона не показывается подсказкой')
 absent('local y = math.max(16, math.min(resY - H - 40, math.floor((resY - H) * 0.72)))',
        'осталась старая «оторванная» позиция полосы')
 

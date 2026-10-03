@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.11"
+GRND_SCRIPT_VERSION = "1.19.12"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24243,7 +24243,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.11)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.12)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -25197,15 +25197,17 @@ end
 --  Было большое окно: шапка с заголовком, поиск, список строк по 56 px и
 --  подвал. Стало — компактная ГОРИЗОНТАЛЬНАЯ полоса, в которой только
 --  кнопки шаблонов: клик отправляет ответ и закрывает полосу. Ничего
---  лишнего — без шапки, поиска и списка. Текст шаблона показывается одной
---  строкой ПОД кнопками при наведении (размер полосы от этого не скачет).
+--  лишнего — без шапки, поиска, списка и строки-подсказки внизу. Полный текст
+--  шаблона — во всплывающей подсказке при наведении (v1.19.12).
+--  Шаблонов много — полоса растёт ВНИЗ новыми рядами кнопок (до нижнего края
+--  экрана, дальше — прокрутка колесом), а не урезается по окну репорта.
 --  Шаблонов нет — полоса не открывается вовсе, QR.openPicker даёт тост.
 -- =====================================================================
 local PICK_BH, PICK_GAP = 30, 6       -- высота кнопки и зазор между кнопками
 local PICK_PADX, PICK_PADY = 10, 9    -- поля карточки
 local PICK_MIN_W, PICK_MAX_W = 108, 240
-local PICK_HINT_H = 18                -- строка текста под кнопками
 local PICK_ATTACH = 10                -- зазор до нижней кромки окна репорта (v1.19.11)
+local PICK_SCREEN_GAP = 10            -- зазор до нижнего края экрана (v1.19.12)
 
 -- Раскладка: ширина кнопки — по длине названия, перенос по строкам.
 -- Возвращает строки кнопок и ширину самой широкой строки.
@@ -25279,45 +25281,33 @@ local function pickerDraw(ctx)
     -- отдаёт само окно репорта (GRND_REP.winX/winW/winY/winH), поэтому полоса
     -- едет за ним; если окно ещё ни разу не рисовалось — берём его формулу
     -- позиции (ширина 600, по центру экрана).
+    -- v1.19.12: высота больше НЕ ограничена габаритами окна репорта: шаблонов
+    -- много — полоса растёт вниз новыми рядами кнопок. Предел один — нижний
+    -- край экрана, дальше строки уходят в прокрутку колесом.
     local R = _G.GRND_REP
-    local repX, repTop, repBottom
+    local repX, repBottom
     if type(R) == "table" then
         repX = tonumber(R.winX)
         local repY, repH = tonumber(R.winY), tonumber(R.winH)
-        if repY and repH and repH > 0 then repTop, repBottom = repY, repY + repH end
+        if repY and repH and repH > 0 then repBottom = repY + repH end
     end
     if not repX then repX = math.floor((resX - 600) / 2) end
 
-    local maxViewH = math.max(rowH, math.floor(resY * 0.40))
-    if repBottom then
-        -- строки полосы не должны упираться в край экрана: лишние уходят в прокрутку.
-        -- Обычно место берём под окном репорта, но если окно стоит у нижнего края —
-        -- раскрываемся над ним, а не поверх него.
-        local roomBelow = math.floor(resY - (repBottom + PICK_ATTACH) - 10)
-            - PICK_PADY * 2 - PICK_HINT_H
-        local room = roomBelow
-        if repTop then
-            local roomAbove = math.floor(repTop - PICK_ATTACH - 16)
-                - PICK_PADY * 2 - PICK_HINT_H
-            if roomBelow < rowH and roomAbove > roomBelow then room = roomAbove end
-        end
-        if room >= rowH then maxViewH = math.min(maxViewH, room) end
-    end
-    local viewH = math.min(rowsH, maxViewH)
-    local W = math.max(184, math.min(maxW, contentW + PICK_PADX * 2))
-    local H = PICK_PADY + viewH + PICK_HINT_H + PICK_PADY
-    local x = math.max(10, math.min(math.max(10, resX - W - 10), repX))
+    local minH = PICK_PADY * 2 + rowH      -- ниже одного ряда полоса не сжимается
     local y
     if repBottom then
-        y = repBottom + PICK_ATTACH          -- сразу под нижней кромкой окна репорта
-        if repTop and y + H > resY - 10 then
-            local above = repTop - PICK_ATTACH - H
-            if above >= 16 then y = above end  -- под окном не влезло — встаём над ним
-        end
+        y = repBottom + PICK_ATTACH        -- сразу под нижней кромкой окна репорта
     else
-        y = math.floor((resY - H) * 0.72)    -- окно ещё не рисовалось
+        y = math.floor(resY * 0.62)        -- окно репорта ещё не рисовалось
     end
-    y = math.max(16, math.min(resY - H - 10, y))
+    y = math.max(16, math.min(resY - minH - PICK_SCREEN_GAP, y))
+
+    -- ряды кнопок: от верхней кромки до нижнего края экрана помещается всё, что влезло
+    local maxViewH = math.max(rowH, math.floor(resY - y - PICK_SCREEN_GAP) - PICK_PADY * 2)
+    local viewH = math.min(rowsH, maxViewH)
+    local W = math.max(184, math.min(maxW, contentW + PICK_PADX * 2))
+    local H = PICK_PADY + viewH + PICK_PADY
+    local x = math.max(10, math.min(math.max(10, resX - W - 10), repX))
 
     pcall(im.SetNextWindowPos, im.ImVec2(x, y), ctx.always or 2)
     pcall(im.SetNextWindowSize, im.ImVec2(W, H), ctx.always or 2)
@@ -25426,17 +25416,13 @@ local function pickerDraw(ctx)
             box(W - 6, barY, 3, barH, ctx.col32(acC[1], acC[2], acC[3], 200), 2)
         end
 
-        -- одна строка под кнопками: текст шаблона под курсором либо подсказка
-        local hint, hintCol
-        if hoverIt then
-            hint = oneLine(hoverIt.text or "")
-            hintCol = ctx.col32(TH.text[1] or 220, TH.text[2] or 216, TH.text[3] or 232, 255)
-        else
-            hint = "клик — отправить · ESC — закрыть"
-            hintCol = ctx.col32(TH.textMuted[1], TH.textMuted[2], TH.textMuted[3], 255)
+        -- v1.19.12: строки-подсказки под кнопками ("клик — отправить ·
+        -- ESC — закрыть") больше нет — полоса держит только кнопки.
+        -- Полный текст шаблона под курсором показываем всплывающей подсказкой:
+        -- высота полосы от наведения не меняется.
+        if hoverIt and type(im.SetTooltip) == "function" then
+            pcall(im.SetTooltip, oneLine(hoverIt.text or ""))
         end
-        text(PICK_PADX + 2, PICK_PADY + viewH + 3,
-            fit(hint, W - PICK_PADX * 2 - 10, ctx.drawnW, 0.82), hintCol, 0.82)
 
         if chooseIt then QR.choose(chooseIt) end
     end
@@ -25790,7 +25776,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.11"
+        local sv = "1.19.12"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
