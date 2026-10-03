@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.29"
+GRND_SCRIPT_VERSION = "1.19.30"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24350,7 +24350,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.29)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.30)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -26920,7 +26920,7 @@ do
 end
 
 -- =====================================================================
---  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.29) — «Репорт» → «Автопилот»
+--  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.30) — «Репорт» → «Автопилот»
 -- =====================================================================
 --  Вкладки (до 15): в каждой — ОДИН триггер, свой текст ответа и своя команда
 --  после ответа. Пришёл репорт — ищем триггер по всем вкладкам; срабатывает
@@ -27723,15 +27723,36 @@ do
         end
         ctx.uiText(x, yy, fit(prev, iw, ctx.drawnW, 0.86), sampleLine == "" and warnC or mut, 0.86)
 
-        -- v1.19.29: подсказка внизу (двумя строками, чтобы не обрезалась) —
-        -- репорт, который НАЧИНАЕТСЯ с триггера вкладки, обрабатывается целиком:
-        -- «помогите», «помогите, дм!!!», «помогите плиз» — всё сработает, что
-        -- написано дальше, не важно.
-        local hi1 = "Репорт, который начинается с триггера, сработает целиком:"
-        local hi2 = "«помогите, дм!!!» — обработается, даже если дальше есть текст"
-        local hy = yy + lineH(ctx, 0.86) + 6
-        ctx.uiText(x, hy, fit(hi1, iw, ctx.drawnW, 0.8), mut, 0.8)
-        ctx.uiText(x, hy + lineH(ctx, 0.8) + 2, fit(hi2, iw, ctx.drawnW, 0.8), mut, 0.8)
+        -- v1.19.30: подсказка внизу — С ИМЕНЕМ триггера выбранной вкладки:
+        -- репорт, который НАЧИНАЕТСЯ с него, обрабатывается целиком, что бы ни
+        -- было написано дальше. Триггер ещё не задан — показываем пример
+        -- «помогите». Имя триггера подгоняем под ширину строки (fit() режет
+        -- строку целиком и мог бы срезать хвост подсказки).
+        local hintTrig = trim(tostring(sel2.trigger or ""))
+        if hintTrig == "" then hintTrig = "помогите" end
+        local hintSc = 0.72
+        local function hintFit(prefix, suffix)
+            local trig = hintTrig
+            if type(ctx.drawnW) == "function" then
+                local okP, pw = pcall(ctx.drawnW, prefix, hintSc)
+                local okS, sw = pcall(ctx.drawnW, suffix, hintSc)
+                local okC, cw = pcall(ctx.drawnW, "ж", hintSc)
+                if okP and okS and okC and type(pw) == "number" and type(sw) == "number"
+                    and type(cw) == "number" and cw > 0 then
+                    local room = math.floor((iw - pw - sw) / cw)
+                    if room < 3 then room = 3 end
+                    trig = utf8Cut(trig, room)
+                end
+            end
+            return prefix .. trig .. suffix
+        end
+        local hintY = yy + lineH(ctx, 0.86) + 6
+        ctx.uiText(x, hintY,
+            hintFit("Репорт, который начинается с триггера «", "», сработает целиком:"),
+            mut, hintSc)
+        ctx.uiText(x, hintY + lineH(ctx, hintSc) + 2,
+            hintFit("«", ", ещё текст!!!» — обработается, что бы ни было написано дальше"),
+            mut, hintSc)
 
         -- Список команд рисуем ПОСЛЕДНИМ: он ложится поверх полей и клики
         -- попадают в него, а не в поле под ним.
@@ -27831,7 +27852,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.29"
+        local sv = "1.19.30"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
