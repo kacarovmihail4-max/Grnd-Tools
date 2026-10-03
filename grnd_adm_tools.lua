@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.19"
+GRND_SCRIPT_VERSION = "1.19.20"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -6518,6 +6518,103 @@ local function grndSpectatorExitKey(wp)
     end
     return wp==0x20 -- Space fallback before the tracking table is initialized
 end
+-- =====================================================================
+--  АНТИЗАЛИПАНИЕ КЛАВИШ И КНОПОК МЫШИ (v1.19.20)
+-- =====================================================================
+--  Симптом: открыл окно скрипта (или прицел ClickWarp) на бегу, в прыжке,
+--  в повороте — и персонаж продолжает бежать/прыгать/стрелять уже после
+--  того, как клавишу отпустили.
+--  Причина: пока окно владеет вводом, скрипт не отдаёт игре оконные
+--  сообщения (grndConsumeMsg(false)) — в том числе WM_KEYUP. GTA так и
+--  считает, что клавиша зажата, пока не придёт следующее нажатие.
+--  Лечим двумя независимыми способами:
+--    1) «отпускания» (WM_KEYUP / WM_*BUTTONUP) игре отдаём ВСЕГДА —
+--       см. grndMsgIsPress() и обработчик onWindowMessage;
+--    2) страховка: пока вводом владеет окно (и 0.6 с после его закрытия,
+--       а также когда игра потеряла фокус), раз в 0.15 с сверяем игровые
+--       клавиши с РЕАЛЬНОЙ клавиатурой и отпускаем их, если человек ничего
+--       не держит. Если игрок что-то нажимает — не вмешиваемся вовсе.
+--  Индексы игровых клавиш — moonloader/lib/game/keys.lua (player/vehicle).
+-- >>> АНТИЗАЛИПАНИЕ: НАЧАЛО БЛОКА
+local GRND_STICKY = {
+    tailUntil = 0, nextAt = 0, reason = "-",
+    clears = 0, released = 0, lastAt = 0,
+}
+_G.GRND_STICKY = GRND_STICKY
+-- Игровые клавиши: движение, прыжок/тормоз, спринт/газ, огонь, присед,
+-- вход-выход из машины, ручник, поворот башни, обзор, ответ/звонок.
+local GRND_STICKY_GAME_KEYS = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 21,
+}
+-- Клавиши и кнопки мыши, которыми игрок управляет этими действиями. Пока
+-- нажата хоть одна — игровые клавиши НЕ трогаем: человек за рулём, а не
+-- залипание.
+local GRND_STICKY_PHYS_KEYS = {
+    0x57, 0x41, 0x53, 0x44,              -- W A S D
+    0x25, 0x26, 0x27, 0x28,              -- стрелки
+    0x20, 0x10, 0xA0, 0xA1,              -- пробел, Shift (в т.ч. боковые)
+    0x11, 0xA2, 0xA3, 0x12, 0xA4, 0xA5,  -- Ctrl и Alt (в т.ч. боковые)
+    0x46, 0x0D, 0x45, 0x51, 0x43, 0x48, 0x56, -- F, Enter, E, Q, C, H, V
+    0x01, 0x02, 0x04,                    -- ЛКМ, ПКМ, СКМ
+}
+-- Нажатие ли оконное сообщение. Отпускания (WM_KEYUP/WM_*BUTTONUP) игре
+-- отдаём ВСЕГДА — именно из-за них клавиши и залипали.
+function grndMsgIsPress(msgN)
+    msgN = tonumber(msgN) or 0
+    if msgN == 0x0100 or msgN == 0x0104 then return true end -- WM_(SYS)KEYDOWN
+    if msgN == 0x0102 or msgN == 0x0106 or msgN == 0x0109 then return true end
+    -- мышь: WM_MOUSEMOVE (0x0200), кнопки (0x0201..0x0209), колесо (0x020A..0x020E)
+    if msgN >= 0x0200 and msgN <= 0x020E then
+        -- без WM_LBUTTONUP (0x0202), WM_RBUTTONUP (0x0205),
+        -- WM_MBUTTONUP (0x0208) и WM_XBUTTONUP (0x020B)
+        return not (msgN == 0x0202 or msgN == 0x0205 or msgN == 0x0208 or msgN == 0x020B)
+    end
+    return false
+end
+local function grndStickyNothingPressed()
+    if type(isKeyDown) ~= "function" then return false end
+    for i = 1, #GRND_STICKY_PHYS_KEYS do
+        local ok, down = pcall(isKeyDown, GRND_STICKY_PHYS_KEYS[i])
+        if ok and down then return false end
+    end
+    return true
+end
+local function grndStickyOwnsInput()
+    local M = GRND_UI_MOUSE
+    if type(M) ~= "table" then return false end
+    if M.uiGuard == true or M.active == true then return true end
+    return os.clock() < (tonumber(M.blockUntil) or 0)
+end
+local function grndStickyReleaseGameKeys()
+    if type(setGameKeyState) ~= "function" then return false end
+    local n = 0
+    for i = 1, #GRND_STICKY_GAME_KEYS do
+        if pcall(setGameKeyState, GRND_STICKY_GAME_KEYS[i], 0) then n = n + 1 end
+    end
+    if n > 0 then
+        GRND_STICKY.clears = (GRND_STICKY.clears or 0) + 1
+        GRND_STICKY.released = n
+        GRND_STICKY.lastAt = os.clock()
+    end
+    return n > 0
+end
+function grndStickyKeysTick()
+    local now = os.clock()
+    local owns = grndStickyOwnsInput()
+    local unfocused = (GRND_CAM ~= nil) and (GRND_CAM.windowFocused == false)
+    if owns then GRND_STICKY.tailUntil = now + 0.6 end
+    if not owns and not unfocused and now > (GRND_STICKY.tailUntil or 0) then return end
+    if now < (GRND_STICKY.nextAt or 0) then return end
+    GRND_STICKY.nextAt = now + 0.15
+    if not grndStickyNothingPressed() then return end
+    GRND_STICKY.reason = owns and "окно" or (unfocused and "фокус" or "хвост")
+    grndStickyReleaseGameKeys()
+end
+_G.grndStickyDebug = {
+    tick = grndStickyKeysTick, press = grndMsgIsPress,
+    phys = GRND_STICKY_PHYS_KEYS, game = GRND_STICKY_GAME_KEYS,
+}
+-- <<< АНТИЗАЛИПАНИЕ: КОНЕЦ БЛОКА
 local GRND_UI_MOVE_KEYS={0x57,0x41,0x53,0x44,0x25,0x26,0x27,0x28}
 local function grndUiMovementGuardTick()
     local approvalPopupOpen = ((_G.GRND_FORMS and _G.GRND_FORMS.active) ~= nil)
@@ -6707,7 +6804,7 @@ local function grndCamDiagSnapshot(signature,raw,extraError)
     local FS=C.fovState
     local err=tostring(extraError or "-"):gsub("[\r\n\t]"," "):sub(1,120)
     return string.format(
-        "ui=%s raw=%d focus=%s menuBusy=%s enabled=%s dist=%s cur=%s d8=%s d4=%s c4=%s base=%s mode=%s idx=%s baseD8=%s saved=%s heightCfg=%s heightNow=%s fovOn=%s fovCfg=%s fovRaw=%s fovState=%s/orig=%s alpha=%s beta=%s cam=%s,%s,%s ped=%s,%s,%s spec=%s aim=%s spawn=%s inCar=%s err=%s mouseGate=%s uiGuard=%s keyDrop=%d mouseDrop=%d",
+        "ui=%s raw=%d focus=%s menuBusy=%s enabled=%s dist=%s cur=%s d8=%s d4=%s c4=%s base=%s mode=%s idx=%s baseD8=%s saved=%s heightCfg=%s heightNow=%s fovOn=%s fovCfg=%s fovRaw=%s fovState=%s/orig=%s alpha=%s beta=%s cam=%s,%s,%s ped=%s,%s,%s spec=%s aim=%s spawn=%s inCar=%s err=%s mouseGate=%s uiGuard=%s keyDrop=%d mouseDrop=%d stick=%d/%s",
         tostring(signature),raw and 1 or 0,tostring(C.windowFocused),tostring(GRND_KEYS and GRND_KEYS.uiBusy),
         tostring(C.enabled),grndCamDiagN(C.dist),grndCamDiagN(C.curDist),grndCamDiagN(globalFloat(0xB6F028+0xD8)),
         grndCamDiagN(globalFloat(0xB6F028+0xD4)),grndCamDiagN(globalFloat(0xB6F028+0xC4)),
@@ -6718,7 +6815,9 @@ local function grndCamDiagSnapshot(signature,raw,extraError)
         grndCamDiagN(ax),grndCamDiagN(ay),grndCamDiagN(az),tostring(spec),tostring(aiming),tostring(spawned),tostring(inCar),err,
         tostring(GRND_UI_MOUSE.active or grndCamNow()<(GRND_UI_MOUSE.blockUntil or 0)),
         tostring(GRND_UI_MOUSE.uiGuard),math.floor(tonumber(GRND_UI_MOUSE.blockedGameKeys) or 0),
-        math.floor(tonumber(GRND_UI_MOUSE.blockedGameMessages) or 0))
+        math.floor(tonumber(GRND_UI_MOUSE.blockedGameMessages) or 0),
+        math.floor(tonumber(GRND_STICKY and GRND_STICKY.clears) or 0),
+        tostring(GRND_STICKY and GRND_STICKY.reason or "-"))
 end
 local function grndCamDiagTick(cameraError)
     local D=GRND_CAM_DIAG
@@ -8171,12 +8270,17 @@ function onWindowMessage(msg, wparam, lparam)
 
     if isMouseInput or isKeyInput then
         local uiGate=GRND_UI_MOUSE.uiGuard or grndUiMouseUpdate()
-        if uiGate and isMouseInput and not nativeChatWheel then
+        -- v1.19.20: пока вводом владеет окно, игре не отдаём только НАЖАТИЯ
+        -- (персонаж не должен начинать новое действие), а ОТПУСКАНИЯ отдаём
+        -- всегда: без них GTA считает клавишу зажатой, и персонаж бежит,
+        -- прыгает или стреляет уже после того, как клавишу отпустили.
+        local pressMsg=grndMsgIsPress(msgN)
+        if uiGate and isMouseInput and not nativeChatWheel and pressMsg then
             grndConsumeMsg(false)
             GRND_UI_MOUSE.blockedGameMessages=(GRND_UI_MOUSE.blockedGameMessages or 0)+1
         end
         if uiGate and isKeyInput and not nativeChatInput
-            and not nativeChatOpeningKey and not spectatorExitKey then
+            and not nativeChatOpeningKey and not spectatorExitKey and pressMsg then
             grndConsumeMsg(false)
             GRND_UI_MOUSE.blockedGameKeys=(GRND_UI_MOUSE.blockedGameKeys or 0)+1
         end
@@ -26827,7 +26931,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.19"
+        local sv = "1.19.20"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
@@ -39059,6 +39163,7 @@ function grndMainBody()
         GRND_KEYS.aiming = ((clw ~= nil) and clw.aiming) and true or false
         pcall(grndUiMouseUpdate)
         pcall(grndUiMovementGuardTick)
+        pcall(grndStickyKeysTick)
         -- синхронизация флага UI input-guard: окно могло закрыться
         -- не хоткеем (сторож, ESC из чужого места) — сверяемся
         do

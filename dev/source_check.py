@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.19"' in s, 'версия не 1.19.19')
+need('GRND_SCRIPT_VERSION = "1.19.20"' in s, 'версия не 1.19.20')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -166,6 +166,33 @@ choose = s[s.index('function QR.choose(it)'):s.index('function QR.openPicker()')
 need(choose.index('pcall(grndRepAnswer, pid, text)') < choose.index('QR.sendChat("/n " .. line)'),
      'в быстрых ответах /ans должен идти раньше резервного /n')
 need('Нет ID игрока (ответить некому)' in s, 'пропал резервный путь /n для репорта без ID')
+# v1.19.20: клавиши и кнопки мыши не залипают, пока окно владеет вводом
+need('function grndMsgIsPress(msgN)' in s, 'нет разбора «нажатие или отпускание»')
+need('local pressMsg=grndMsgIsPress(msgN)' in s, 'гейт UI не различает нажатие и отпускание')
+need('if uiGate and isMouseInput and not nativeChatWheel and pressMsg then' in s,
+     'мышь при открытом окне отдаёт игре не только нажатия')
+need('and not spectatorExitKey and pressMsg then' in s,
+     'клавиши при открытом окне отдают игре и опускания')
+absent('if uiGate and isMouseInput and not nativeChatWheel then',
+       'старый гейт съедает WM_*BUTTONUP (кнопки мыши залипают)')
+absent('''if uiGate and isKeyInput and not nativeChatInput
+            and not nativeChatOpeningKey and not spectatorExitKey then''',
+       'старый гейт съедает WM_KEYUP (клавиши залипают)')
+msgpress = s[s.index('function grndMsgIsPress(msgN)'):s.index('local function grndStickyNothingPressed()')]
+for line in ('msgN == 0x0100', 'msgN == 0x0101' if False else 'msgN == 0x0102'):
+    need(line in msgpress, 'в grndMsgIsPress нет условия ' + line)
+need('msgN == 0x0202 or msgN == 0x0205 or msgN == 0x0208 or msgN == 0x020B' in msgpress,
+     'button-up сообщения снова считаются нажатием')
+need('function grndStickyKeysTick()' in s, 'нет страховочного сброса игровых клавиш')
+need('pcall(grndStickyKeysTick)' in s, 'сброс игровых клавиш не вызывается из цикла')
+need('pcall(setGameKeyState, GRND_STICKY_GAME_KEYS[i], 0)' in s,
+     'игровые клавиши не отпускаются')
+need('if not grndStickyNothingPressed() then return end' in s,
+     'сброс клавиш не сверяется с реальной клавиатурой')
+need('GRND_STICKY.tailUntil = now + 0.6' in s, 'нет «хвоста» после закрытия окна')
+need('GRND_CAM.windowFocused == false' in s, 'нет сброса клавиш при потере фокуса')
+need('stick=%d/%s' in s, 'в диагностике нет счётчика снятых залипаний')
+
 # баг первой строки списка наказаний
 need('local fully = (iy >= listY - 0.5) and (iy + rowH <= listY + listH + 0.5)' in s,
      'первая строка списка наказаний снова считается невидимой (мёртвые стрелки)')
