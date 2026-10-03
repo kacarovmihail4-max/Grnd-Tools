@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.07"
+GRND_SCRIPT_VERSION = "1.19.08"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -23160,6 +23160,12 @@ end
 
 local function button(ctx, id, x, y, w, h, label, opts)
     opts = opts or {}
+    -- ВАЖНО: im — ЛОКАЛЬНАЯ из ctx. Раньше ниже в ownMouseClick стояло «im.»
+    -- без объявления: в скрипте нет глобальной im (есть только _G.GRND_IM),
+    -- поэтому при наведении на кнопку панели вылетало
+    -- «attempt to index a nil value (global 'im')» — ошибка появлялась ровно
+    -- тогда, когда курсор входил в кнопку (v1.19.05–1.19.07).
+    local im = ctx.im
     -- id всегда со «##»: иначе ImGui нарисует сам текст id внутри кнопки
     local full = (type(id) == "string" and id:sub(1, 2) == "##") and id or ("##mp_" .. tostring(id))
 
@@ -23280,7 +23286,6 @@ local function button(ctx, id, x, y, w, h, label, opts)
         end
     end
     -- запасная кнопка, если основной хелпер недоступен
-    local im = ctx.im
     im.SetCursorPos(ctx.pos(x, y))
     local clicked = im.InvisibleButton(full, im.ImVec2(w, h)) and true or false
     local hov = (im.IsItemHovered and im.IsItemHovered()) or false
@@ -23912,21 +23917,29 @@ function MP.drawInner(raw)
     --  НАЧАТЬ / ОСТАНОВИТЬ
     -- =================================================================
     y = y + 4
-    if MP.active then
-        if button(ctx, "stop", cx, y, cw, M_ROW + 4, "Остановить", { danger = true }) then
-            MP.stop("кнопкой в панели")
-        end
-    else
-        if button(ctx, "start_mp", cx, y, cw, M_ROW + 4, "Начать", { selected = true }) then
-            local started = MP.start()
-            if not started then
-                -- Ошибка запуска раньше оставалась только во внутреннем
-                -- flash и выглядела как «кнопка ничего не сделала».
-                local f = MP.flash
-                say("запуск не выполнен: " .. tostring(f and f.text or "проверьте форму"), "error")
+    -- Тоже в песочнице: сбой при запуске/остановке МП (например, внутри
+    -- обработчика кнопки) не должен оставлять панель без этой кнопки.
+    local function drawStartStop(yy)
+        if MP.active then
+            if button(ctx, "stop", cx, yy, cw, M_ROW + 4, "Остановить", { danger = true }) then
+                MP.stop("кнопкой в панели")
+            end
+        else
+            if button(ctx, "start_mp", cx, yy, cw, M_ROW + 4, "Начать", { selected = true }) then
+                local started = MP.start()
+                if not started then
+                    -- Ошибка запуска раньше оставалась только во внутреннем
+                    -- flash и выглядела как «кнопка ничего не сделала».
+                    local f = MP.flash
+                    say("запуск не выполнен: " .. tostring(f and f.text or "проверьте форму"), "error")
+                end
             end
         end
+        return yy
     end
+    local okSS, resSS = pcall(drawStartStop, y)
+    if okSS and tonumber(resSS) then y = tonumber(resSS)
+    else frameErr = frameErr or tostring(resSS) end
 
     -- Итог кадра: если какой-то блок не нарисовался — сохраняем причину
     -- для диагностики (/mp diag). Кнопка «Начать» при этом всё равно
@@ -24230,7 +24243,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.07)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ» — ШАБЛОНЫ ОТВЕТА НА РЕПОРТ (v1.19.08)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -25726,7 +25739,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.07"
+        local sv = "1.19.08"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
