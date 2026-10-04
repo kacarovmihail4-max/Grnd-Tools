@@ -561,7 +561,7 @@ QUEUE, ANS, CHAT = {}, {}, {}
 check(Q.autoOnReport("Mixa_Grozz", 55, "проверка") == true, "репорт не принят в режиме проверки")
 check(QUEUE[1] == "/n Приветствую, Mixa_Grozz! Проверка ответа",
     "ответ не ушёл в /n: " .. tostring(QUEUE[1]))
-check(QUEUE[2] == "/sp 55", "команда вкладки не ушла: " .. tostring(QUEUE[2]))
+check(QUEUE[2] == "/n /sp 55", "команда вкладки не ушла в /n: " .. tostring(QUEUE[2]))
 for qi = 1, #QUEUE do
     check(QUEUE[qi]:sub(1, 5) ~= "/ans ", "в режиме проверки ушёл настоящий /ans: " .. tostring(QUEUE[qi]))
 end
@@ -580,13 +580,12 @@ NOW = NOW + 100
 A.perPid, A.rate = {}, {}
 QUEUE, ANS = {}, {}
 check(Q.autoOnReport("Чек", 56, "чек") == true, "репорт с {punishments} не принят")
-check(QUEUE[1] == "/getinfo 56", "в режиме проверки /getinfo должен уйти: " .. tostring(QUEUE[1]))
-QUEUE = {}
-check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игрока", "OK", "", "Аккаунт Чек[56]\nМут 60 минут") == true,
-    "окно наказаний не спрятано")
-check(QUEUE[1] == "/n Ваши наказания: Мут 60 минут",
-    "список наказаний не ушёл в /n: " .. tostring(QUEUE[1]))
-check(#QUEUE == 1, "в режиме проверки ушло лишнее: " .. tostring(QUEUE[2]))
+check(QUEUE[1] == "/n /getinfo 56",
+    "запрос наказаний не ушёл в /n: " .. tostring(QUEUE[1]))
+check(QUEUE[2] == "/n Ваши наказания: нет данных о наказаниях",
+    "ответ с {punishments} в проверке не тот: " .. tostring(QUEUE[2]))
+check(A.pend == nil, "в проверке автопилот зачем-то ждёт окно наказаний")
+check(#QUEUE == 2, "в режиме проверки ушло лишнее: " .. tostring(QUEUE[3]))
 -- возвращаем боевой режим, первую и вторую вкладки к прежнему виду
 QUEUE = {}
 Q.autoTabs()[1].trigger = "Помогите"
@@ -597,7 +596,7 @@ Q.autoTabs()[2].answer = "Не пишите в личку, отвечу в ре�
 Q.autoTabs()[2].command = "sp"
 Q.autoEnsure()
 Q.autoTest = false
-HPRINT("проверка /n: ответы уходят в /n, команды и /getinfo — боевые")
+HPRINT("проверка /n: и ответы, и команды, и /getinfo уходят строками «/n …»")
 
 -- ===== 10. репорт без триггера / без ID =====
 NOW = NOW + 100

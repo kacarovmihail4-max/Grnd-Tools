@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.38"
+GRND_SCRIPT_VERSION = "1.19.39"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -27916,7 +27916,16 @@ do
             if plan[k].pun then needPun = true end
         end
         if needPun then
-            if QR.punBegin(id, nick, "auto") then
+            if QR.autoTest ~= false then
+                -- проверка: и запрос наказаний — тоже строка «/n /getinfo ID».
+                -- Настоящий запрос не уходит, значит и окна не будет: список
+                -- не ждём, отвечаем сразу (иначе админ ждал бы 5 с впустую).
+                QR.queueCmd("/n /getinfo " .. id)
+                for k = 1, #plan do
+                    local it = plan[k]
+                    if it.pun then it.line = QR.autoPunFill(it.line, "нет данных о наказаниях") end
+                end
+            elseif QR.punBegin(id, nick, "auto") then
                 A.pend = { on = true, at = os.clock(), id = id, hit = hit,
                     tabs = hitTabsTxt, plan = plan }
                 A.lastCheck = "ждём окно /getinfo: «" .. hit .. "»"
@@ -27938,10 +27947,11 @@ do
         return QR.autoDeliver(id, hit, hitTabsTxt, plan)
     end
 
-    -- v1.19.38: ПРОВЕРКА — тексты ответов автопилота уходят в /n (локальный
-    -- канал: игроки ничего не получают, админ видит ровно тот текст, который
-    -- ушёл бы). Команды вкладок (/sp, /goto) и запрос /getinfo при
-    -- {punishments} остаются боевыми. Боевой режим ответов — QR.autoTest = false.
+    -- v1.19.38–39: ПРОВЕРКА — ВСЕ строки автопилота уходят в /n, и ответы,
+    -- и команды: «/n Приветствую, слежу…», «/n /sp 234», «/n /goto 234»,
+    -- «/n /getinfo 234». Ничего не выполняется по-настоящему, админ видит в
+    -- чате ровно то, что ушло бы (тот же текст, та же очередь, тот же
+    -- CP1251). Убрать слой проверки — QR.autoTest = false.
     QR.autoTest = true
 
     -- Отправка готового плана: /ans каждой вкладки и её команда, по порядку
@@ -27969,8 +27979,11 @@ do
                 end
             end
             if it.cmd then
-                if QR.queueCmd(it.cmd) then sentCmd = sentCmd + 1 end
-                cmdTxt[#cmdTxt + 1] = tostring(it.cmd)
+                -- v1.19.39: в проверке команда уходит строкой «/n /sp ID» —
+                -- как и ответы, ничего не выполняется по-настоящему
+                local sent = test and ("/n " .. it.cmd) or it.cmd
+                if QR.queueCmd(sent) then sentCmd = sentCmd + 1 end
+                cmdTxt[#cmdTxt + 1] = sent
             end
             planTabs[#planTabs + 1] = tostring(it.idx)
         end

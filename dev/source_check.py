@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.38"' in s, 'версия не 1.19.38')
+need('GRND_SCRIPT_VERSION = "1.19.39"' in s, 'версия не 1.19.39')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -285,7 +285,8 @@ need('function QR.autoDeliver(id, hit, tabsTxt, plan)' in s,
      'нет общей отправки плана вкладок')
 need('local function autoChunks(line)' in s and 'pcall(QR.punChunks, line, 100)' in s,
      'длинный ответ не режется на сообщения')
-# v1.19.38: проверка — тексты ответов уходят в /n, команды и /getinfo боевые
+# v1.19.38-39: проверка — ВСЕ строки автопилота уходят в /n (/n текст,
+# /n /sp ID, /n /getinfo ID): ничего не выполняется, видно ровно то, что ушло бы
 need('QR.autoTest = true' in s, 'нет переключателя проверки QR.autoTest')
 need('local test = (QR.autoTest ~= false)' in s, 'отправка не смотрит на режим проверки')
 need('if QR.queueCmd("/n " .. chunks[ci]) then sentAns = sentAns + 1 end' in s,
@@ -293,10 +294,14 @@ need('if QR.queueCmd("/n " .. chunks[ci]) then sentAns = sentAns + 1 end' in s,
 need('(test and "проверка /n: " or "")' in s, 'в состоянии нет пометки проверки')
 need('"Автопилот (проверка /n): игроку "' in s, 'тост не сообщает про проверку')
 deliver = s[s.index('-- Отправка готового плана'):s.index('-- Тик из основного цикла')]
-need('if QR.queueCmd(it.cmd) then sentCmd = sentCmd + 1 end' in deliver,
-     'команда вкладки в режиме проверки перестала уходить живой')
-need('QR.queueCmd("/getinfo " .. id)' in s,
-     'в режиме проверки перестал уходить запрос /getinfo (без него нет {punishments})')
+need('local sent = test and ("/n " .. it.cmd) or it.cmd' in deliver,
+     'команда вкладки в проверке не получает префикс /n')
+need('if QR.queueCmd(sent) then sentCmd = sentCmd + 1 end' in deliver,
+     'команда вкладки в проверке не уходит')
+need('QR.queueCmd("/n /getinfo " .. id)' in s,
+     'запрос /getinfo в проверке не уходит строкой «/n /getinfo ID»')
+need('if QR.autoTest ~= false then' in s,
+     'ветка проверки не проверяет QR.autoTest (в autOnReport нет локальной test)')
 need('QR.autoPunFill(it.line, txt)' in s and '"нет активных наказаний"' in s and
      '"нет данных о наказаниях"' in s,
      'нет подстановки списка наказаний вместо {punishments}')
@@ -347,7 +352,7 @@ auto_part = s[s.index('function QR.autoOnReport(nick, pid, msg)'):s.index('funct
 # v1.19.37: ответ уходит кусками (длинный список наказаний не влезает в чат)
 need('pcall(grndRepAnswer, id, chunks[ci])' in auto_part,
      'автопилот не отвечает игроку через /ans')
-need(auto_part.index('pcall(grndRepAnswer, id, chunks[ci])') < auto_part.index('QR.queueCmd(it.cmd)'),
+need(auto_part.index('pcall(grndRepAnswer, id, chunks[ci])') < auto_part.index('if it.cmd then'),
      'команда вкладки уходит раньше её ответа игроку')
 need('if not A.on then' in auto_part, 'автопилот срабатывает при выключенном тумблере')
 need('local guard = QR.autoGuard(id, os.clock())' in auto_part, 'нет предохранителей автопилота')
