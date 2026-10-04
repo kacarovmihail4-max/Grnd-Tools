@@ -201,7 +201,6 @@ end
 check(foreignWith("найдёт ID в репорте") == nil,
     "подсказка про {ID} вернулась к полю «Триггер»")
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Короткий", 210, "я") == true, "короткий триггер не сработал")
 -- v1.19.46: в репорте нет ни номера, ни имени — ник и ID не подставляются,
@@ -322,7 +321,6 @@ HPRINT("команды вкладок независимы: /goto у перво�
 
 -- ===== 8. выключенный автопилот репорты не трогает =====
 NOW = NOW + 10
-A.rate = {}
 Q.autoSet(false)
 QUEUE, ANS, CHAT, ORDER = {}, {}, {}, {}
 local okOff, whyOff = Q.autoOnReport("Mixa_Grozz", 25, "Помогите")
@@ -333,7 +331,6 @@ HPRINT("выключен: репорты проходят мимо, в чат н
 
 -- ===== 9. репорт попадает в нужную вкладку =====
 NOW = NOW + 10
-A.rate = {}
 QUEUE, ANS, CHAT, ORDER, ANSICALLS = {}, {}, {}, {}, {}
 local fired, hit = Q.autoOnReport("Mixa_Grozz", 25, "Помогите")
 check(fired == true, "репорт с триггером не обработан")
@@ -354,7 +351,6 @@ check(A.lastCheck:find("вкладки 1", 1, true) ~= nil, "нет пометк
 
 -- та же ситуация, но триггер второй вкладки
 NOW = NOW + 100
-A.rate = {}
 QUEUE, ANS, CHAT, ORDER, ANSICALLS = {}, {}, {}, {}, {}
 local fired2, hit2 = Q.autoOnReport("Другой", 77, "дм")
 check(fired2 == true and hit2 == "дм", "вторая вкладка не сработала: " .. tostring(hit2))
@@ -363,14 +359,12 @@ check(#QUEUE == 2 and QUEUE[1] == "/ans 77 Не пишите в личку, от
 check(A.lastCheck:find("вкладки 2", 1, true) ~= nil, "нет пометки второй вкладки")
 -- обычная вкладка (без {ID}/{all}) требует полного совпадения репорта
 NOW = NOW + 100
-A.rate = {}
 QUEUE, ANS, ANSICALLS = {}, {}, {}
 local okExtra, whyExtra = Q.autoOnReport("Третий", 88, "помогите, дм")
 check(okExtra == false and whyExtra == "нет триггера",
     "обычная вкладка сработала на репорт с лишними словами: " .. tostring(whyExtra))
 check(#QUEUE == 0, "на репорт с лишними словами что-то ушло")
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 local okGlue, whyGlue = Q.autoOnReport("Пятый", 89, "помогитеплиз")
 check(okGlue == false and whyGlue == "нет триггера",
@@ -380,7 +374,6 @@ check(#QUEUE == 0, "на склейку что-то ушло")
 Q.autoTabs()[2].trigger = "Помогите"
 Q.autoTabs()[2].command = "sp"
 NOW = NOW + 100
-A.rate = {}
 QUEUE, ANSICALLS = {}, {}
 check(Q.autoOnReport("Четвёртый", 99, "помогите") == true, "совпадение по двум вкладкам не сработало")
 check(#QUEUE == 4, "с двух вкладок встало не 4 строки: " .. tostring(#QUEUE))
@@ -421,7 +414,6 @@ local idCases = {
 }
 for _, case in ipairs(idCases) do
     NOW = NOW + 100
-    A.rate = {}
     QUEUE, ANSICALLS = {}, {}
     local ok = Q.autoOnReport("Жалобщик", 25, case[1])
     check(ok == true, "репорт «" .. case[1] .. "» не сработал")
@@ -436,7 +428,6 @@ end
 Q.autoTabs()[1].answer = "Уже разбираюсь"
 Q.autoEnsure()
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Mixa_Grozz", 25, "дм") == true, "«дм» без числа не сработал")
 check(QUEUE[1] == "/ans 25 Уже разбираюсь" and QUEUE[2] == "/goto 25",
@@ -445,7 +436,6 @@ Q.autoTabs()[1].answer = "Приветствую, слежу за игроком
 Q.autoEnsure()
 -- приклеенное слово — не совпадение даже в режиме {ID}
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Mixa_Grozz", 25, "дмх 234") == false, "«дмх 234» не должен срабатывать")
 check(#QUEUE == 0, "на «дмх 234» что-то ушло")
@@ -454,7 +444,6 @@ check(#QUEUE == 0, "на «дмх 234» что-то ушло")
 Q.autoTabs()[1].trigger = "дм"
 Q.autoEnsure()
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Mixa_Grozz", 25, "дм 234") == false,
     "переменная в ответе всё ещё расширяет поиск")
@@ -468,14 +457,12 @@ Q.autoEnsure()
 
 -- ===== 9c. переменная {all}: триггер словом в любом месте репорта =====
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Другой", 26, "спек 77") == true, "«спек 77» не сработал")
 check(QUEUE[1] == "/ans 26 Уже разбираюсь", "{all} не убрался из ответа: " .. tostring(QUEUE[1]))
 check(QUEUE[2] == "/sp 26", "команда вкладки со {all} не ушла: " .. tostring(QUEUE[2]))
 for _, rep in ipairs({ "четверо спек", "надо спек", "СПЕК!" }) do
     NOW = NOW + 100
-    A.rate = {}
     QUEUE = {}
     check(Q.autoOnReport("Третий", 27, rep) == true, "«" .. rep .. "» не сработал")
     check(QUEUE[1] == "/ans 27 Уже разбираюсь", "«" .. rep .. "»: не тот ответ")
@@ -509,7 +496,6 @@ check(#Q.punParse(PBODY) == 2, "разбор окна: строк должно �
 check(Q.punParse(PBODY)[1] == "Мут 60 минут", "разбор окна: первая строка не та")
 check(#Q.punParse("Аккаунт Ник[5]") == 0, "строка «Аккаунт …» должна отбрасываться")
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 30, "проверь") == true, "репорт с {punishments} не принят")
 check(#QUEUE == 1 and QUEUE[1] == "/getinfo 30",
@@ -529,7 +515,6 @@ check(QUEUE[1] == "/ans 30 Приветствую, ваши наказания: 
 check(QUEUE[2] == "/sp 30", "после ответа не ушла команда вкладки: " .. tostring(QUEUE[2]))
 -- наказаний нет: окно из одной строки «Аккаунт …»
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Чистый", 32, "проверь") == true, "репорт не принят")
 QUEUE = {}
@@ -539,7 +524,6 @@ check(QUEUE[1] == "/ans 32 Приветствую, ваши наказания: 
     "нет ответа про отсутствие наказаний: " .. tostring(QUEUE[1]))
 -- окно не пришло: отвечаем без списка (и не молчим)
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Молчун", 33, "проверь") == true, "репорт не принят")
 QUEUE = {}
@@ -551,7 +535,6 @@ check(QUEUE[2] == "/sp 33", "таймаут окна: команда не ушл
 check(A.pend == nil, "таймаут окна: ожидание не снято")
 -- длинный список уходит несколькими сообщениями (у чата есть лимит длины)
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Долгий", 34, "проверь") == true, "репорт не принят")
 local LBODY = "Аккаунт Долгий[34]\n" .. string.rep("Очень длинное наказание ", 12)
@@ -587,7 +570,6 @@ Q.autoTabs()[1].answer = "Приветствую, {ник}! Проверка о�
 Q.autoTabs()[1].command = "sp"
 Q.autoEnsure()
 NOW = NOW + 100
-A.rate = {}
 QUEUE, ANS, CHAT = {}, {}, {}
 check(Q.autoOnReport("Mixa_Grozz", 55, "проверка") == true, "репорт не принят в режиме проверки")
 check(QUEUE[1] == "/n /ans 55 Приветствую! Проверка ответа",
@@ -610,7 +592,6 @@ Q.autoTabs()[2].answer = "Ваши наказания: {punishments}"
 Q.autoTabs()[2].command = "none"
 Q.autoEnsure()
 NOW = NOW + 100
-A.rate = {}
 QUEUE, ANS = {}, {}
 check(Q.autoOnReport("Чек", 56, "чек") == true, "репорт с {punishments} не принят")
 check(QUEUE[1] == "/getinfo 56", "настоящий запрос не ушёл: " .. tostring(QUEUE[1]))
@@ -650,7 +631,6 @@ check(hID == true and hAll == false and hPun == false,
     "переменная в триггере не включила режим {ID}")
 for _, rep in ipairs({ "дм 234", "234 дм" }) do
     NOW = NOW + 100
-    A.rate = {}
     QUEUE = {}
     check(Q.autoOnReport("Mixa_Grozz", 25, rep) == true, "«" .. rep .. "» не сработал на «дм{ID}»")
     check(QUEUE[1] == "/ans 25 Приветствую, слежу за игроком Mixa_Grozz[234]"
@@ -662,7 +642,6 @@ end
 Q.autoTabs()[1].answer = "Уже разбираюсь"
 Q.autoEnsure()
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Без_ид", 26, "дм") == true, "репорт без ID не сработал")
 check(QUEUE[1] == "/ans 26 Уже разбираюсь" and QUEUE[2] == "/goto 26",
@@ -679,7 +658,6 @@ check(#Q.autoTriggers(Q.autoTabs()[1]) == 1 and Q.autoTriggers(Q.autoTabs()[1])[
     "«спек{all}» не разобран")
 for _, rep in ipairs({ "спек 77", "четверо спек", "СПЕК!" }) do
     NOW = NOW + 100
-    A.rate = {}
     QUEUE = {}
     check(Q.autoOnReport("Третий", 27, rep) == true, "«" .. rep .. "» не сработал на «спек{all}»")
     check(QUEUE[1] == "/ans 27 Уже разбираюсь", "«" .. rep .. "»: не тот ответ: " .. tostring(QUEUE[1]))
@@ -693,13 +671,11 @@ Q.autoTabs()[1].answer = "Приветствую, ваши наказания: {
 Q.autoTabs()[1].command = "none"
 Q.autoEnsure()
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 28, "мои наказ плиз") == false,
     "переменная в ответе всё ещё расширяет поиск")
 check(#QUEUE == 0, "на неточный репорт что-то ушло")
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 28, "наказ") == true, "точный «наказ» не сработал")
 check(QUEUE[1] == "/getinfo 28", "запрос наказаний не ушёл: " .. tostring(QUEUE[1]))
@@ -717,7 +693,6 @@ Q.autoTabs()[1].command = "none"
 Q.autoEnsure()
 check(Q.autoPunInTrigger(Q.autoTabs()[1]) == true, "{punishments} в триггере не распознан")
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 70, "наказ") == true, "триггер «наказ{punishments}» не сработал")
 check(QUEUE[1] == "/getinfo 70", "запрос наказаний не ушёл: " .. tostring(QUEUE[1]))
@@ -728,7 +703,6 @@ check(QUEUE[1] == "/ans 70 Приветствую, ваши активные н�
     "ответ не про наказания: " .. tostring(QUEUE[1]))
 -- ничего не найдено: фраза как у кнопки «Наказания игрока»
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Чистый", 71, "наказ") == true, "репорт не принят")
 QUEUE = {}
@@ -738,7 +712,6 @@ check(QUEUE[1] == "/ans 71 Приветствую, активных наказа
     "нет ответа про отсутствие наказаний: " .. tostring(QUEUE[1]))
 -- окно не пришло: отвечаем, не молчим
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Молчун", 72, "наказ") == true, "репорт не принят")
 QUEUE = {}
@@ -754,7 +727,6 @@ check(Q.autoVarsOnly(Q.autoTabs()[1]) == true, "вкладка без слов �
 check(#Q.autoMatchAll("совершенно любой текст репорта") == 1,
     "вкладка с одним {punishments} не отвечает на любой репорт")
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Любой", 73, "абсолютно любой текст") == true,
     "репорт с вкладкой «{punishments}» не обработан")
@@ -828,12 +800,10 @@ Q.autoTabs()[1].answer = "Ответ"
 Q.autoTabs()[1].command = "none"
 Q.autoEnsure()
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Mixa_Grozz", 88, "помогите") == true, "репорт с маркером не сработал")
 check(QUEUE[1] == "/ans 88 Ответ", "не тот ответ: " .. tostring(QUEUE[1]))
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Artyr", 89, "помогите") == true, "второй репорт не принят")
 check(QUEUE[1] == "/ans 89 Ответ", "не тот ответ: " .. tostring(QUEUE[1]))
@@ -924,7 +894,6 @@ Q.autoEnsure()
 check(Q.autoIDInTrigger(Q.autoTabs()[1]) == true, "{ID} в триггере не распознан")
 check(Q.autoTrigList(Q.autoTabs()[1])[1].wide == true, "слово с {ID} не помечено широким")
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Mixa_Grozz", 25, "дм 234") == true, "«дм 234» не сработал")
 check(QUEUE[1] == "/ans 25 Приветствую, слежу за игроком Mixa_Grozz[234]",
@@ -933,7 +902,6 @@ check(QUEUE[2] == "/sp 234", "не ушёл в слежку за найденн�
 -- v1.19.46: без числа и имени — уходит СВОЙ текст из «Ответ игроку», без
 -- ника и ID (поле тут намеренно «чужое», чтобы видно было: ушёл именно он)
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Без_ид", 26, "дм") == true, "«дм» без числа не сработал")
 check(QUEUE[1] == "/ans 26 ЭТОТ ТЕКСТ НЕ ДОЛЖЕН УЙТИ"
@@ -976,7 +944,6 @@ Q.autoTabs()[1].answer = "не используется"
 Q.autoTabs()[1].command = "sp"
 Q.autoEnsure()
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 70, "дм 234") == true, "«дм 234» не сработал")
 check(QUEUE[1] == "/ans 70 Приветствую, слежу за игроком Nik_Name[234]",
@@ -984,7 +951,6 @@ check(QUEUE[1] == "/ans 70 Приветствую, слежу за игроко�
 check(QUEUE[2] == "/sp 234", "не ушёл в слежку за нарушителем: " .. tostring(QUEUE[2]))
 -- ник написан в репорте, числа нет: ID берём у этого игрока
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 70, "Mixa_Grozz дм") == true, "репорт с ником не сработал")
 check(QUEUE[1] == "/ans 70 Приветствую, слежу за игроком Mixa_Grozz[26]",
@@ -998,7 +964,6 @@ Q.autoTabs()[1].answer = "Жалоба от {автор} на {ник}[{ID}]"
 Q.autoTabs()[1].command = "none"
 Q.autoEnsure()
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 70, "дм 234") == true, "«дм{all}» не сработал")
 check(QUEUE[1] == "/ans 70 Жалоба от Жалобщик на Nik_Name[234]",
@@ -1012,7 +977,6 @@ Q.autoTabs()[1].command = "sp"
 Q.autoEnsure()
 for _, num in ipairs({ "500", "999" }) do
     NOW = NOW + 100
-    A.rate = {}
     QUEUE = {}
     check(Q.autoOnReport("Жалобщик", 70, "дм " .. num) == true, "«дм " .. num .. "» не сработал")
     check(QUEUE[1] == "/ans 70 Приветствую, слежу за игроком [" .. num .. "]"
@@ -1035,7 +999,6 @@ Q.autoTabs()[1].command = "none"
 Q.autoTabs()[2].trigger = "спек"      -- чтобы «дм» во второй вкладке не мешал
 Q.autoEnsure()
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 70, "дм") == true, "репорт без номера не сработал")
 check(QUEUE[1] == "/ans 70 Уже разбираюсь, ожидайте",
@@ -1044,7 +1007,6 @@ check(QUEUE[2] == nil, "ушла лишняя строка: " .. tostring(QUEUE[
 -- переменные {ник}/{ID} в своём тексте не подставляются и вычищаются
 Q.autoTabs()[1].answer = "{ник} {ID} — уже разбираюсь"
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 70, "дм") == true, "репорт не сработал")
 check(QUEUE[1] == "/ans 70 — уже разбираюсь",
@@ -1052,14 +1014,12 @@ check(QUEUE[1] == "/ans 70 — уже разбираюсь",
 -- а с номером — по-прежнему автоответ с ником нарушителя
 Q.autoTabs()[1].answer = "Уже разбираюсь, ожидайте"
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 70, "дм 234") == true, "репорт с номером не сработал")
 check(QUEUE[1] == "/ans 70 Приветствую, слежу за игроком Nik_Name[234]",
     "автоответ сломался: " .. tostring(QUEUE[1]))
 -- имя в тексте тоже считается: ник нарушителя, а не автора
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 70, "Nik_Name дм") == true, "репорт с ником не сработал")
 check(QUEUE[1] == "/ans 70 Приветствую, слежу за игроком Nik_Name[26]"
@@ -1084,7 +1044,6 @@ Q.autoTabs()[2].command = "none"
 Q.autoEnsure()
 NICK_BY_ID = { [234] = "Nik_Name" }
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 70, "дм спек 234") == true, "«дм спек 234» не сработал")
 -- отвечает только «дм» (вкладка 2): автоответ + /sp по найденному ID
@@ -1096,7 +1055,6 @@ check(#QUEUE == 2 and QUEUE[1] == "/ans 70 Приветствую, слежу з
     and QUEUE[2] == "/sp 234",
     "не то отправлено: " .. tostring(QUEUE[1]) .. " | " .. tostring(QUEUE[2]))
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 70, "спек дм 234") == true, "«спек дм 234» не сработал")
 check(A.lastCheck:find("вкладки 1", 1, true) ~= nil and #QUEUE == 2,
@@ -1105,7 +1063,6 @@ check(A.lastCheck:find("вкладки 1", 1, true) ~= nil and #QUEUE == 2,
 Q.autoTabs()[2].trigger = "спек{ID}"
 Q.autoEnsure()
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("Жалобщик", 70, "спек 234") == true, "«спек 234» не сработал")
 check(#QUEUE == 4 and A.lastCheck:find("вкладки 1, 2", 1, true) ~= nil,
@@ -1133,7 +1090,6 @@ GRND_SPEC.active, GRND_SPEC.id = true, 77
 SERV.spec = false
 grndSpecProbeState = function() return false end
 NOW = NOW + 100
-A.rate = {}
 QUEUE, ANS = {}, {}
 local okStale, whyStale = Q.autoOnReport("Свежий", 60, "факт")
 check(okStale == true, "старая отметка слежки держит автопилот на паузе: " .. tostring(whyStale))
@@ -1144,7 +1100,6 @@ GRND_SPEC.active, GRND_SPEC.id = false, nil
 SERV.spec = false
 grndSpecProbeState = function() return true end
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 local okFact, whyFact = Q.autoOnReport("Наблюдаемый", 61, "факт")
 check(okFact == false and whyFact == "слежка",
@@ -1162,7 +1117,6 @@ Q.autoEnsure()
 
 -- ===== 10. репорт без триггера / без ID =====
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 local okNo, whyNo = Q.autoOnReport("Mixa_Grozz", 26, "как дела?")
 check(okNo == false and whyNo == "нет триггера", "репорт без триггера обработан: " .. tostring(whyNo))
@@ -1178,27 +1132,27 @@ check(okEmpty == false and whyEmpty == "нет триггера", "пустая 
 Q.autoTabs()[1].trigger = "Помогите"
 HPRINT("пропуски: нет триггера, нет ID, пустая вкладка — в чат ничего не уходит")
 
--- ===== 11. темп, предохранитель и повторный репорт того же игрока =====
+-- ===== 11. темп и повторный репорт того же игрока =====
 -- v1.19.42: «этому игроку уже отвечали» больше нет. Ответ игроку — не повод
--- пропускать его следующий репорт: написал ещё раз — отвечаем ещё раз. Темп
--- держат только пауза 1 с между срабатываниями и лимит 12 ответов в минуту.
+-- пропускать его следующий репорт: написал ещё раз — отвечаем ещё раз.
+-- v1.19.49: темп держит ТОЛЬКО пауза 0.5 с между срабатываниями —
+-- лимита «12 ответов в минуту» нет, число ответов не ограничено.
 NOW = NOW + 10
-A.rate = {}
 Q.autoOnReport("Mixa_Grozz", 25, "Помогите")
 CHECKED_AT = NOW
--- v1.19.48: пауза между срабатываниями — 1 с (было 2.5)
-NOW = CHECKED_AT + 0.5
+-- v1.19.49: пауза между срабатываниями — 0.5 с
+NOW = CHECKED_AT + 0.2
 QUEUE = {}
 local okHalf, whyHalf = Q.autoOnReport("Mixa_Grozz", 25, " Помогите ")
 check(okHalf == false and whyHalf == "слишком часто",
-    "на полусекунде репорт не придержан: " .. tostring(whyHalf))
+    "на 0.2 с репорт не придержан: " .. tostring(whyHalf))
 check(#QUEUE == 0, "репорт в паузе всё равно ушёл")
-NOW = CHECKED_AT + 1.1
+NOW = CHECKED_AT + 0.6
 QUEUE = {}
 local okGap, whyGap = Q.autoOnReport("Mixa_Grozz", 25, " Помогите ")
 check(okGap == true,
-    "через 1.1 с репорт не ушёл (пауза длиннее секунды): " .. tostring(whyGap))
-check(#QUEUE == 2, "через 1.1 с ушло не 2 строки: " .. tostring(#QUEUE))
+    "через 0.6 с репорт не ушёл (пауза длиннее половины секунды): " .. tostring(whyGap))
+check(#QUEUE == 2, "через 0.6 с ушло не 2 строки: " .. tostring(#QUEUE))
 NOW = CHECKED_AT + 2.2
 QUEUE = {}
 local okAgain, whyAgain = Q.autoOnReport("Mixa_Grozz", 25, " Помогите ")
@@ -1208,24 +1162,25 @@ check(QUEUE[1] == "/ans 25 Приветствую! Уже смотрю.",
 check(QUEUE[2] == "/goto 25", "команда повторного ответа не ушла: " .. tostring(QUEUE[2]))
 NOW = NOW + 3
 check(Q.autoOnReport("Другой", 77, "помогите") == true, "после паузы не сработало")
-HPRINT("повторный репорт того же игрока: ответили — значит не пропускать; темп держат пауза и лимит")
+HPRINT("повторный репорт того же игрока: ответили — значит не пропускать; темп держит только пауза")
 
-A.rate = {}
+-- v1.19.49: лимита «12 ответов в минуту» больше нет — 20 репортов подряд
+-- (в рамках паузы 0.6 с) все получают ответ, никто не блокируется
 QUEUE = {}
 local sentN, blockN = 0, 0
-for i = 1, 15 do
-    NOW = NOW + 3
+for i = 1, 20 do
+    NOW = NOW + 0.6
     local okF, whyF = Q.autoOnReport("Игрок" .. i, 100 + i, "помогите")
     if okF then sentN = sentN + 1
-    elseif whyF == "лимит 12 в минуту" then blockN = blockN + 1 end
+    elseif whyF and whyF:find("лимит", 1, true) then blockN = blockN + 1 end
 end
-check(sentN == 12, "предохранитель: ушло " .. tostring(sentN) .. " вместо 12")
-check(blockN == 3, "предохранитель не заблокировал поток: " .. tostring(blockN))
-HPRINT("предохранитель: 12 автоответов в минуту, дальше — стоп")
+check(sentN == 20, "без лимита ответили не всем: " .. tostring(sentN) .. " из 20")
+check(blockN == 0, "вернулся лимит на число ответов: " .. tostring(blockN))
+check(A.rate == nil, "счётчик ответов остался в автопилоте")
+HPRINT("без лимита: 20 репортов подряд — 20 ответов")
 
 -- ===== 12. слежка: автопилот на паузе, настройка не выключается =====
 NOW = NOW + 100
-A.rate = {}
 check(A.on == true, "перед проверкой слежки автопилот должен быть включён")
 setSpec(true)
 QUEUE = {}
@@ -1243,7 +1198,6 @@ check(has("включён") == false or has("на паузе"), "состоян�
 local savedCmd1 = Q.autoTabs()[1].command
 Q.autoTabs()[1].command = "none"
 NOW = NOW + 100
-A.rate = {}
 QUEUE, ANSICALLS = {}, {}
 local okNoCmd, whyNoCmd = Q.autoOnReport("Без команды", 205, "помогите")
 check(okNoCmd == true, "вкладка без команды в слежке не сработала: " .. tostring(whyNoCmd))
@@ -1258,7 +1212,6 @@ Q.autoTabs()[1].trigger = "чит"
 Q.autoTabs()[1].answer = "Приветствую, слежу за игроком {ник}[{ID}]"
 Q.autoEnsure()
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 local okIdSpec, whyIdSpec = Q.autoOnReport("С {ID}", 207, "чит 234")
 check(okIdSpec == false and whyIdSpec == "слежка",
@@ -1268,7 +1221,6 @@ Q.autoTabs()[1].trigger, Q.autoTabs()[1].answer = savedTrig1, savedAns1
 -- а вкладка с командой в слежке по-прежнему молчит
 Q.autoTabs()[1].command = savedCmd1
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 local okCmdSpec, whyCmdSpec = Q.autoOnReport("С командой", 206, "помогите")
 check(okCmdSpec == false and whyCmdSpec == "слежка",
@@ -1293,14 +1245,12 @@ check(A.paused == nil, "после выхода из слежки пауза н�
 check(A.on == true, "автопилот не вернулся к работе")
 check(TOASTS[#TOASTS] == "Автопилот снова работает", "нет тоста о возврате: " .. tostring(TOASTS[#TOASTS]))
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("После слежки", 201, "помогите") == true, "после слежки автопилот не отвечает")
 HPRINT("слежка: пауза вместо выключения, после выхода работает сам")
 
 -- ===== 12b. мероприятие (панель МП) — тоже пауза =====
 NOW = NOW + 100
-A.rate = {}
 GRND_MP = { active = true }
 QUEUE = {}
 local okEv, whyEv = Q.autoOnReport("На мероприятии", 202, "помогите")
@@ -1315,7 +1265,6 @@ check(has("на паузе — идёт мероприятие, вернётся
 local savedCmd2 = Q.autoTabs()[1].command
 Q.autoTabs()[1].command = "none"
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 local okEvNo, whyEvNo = Q.autoOnReport("МП без команды", 207, "помогите")
 check(okEvNo == false and whyEvNo == "мероприятие",
@@ -1327,7 +1276,6 @@ NOW = NOW + 5
 Q.autoTick()
 check(A.paused == nil and A.on == true, "после мероприятия автопилот не вернулся сам")
 NOW = NOW + 100
-A.rate = {}
 QUEUE = {}
 check(Q.autoOnReport("После МП", 203, "помогите") == true, "после мероприятия автопилот не отвечает")
 GRND_MP = nil
@@ -1336,7 +1284,6 @@ HPRINT("мероприятие: пауза вместо выключения, п
 -- ===== 13. идёт ввод текста — пропуск =====
 NOW = NOW + 100
 check(Q.autoSet(true) == true, "не включился")
-A.rate = {}
 SERV.typing = true
 QUEUE = {}
 local okTyp, whyTyp = Q.autoOnReport("Печатающий", 300, "помогите")
@@ -1347,7 +1294,6 @@ HPRINT("идёт ввод текста: репорт пропущен, в чат
 
 -- ===== 14. режим «без команды» во второй вкладке =====
 NOW = NOW + 100
-A.rate = {}
 Q.autoTabs()[2].command = "none"
 CHAT, QUEUE = {}, {}
 check(Q.autoCmdFor(500, Q.autoTabs()[2]) == nil, "команда «без команды» всё равно собирается")
@@ -1440,7 +1386,7 @@ HPRINT("предел: 15 вкладок, дальше отказ с тостом
 NOW = NOW + 100
 while #Q.autoTabs() > 2 do Q.autoDel(#Q.autoTabs()) end
 Q.autoEnsure()
-A.on, A.rate = true, {}
+A.on = true
 Q.autoTabs()[1].trigger = "помогите"
 Q.autoTabs()[1].answer = "уже смотрю"
 Q.autoTabs()[1].command = "goto"
@@ -1461,7 +1407,6 @@ HPRINT("queueCmd: русская причина наказания уходит 
 
 -- ===== 22. ошибки наружу не выходят =====
 NOW = NOW + 100
-A.rate = {}
 Q.autoTabs()[1].trigger = "помогите"
 local savedAns = grndRepAnswer
 grndRepAnswer = function() error("тест: сбой ответа") end
