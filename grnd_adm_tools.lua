@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.56"
+GRND_SCRIPT_VERSION = "1.19.57"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -7181,6 +7181,57 @@ function grndTargetRingFind(w, h, cx, cy, radius)
     local R = _G.GRND_TARGET_RING
     if type(R) ~= "table" or type(radius) ~= "number" or radius <= 0 then return nil end
     grndRingLoad()
+    -- v1.19.57: полный перебор пула игроков/машин — по несколько вызовов на
+    -- каждого участника, до тысяч вызовов на кадр. Идём по нему не чаще
+    -- четырёх раз в секунду, а между проходами держим прежнюю цель и только
+    -- пересчитываем её экранную точку: линия и подписи остаются приклеенными.
+    local nowR = os.clock()
+    local cached = R.cacheTgt
+    if cached and (nowR - (R.cacheAt or 0)) < 0.25 then
+        local alive, wx, wy, wz = true, nil, nil, nil
+        if cached.kind == "player" then
+            if type(doesCharExist) == "function" then
+                local ok, yes = pcall(doesCharExist, cached.handle)
+                alive = ok and (yes and true or false) or false
+            end
+            if alive and type(getCharCoordinates) == "function" then
+                local ok, x, y, z = pcall(getCharCoordinates, cached.handle)
+                if ok and type(x) == "number" and type(y) == "number"
+                    and type(z) == "number" then wx, wy, wz = x, y, z end
+            end
+        elseif cached.kind == "vehicle" then
+            if type(doesVehicleExist) == "function" then
+                local ok, yes = pcall(doesVehicleExist, cached.handle)
+                alive = ok and (yes and true or false) or false
+            elseif type(doesCarExist) == "function" then
+                local ok, yes = pcall(doesCarExist, cached.handle)
+                alive = ok and (yes and true or false) or false
+            end
+            if alive and type(getCarCoordinates) == "function" then
+                local ok, x, y, z = pcall(getCarCoordinates, cached.handle)
+                if ok and type(x) == "number" and type(y) == "number"
+                    and type(z) == "number" then wx, wy, wz = x, y, z + 0.7 end
+            end
+        end
+        if not alive then
+            R.cacheTgt = nil
+        elseif wx then
+            local sx, sy
+            if cached.kind == "player" then
+                local hx, hy = grndRingScreenPoint(wx, wy, wz + 0.95, w, h)
+                local fx, fy = grndRingScreenPoint(wx, wy, wz - 0.75, w, h)
+                if hx and fx then sx, sy = (hx + fx) * 0.5, (hy + fy) * 0.5 end
+                if not sx then sx, sy = grndRingScreenPoint(wx, wy, wz + 0.10, w, h) end
+            else
+                sx, sy = grndRingScreenPoint(wx, wy, wz, w, h)
+            end
+            if sx then
+                cached.x, cached.y = sx, sy
+                return cached
+            end
+            R.cacheTgt = nil      -- цель ушла за кадр — ищем заново
+        end
+    end
     local meX, meY, meZ, watchPed = grndRingWorldOrigin()
     if not meX then return nil end
     local maxMeters = grndTargetRingMeters(R)
@@ -7317,6 +7368,9 @@ function grndTargetRingFind(w, h, cx, cy, radius)
             end
         end
     end
+    -- v1.19.57: запоминаем найденную цель вместе с её мировыми координатами —
+    -- следующий кадр обойдётся без полного перебора пула
+    R.cacheAt, R.cacheTgt = os.clock(), best
     return best
 end
 
@@ -12432,8 +12486,9 @@ do
     end
 
     -- Все кандидаты-указатели, отсортированные по оценке структуры.
-    function klScanCandidates(limit)
+    function klScanCandidates(limit, maxBytes, timeLimit)
         local out = {}
+        local startedAt = os.clock()
         local h = KL.base
         if not h then
             local ok, mh = pcall(getModuleHandle, "samp.dll")
@@ -12462,6 +12517,10 @@ do
                 if okr and type(str) == "string" and #str == s.size then bytes = str end
             end
             local n = bytes and #bytes or math.min(s.size, 262144)
+            -- v1.19.57: у автоматического перебора есть предел по объёму и
+            -- времени — иначе он читал мегабайты секций в одном тике и
+            -- подвешивал игру
+            if maxBytes and n > maxBytes then n = maxBytes end
             local i = 0
             while i + 4 <= n do
                 local p
@@ -12487,6 +12546,10 @@ do
             end
             scanned = scanned + 1
             if checked >= budget then break end
+            if timeLimit and (os.clock() - startedAt) >= timeLimit then
+                KL.scanStat = "перебор прерван по времени — продолжаю позже"
+                break
+            end
         end
         KL.scanStat = ("секций %d, проверено кандидатов %d, подошло %d, бюджет %d")
             :format(scanned, checked, #out, budget)
@@ -12575,7 +12638,9 @@ do
             if ((now - (KL.scanAt or 0)) >= 6.0) and auto then
                 KL.scanAt = now
                 KL.scanTries = (KL.scanTries or 0) + 1
-                local okS, found = pcall(klScanCandidates, 4096)
+                -- авто-перебор: 1024 кандидата, 512 КБ на секцию и не больше
+                -- 40 мс на тик — игра не замирает
+                local okS, found = pcall(klScanCandidates, 1024, 524288, 0.04)
                 if okS and found and #found > 0 then
                     KL.scanTop = found
                     for i = 1, math.min(#found, 3) do
@@ -14711,7 +14776,7 @@ do
         end
         RC.tdHide = {}
         RC.tdOrig = {}
-        RC.tdKind = {}
+        RC.tdKind = {}; RC.tdSweep = nil
     end
 
     -- вызывается из samp.events: true = спрятать системный TD
@@ -14785,7 +14850,7 @@ do
         RC.lastCursor = false
         RC.closeHandled = true
         RC.tdGoneSince = nil
-        if RC.tdKind then RC.tdKind = {} end
+        if RC.tdKind then RC.tdKind = {}; RC.tdSweep = nil end
 
         if type(_G.grndPlainCursorForceOff) == "function" then
             pcall(_G.grndPlainCursorForceOff)
@@ -14870,6 +14935,11 @@ do
         return false
     end
 
+    -- v1.19.57: перебор текстдрауов идёт ПОРЦИЯМИ. Раньше один заход
+    -- перебирал все 2305 id и на каждый делал два вызова SAMPFUNCS — в слежке
+    -- это давало заметный рывок. Теперь за вызов 256 id (полный круг ~1 с),
+    -- а решения принимаются в конце круга, как и раньше.
+    local RC_TD_CHUNK = 256
     local function rcScanTextdraws()
         if type(sampTextdrawIsExists) ~= "function" then return 0 end
         -- После onHideTextDraw старый global TD может ещё оставаться в
@@ -14877,12 +14947,19 @@ do
         -- не пришлёт новый Show/SetString.
         if RC.reconHidden then
             RC.reconTdActive = false
+            RC.tdSweep = nil
             return 0
         end
-        RC.tdKind = {}
-        local names = {}
-        local hits = 0
-        for id = 0, 2304 do
+        local sweep = RC.tdSweep
+        if not sweep then
+            sweep = { at = 0, hits = 0, names = {} }
+            RC.tdSweep = sweep
+            RC.tdKind = {}
+        end
+        local names, hits = sweep.names, sweep.hits
+        local idFrom = sweep.at
+        local idTo = math.min(2304, idFrom + RC_TD_CHUNK - 1)
+        for id = idFrom, idTo do
             local ex = rcTdExists(id)
             if ex then
                 local raw = rcTdString(id)
@@ -14903,6 +14980,12 @@ do
                 end
             end
         end
+        sweep.hits, sweep.at = hits, idTo + 1
+        if sweep.at <= 2304 then
+            -- порция пройдена, круг ещё нет: итоги подводим в конце круга
+            return hits
+        end
+        RC.tdSweep = nil
         if hits > 0 then
             RC.reconTdActive = true
             RC.reconSeen = true
@@ -15122,7 +15205,10 @@ do
             RC.rmbArmed = true
         end
 
-        if (now - (RC.scanAt or 0)) > 0.35 then
+        -- v1.19.57: скан идёт порциями по 256 id; вызываем чаще (0.12 с), но
+        -- каждая порция дешёвая — полный круг складывается за ~1 с, как раньше,
+        -- зато без рывка на кадр
+        if (now - (RC.scanAt or 0)) > 0.12 then
             RC.scanAt = now
             pcall(rcScanTextdraws)
         end
@@ -15147,7 +15233,7 @@ do
             -- Не переносим сведения предыдущей цели в новую карточку.
             RC.live = {}
             RC.nick = ""
-            RC.tdKind = {}
+            RC.tdKind = {}; RC.tdSweep = nil
             RC.tdHide = {}
             RC.tdOrig = {}
             RC.tdSeenAt = 0
@@ -15994,13 +16080,35 @@ do
         or memory.setbyte or memory.writebyte) or nil
     local memw32 = memory and (memory.setint32 or memory.writeint32
         or memory.writedword or memory.writeint) or nil
+    -- v1.19.57: БЮДЖЕТ ЧТЕНИЙ НА ЗАХОД. Разбор структур samp.dll раньше мог
+    -- за один тик сделать десятки тысяч чтений памяти и подвесить игру —
+    -- именно это ловилось как «зашёл в слежку и всё зависло». Теперь каждый
+    -- проход ограничен бюджетом: не успели — продолжаем следующим тиком,
+    -- игра не встаёт ни на кадр.
+    local BUDGET_MAX = 3000
+    local budget = { n = 0, out = false, max = BUDGET_MAX, deadline = nil }
+    local function budgetStart(limit, ms)
+        budget.n, budget.out = 0, false
+        budget.max = limit or BUDGET_MAX
+        budget.deadline = ms and (os.clock() + ms / 1000) or nil
+    end
+    local function budgetSpend()
+        budget.n = budget.n + 1
+        if budget.n > budget.max then budget.out = true; return end
+        -- время проверяем редко: os.clock() на каждом чтении сам стал бы дорогим
+        if budget.deadline and (budget.n % 64 == 0)
+            and os.clock() > budget.deadline then budget.out = true end
+    end
+
     local function r8(a)
         if not mem8 then return nil end
+        budgetSpend()
         local ok, v = pcall(mem8, a)
         return ok and v or nil
     end
     local function r32(a)
         if not mem32 then return nil end
+        budgetSpend()
         local ok, v = pcall(mem32, a)
         if not ok or type(v) ~= "number" then return nil end
         if v < 0 then v = v + 4294967296 end
@@ -16076,8 +16184,13 @@ do
             local ok, m = pcall(sampGetMaxPlayerId)
             if ok and type(m) == "number" and m > maxId then maxId = m end
         end
+        -- v1.19.57: сервер может разрешать и 500, и 1000 слотов — проверять
+        -- их все дорого (каждый слот это вызовы SAMPFUNCS), а для калибровки
+        -- хватает локального игрока и соседних слотов
+        if maxId > 64 then maxId = 64 end
         for id = 0, maxId do
             if n and #ids >= n then break end
+            if budget.out then break end
             -- v1.11.52: nickname с неподключённым id крашит — сначала
             -- проверяем подключение; без такой функции не сканируем
             -- вообще (калибровка подождёт следующего раза)
@@ -16100,18 +16213,41 @@ do
     -- (первое поле класса всегда m_pPed — не зависит от версии).
     -- ВАЖНО: шаг 1, а не 4 — в packed(1) кладках указатель локального
     -- игрока в пуле может лежать на НЕвыровненном смещении (R1: 0x16).
-    local function findLocalPlayer(pPP, scanMax)
-        for off = 0, scanMax do
+    -- v1.19.57: скан указателя идёт СРЕЗАМИ. Раньше один вызов перебирал до
+    -- 0x1900 адресов (до 6400 чтений) — на незнакомой сборке это несколько
+    -- сотен миллисекунд в одном тике. Теперь за заход не больше LP_SLICE
+    -- адресов, курсор продолжает с того же места в следующий заход.
+    local LP_SLICE = 0x200
+    local function findLocalPlayer(pPP, scanMax, di)
+        if S.lpAtKey ~= tostring(pPP) .. ":" .. tostring(di) then
+            S.lpAtKey, S.lpAt = tostring(pPP) .. ":" .. tostring(di), 0
+        end
+        local from = S.lpAt or 0
+        local to = math.min(scanMax, from + LP_SLICE)
+        for off = from, to do
+            if budget.out then
+                S.lpAt = off
+                return nil
+            end
             local p = r32(pPP + off)
             if validPtr(p) and r32(p) == PLAYER_PED then
+                S.lpAt, S.lpAtKey = nil, nil
                 return p
             end
         end
+        if to < scanMax then
+            S.lpAt = to + 1          -- срез пройден — продолжим следующим тиком
+            return nil
+        end
+        S.lpAt, S.lpAtKey = nil, nil
         return nil
     end
 
     local function tryInit()
         if S.ok then return true end
+        -- v1.19.57: заход ограничен и по числу чтений, и по времени (20 мс):
+        -- не успели — продолжим со следующего захода, игра не встаёт
+        budgetStart(1200, 20)
         local base
         if type(getModuleHandle) == "function" then
             local ok, b = pcall(getModuleHandle, "samp.dll")
@@ -16130,8 +16266,9 @@ do
                                 local pPP = r32(pPools + cpl)
                                 if validPtr(pPP) then
                                     local ids = liveIds(3)
-                                    if #ids > 0 then
+                                    if #ids > 0 and not budget.out then
                                     for _, di in ipairs(vt.dinfo) do
+                                        if budget.out then break end
                                         local good, bad = 0, 0
                                             for _, id in ipairs(ids) do
                                                 local info = r32(pPP + di + id * 4)
@@ -16153,8 +16290,8 @@ do
                                                     end
                                                 end
                                             end
-                                            if good >= 1 and bad == 0 then
-                                                local pLP = findLocalPlayer(pPP, vt.lpScanMax)
+                                            if good >= 1 and bad == 0 and not budget.out then
+                                                local pLP = findLocalPlayer(pPP, vt.lpScanMax, di)
                                                 if pLP then
                                                     S.ok = true
                                                     S.ver = vt.name
@@ -16182,7 +16319,7 @@ do
                 end
             end
         end
-        if not S.failLogged then
+        if not S.failLogged and not budget.out then
             S.failLogged = true
             print("{FBD38DFF}[GRND]{FFFFFF} слежка: версия SAMP не распознана (чтение памяти отключено, окно работает как раньше)")
         end
@@ -16207,7 +16344,10 @@ do
         return false, nil
     end
 
-    -- Дорогое сканирование (до калибровки): ищем любую валидную структуру
+    -- Сканирование (до калибровки): ищем любую валидную структуру.
+    -- v1.19.57: идём СРЕЗАМИ по 128 смещений — один заход больше не делает
+    -- до 1500 чтений памяти, полный круг набирается за четыре захода.
+    local SCAN_STEP = 0x80
     function S.spectScan()
         if not S.ok or not S.lp then return false, nil end
         local now = clockNow()
@@ -16215,8 +16355,11 @@ do
             return S.scanCacheOn, S.scanCacheId
         end
         S.scanT = now
+        budgetStart(700, 8)
         local on, tid = false, nil
-        for off = 0, 0x1FF do
+        local from = S.scanAt or 0
+        local to = math.min(0x1FF, from + SCAN_STEP - 1)
+        for off = from, to do
             local mode = r8(S.lp + off)
             if MODE_OK[mode] then
                 local typ = r8(S.lp + off + 1)
@@ -16229,6 +16372,12 @@ do
                 end
             end
         end
+        if not on and to < 0x1FF then
+            -- срез пройден, круг ещё нет: отдаём прошлый результат, идём дальше
+            S.scanAt = to + 1
+            return S.scanCacheOn, S.scanCacheId
+        end
+        S.scanAt = nil
         S.scanCacheOn, S.scanCacheId = on, tid
         return on, tid
     end
@@ -16799,7 +16948,10 @@ function grndCamLosPoint(ax, ay, az, bx, by, bz)
     -- по лучу (только факт пересечения — без рекурсии в cast)
     local lo, hi = 0.0, 1.0
     local dx, dy, dz = bx - ax, by - ay, bz - az
-    for _ = 1, 10 do
+    -- v1.19.57: 6 шагов вместо 10 — точность ~1.5% длины луча (на 7 м это
+    -- ~10 см), а вызовов processLineOfSight на треть меньше: именно они и
+    -- подвешивали кадр в слежке у стены.
+    for _ = 1, 6 do
         local mid = (lo + hi) * 0.5
         local h2 = cast(ax, ay, az, ax + dx * mid, ay + dy * mid, az + dz * mid)
         if h2 then hi = mid else lo = mid end
@@ -16812,7 +16964,7 @@ end
 -- v1.14.59: камеру НИКОГДА не ставим за стеной. Раньше минимум (1.1 м)
 -- выталкивал камеру СКВОЗЬ близкую стену внутрь текстуры; теперь она
 -- всегда остаётся перед геометрией (отступ 0.55 м, в тесноте — 0.3 м).
-function grndCamAvoidWalls(ax,ay,az,px,py,pz,minDist)
+function grndCamAvoidWalls(ax,ay,az,px,py,pz,minDist,shoulders)
     local dx,dy,dz=px-ax,py-ay,pz-az
     local dist=math.sqrt(dx*dx+dy*dy+dz*dz)
     if dist<0.001 then return px,py,pz,false end
@@ -16823,7 +16975,12 @@ function grndCamAvoidWalls(ax,ay,az,px,py,pz,minDist)
     local allowed=dist;local hit=false
     -- Centre and two parallel shoulder rays: no recursive recasts toward an
     -- already clipped endpoint; small lateral clearance protects camera corners.
-    for _,offset in ipairs({0,-0.18,0.18}) do
+    -- v1.19.57: центральный луч — всегда, плечевые — только когда центральный
+    -- упёрся в геометрию или раз в три тика: каждый луч это до семи вызовов
+    -- processLineOfSight, и в слежке они съедали кадр.
+    local rays = { 0 }
+    if shoulders ~= false then rays[#rays + 1] = -0.18; rays[#rays + 1] = 0.18 end
+    for _,offset in ipairs(rays) do
         local sx,sy=ax+rx*offset,ay+ry*offset
         local hx,hy,hz=grndCamLosPoint(sx,sy,az,px+rx*offset,py+ry*offset,pz)
         if hx then
@@ -17119,8 +17276,10 @@ function grndCamFollowApply(S, now)
     do
         local orbD = math.sqrt((px - tx) ^ 2 + (py - ty) ^ 2 + (pz - aimZ) ^ 2)
         local wantD = orbD
+        S.camRayPhase = ((S.camRayPhase or 0) + 1) % 3
         local nx, ny, nz, hitWall = grndCamAvoidWalls(
-            tx, ty, aimZ, px, py, pz, GRND_CAM_COLLIDE_MIN)
+            tx, ty, aimZ, px, py, pz, GRND_CAM_COLLIDE_MIN,
+            S.camRayPhase == 0 or S.camWallHit == true)
         if hitWall then
             local ddx, ddy, ddz = nx - tx, ny - ty, nz - aimZ
             wantD = math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz)

@@ -67,7 +67,46 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.56"' in s, 'версия не 1.19.56')
+need('GRND_SCRIPT_VERSION = "1.19.57"' in s, 'версия не 1.19.57')
+
+# v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
+# 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
+#    и по числу чтений, и по времени — продолжение следующим тиком
+need('local BUDGET_MAX = 3000' in s and 'local function budgetStart(limit, ms)' in s and
+     'local function budgetSpend()' in s,
+     'нет бюджета чтений памяти (проходы снова могут делать тысячи чтений за тик)')
+need('budgetStart(1200, 20)' in s, 'калибровка версии SAMP идёт без бюджета')
+need('budgetStart(700, 8)' in s, 'скан структуры слежки идёт без бюджета')
+need('if budget.deadline and (budget.n % 64 == 0)' in s and
+     'os.clock() > budget.deadline' in s,
+     'бюджет не следит за временем — рывок всё равно возможен')
+# 2) указатель CLocalPlayer ищется срезами, курсор продолжается следующим тиком
+need('local LP_SLICE = 0x200' in s and 'S.lpAt = to + 1' in s and
+     'S.lpAtKey, S.lpAt = tostring(pPP) .. ":" .. tostring(di), 0' in s,
+     'поиск CLocalPlayer снова перебирает весь диапазон за один тик')
+need('findLocalPlayer(pPP, vt.lpScanMax, di)' in s,
+     'поиск CLocalPlayer не получает номер кандидата (курсор срезов собьётся)')
+# 3) скан структуры слежки — срезами
+need('local SCAN_STEP = 0x80' in s and 'S.scanAt = to + 1' in s and 'S.scanAt = nil' in s,
+     'скан структуры слежки снова перебирает все смещения за один заход')
+# 4) текстдрауы рекона — порциями
+need('local RC_TD_CHUNK = 256' in s and 'RC.tdSweep = sweep' in s and
+     'sweep.at <= 2304' in s,
+     'перебор текстдрауов снова идёт целиком за один заход')
+need('if (now - (RC.scanAt or 0)) > 0.12 then' in s,
+     'порции текстдрауов вызываются редко (круг станет дольше секунды)')
+# 5) лучи камеры слежки: поиск стены короче, плечевые лучи — не каждый тик
+need('for _ = 1, 6 do' in s, 'бинарный поиск стены снова делает десять вызовов')
+need('local rays = { 0 }' in s and 'S.camRayPhase == 0 or S.camWallHit == true' in s,
+     'плечевые лучи снова пускаются каждый тик')
+# 6) круг цели: полный перебор пула — не чаще 4 раз в секунду
+need('R.cacheTgt' in s and 'R.cacheAt' in s and '(nowR - (R.cacheAt or 0)) < 0.25' in s,
+     'круг цели снова перебирает весь пул каждый кадр')
+# 7) авто-перебор памяти килл-листа ограничен объёмом и временем
+need('function klScanCandidates(limit, maxBytes, timeLimit)' in s and
+     'klScanCandidates, 1024, 524288, 0.04' in s and
+     'KL.scanStat = "перебор прерван по времени — продолжаю позже"' in s,
+     'авто-перебор памяти килл-листа снова читает мегабайты в одном тике')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
