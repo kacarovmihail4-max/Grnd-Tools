@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.35"' in s, 'версия не 1.19.35')
+need('GRND_SCRIPT_VERSION = "1.19.36"' in s, 'версия не 1.19.36')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -183,13 +183,14 @@ need('при репорте' not in auto_draw_src2, 'вернулась стро
 need('на паузе — слежка, вернётся сам' in auto_draw_src2, 'пропало состояние паузы в слежке')
 need('на паузе — идёт мероприятие, вернётся сам' in auto_draw_src2,
      'пропало состояние паузы на мероприятии')
-# v1.19.29: внизу раздела — подсказка про совпадение по началу репорта
-need('Репорт, который начинается с триггера "помогите", сработает целиком:' in auto_draw_src2,
-     'пропала подсказка дословно про триггер «помогите»')
-need('«помогите, дм!!!» — обработается, даже если дальше есть текст' in auto_draw_src2,
-     'пропал пример «помогите, дм!!!» в подсказке')
-need('Только для «помогите»: остальным триггерам — репорт целиком' in auto_draw_src2,
-     'в подсказке нет строки, что правило действует только для «помогите»')
+# v1.19.36: внизу раздела — подсказки про переменные {ID} и {all}
+need('"{ID} — найдёт ID в репорте («дм 234», «234 дм») и подставит его в ответ"' in auto_draw_src2,
+     'пропала подсказка про {ID}')
+need('"После ответа автопилот сам зайдёт в слежку за этим игроком — даже если выбрана команда /goto"'
+     in auto_draw_src2, 'пропала подсказка про автослежку за найденным ID')
+need('"{all} — триггер сработает, даже если репорт состоит из нескольких слов"' in auto_draw_src2,
+     'пропала подсказка про {all}')
+absent("начинается с триггера", 'вернулась подсказка про систему «помогите»')
 # v1.19.33: вместо placeholder «напр. помогите» — подсказка про синонимы; её
 # длинная фраза переносится по словам (wrapW), чтобы помещалась целиком
 need('local function wrapW(s, maxW, measure, scale)' in s,
@@ -205,8 +206,10 @@ need('return not autoMouseOver(im, x, y, w, h)' in s,
 # v1.19.35: вкладка «без команды» отвечает даже в слежке; мероприятие — пауза
 need('if pause == "слежка" then' in s,
      'нет исключения для слежки (вкладки без команды)')
-need('if QR.autoCmdId(tab and tab.command) == "none" then' in s,
-     'исключение в слежке не проверяет команду вкладки')
+need('local cmd = QR.autoCmdFor(id, tab)' in s and
+     'if hasID and foundId then cmd = "/sp " .. foundId end' in s and
+     'if not cmd then' in s,
+     'исключение в слежке не проверяет итоговую команду вкладки (свою или автослежку по {ID})')
 need('local cmdHintLines = wrapW(' in s and
      '"Если триггер будет без команды, автопилот будет работать даже в слежке"' in s,
      'нет оранжевой подсказки про «без команды» у селектора')
@@ -229,19 +232,38 @@ need('wrapW(' in trig_src, 'подсказка рисуется не сразу 
 need('local tHintLines = wrapW(' in s, 'подсказка у поля «Триггер» не переносится')
 absent('"напр. помогите"', 'вернулся прежний placeholder «напр. помогите» у поля «Триггер»')
 absent('hintFit', 'подсказка снова подставляет имя триггера вместо слова «помогите»')
-# v1.19.32: «по началу репорта» — только для слова «помогите», остальные — целиком
-need('local AUTO_PREFIX_TRIG = "помогите"' in s,
-     'нет отдельной константы для триггера «помогите»')
-need('if trig == AUTO_PREFIX_TRIG then' in s,
-     'особое правило для «помогите» пропало')
-need('hit = low == trig' in s,
-     'остальные триггеры должны срабатывать только при полном совпадении репорта')
+# v1.19.36: {ID}/{all} — триггер словом в любом месте; обычный ответ — целиком
+absent('AUTO_PREFIX_TRIG', 'осталась система «помогите» (AUTO_PREFIX_TRIG)')
+need('function QR.autoAnswerFlags(tab)' in s,
+     'нет разбора ответа на {ID}/{all}')
+need('ans:find("{ID}", 1, true) ~= nil, ans:find("{all}", 1, true) ~= nil' in s,
+     'флаги {ID}/{all} ищутся не в тексте ответа')
+need('function QR.autoFindReportId(text)' in s,
+     'нет поиска ID в тексте репорта')
+need('local function autoWordHit(low, trig)' in s,
+     'нет поиска триггера целым словом в любом месте репорта')
+need('local function autoLastChar(t)' in s,
+     'нет проверки границы слова слева')
+need('local hit = anywhere and autoWordHit(low, trig) or (low == trig)' in s,
+     'режим сопоставления выбирается не из ответа вкладки')
+need('local hasID, hasAll = QR.autoAnswerFlags(tabs[i])' in s,
+     'вкладки не проверяются на {ID}/{all} при сопоставлении')
 need('out[#out + 1] = { idx = i, trig = trig }' in s,
      'совпадение триггера потерялось')
 absent('low:find(list[k], 1, true)', 'вернулся поиск триггера подстрокой')
-absent('low == list[k]', 'вернулось сравнение репорта с триггером целиком')
 need('local low = trim(autoLower(autoPlain(text)))' in s,
      'текст репорта не нормализуется (пробелы/регистр) перед сравнением')
+# v1.19.36: автослежка и умный {ID} в плане отправки
+onrep2 = s[s.index('function QR.autoOnReport(nick, pid, msg)'):]
+need('local foundId = QR.autoFindReportId(text)' in onrep2,
+     'autoOnReport не ищет ID в тексте репорта')
+need('if hasID and foundId then cmd = "/sp " .. foundId end' in onrep2,
+     'нет автослежки за найденным ID (даже вместо /goto)')
+need('line = trim((line:gsub("{all}", "", 1)))' in onrep2,
+     'служебное {all} не убирается из текста ответа')
+# QR.apply: {ID} — найденный в репорте ID, иначе штатный
+need('tostring(rep.foundId or "") ~= "" and tostring(rep.foundId) or pid' in s,
+     '{ID} не подставляет найденный в репорте ID')
 # v1.19.24: у полей ввода нет своей рамки — при наведении не появляется «квадратик»
 field_src = s[s.index('local function field(ctx, id, key, cap'):s.index('-- Треугольник средствами draw-list')]
 need('AddRect' not in field_src,
@@ -251,10 +273,9 @@ need('"Приветствую, уже смотрю…", true, sel2.answer' in s,
      'подсказка поля «Ответ игроку» снова с {ник}')
 auto_draw_src = s[s.index('_G.grndQrAutoDraw = function(ctx)'):s.index('_G.grndQrAutoOnReport = function')]
 need('{ник}' not in auto_draw_src, 'в разделе «Автопилот» снова подсказка с {ник}')
-# фраза «репорт целиком» допустима ТОЛЬКО в подсказке внизу (v1.19.32);
-# у поля «Триггер» её по-прежнему быть не должно
-need(auto_draw_src.count('репорт целиком') == 1,
-     'фраза «репорт целиком» должна встречаться только в подсказке внизу раздела')
+# v1.19.36: подсказки про {ID}/{all} живут только внизу раздела
+need(auto_draw_src.count('{ID} — найдёт ID в репорте') == 1,
+     'подсказка про {ID} должна быть ровно одна (внизу раздела)')
 need('local tab = QR.autoTab(hits[k].idx)' in s, 'срабатывание не привязано к вкладке')
 need('local cmd = QR.autoCmdFor(id, tab)' in s, 'команда берётся не из вкладки')
 need('local line = oneLine(QR.apply(tab.answer, rep))' in s, 'ответ берётся не из вкладки')
@@ -301,14 +322,10 @@ need('на паузе — идёт мероприятие, вернётся са
 # v1.19.26: подсказок у поля «Триггер» нет, короткий триггер разрешён
 trigger_src = s[s.index('ctx.uiText(x, yy, "Триггер", dim, 0.84)'):s.index('Команда после ответа')]
 need('слишком короткий' not in trigger_src, 'вернулась подпись про короткий триггер')
-need('репорт целиком' not in trigger_src, 'вернулась подпись «репорт целиком»')
 absent('function QR.autoShortTrigger', 'осталась проверка «слишком короткий триггер»')
-# v1.19.28: срабатывает вкладка, с чьего СЛОВА начинается репорт
+# v1.19.36: границы слова нужны для режима {ID}/{all}
 need('local function autoWordStart(rest)' in s,
-     'нет проверки «триггер — слово в начале репорта»')
-need('low:sub(1, #trig) == trig' in s,
-     'триггер снова сравнивается с репортом не по началу')
-absent('if low == list[k] then', 'вернулось старое правило «репорт равен триггеру целиком»')
+     'нет проверки границы слова справа')
 # идёт ввод текста — пропуск, чтобы не мешать набору
 need('A.lastCheck = "идёт ввод текста — пропуск"' in auto_part,
      'автопилот не пропускает репорты во время ввода текста')
