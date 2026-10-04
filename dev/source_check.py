@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.58"' in s, 'версия не 1.19.58')
+need('GRND_SCRIPT_VERSION = "1.19.59"' in s, 'версия не 1.19.59')
 
 # v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
 # 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
@@ -152,6 +152,69 @@ need(card.count(', ROW_H)') == 7,
      'в карточке не семь строк единого списка (найдено %d)' % card.count(', ROW_H)'))
 need('##rcb_p_' in card,
      'кнопки наказаний рисуются вне окна карточки (обрежутся его краем)')
+
+# v1.19.59: карточка прокручивается, а скорость — чистое число в км/ч
+need('local SCROLL_STEP = ROW_H' in s and 'local H_MIN = 240' in s,
+     'у карточки нет прокрутки (окно снова режет низ карточки)')
+need('local scrollMax = math.max(0, contentH - H)' in s and
+     'local function inList(y0, h0)' in s,
+     'высота карточки снова считается только по содержимому')
+need('local y = 84 - scroll' in s and
+     'if not inList(ry, height) then return end' in s and
+     'if inList(byy, bh2) then' in s,
+     'строки и кнопки не прячутся за границей окна прокрутки (обрывки текста)')
+need('local barH = math.max(26, listH * (H / contentH))' in s,
+     'нет полосы прокрутки у списка карточки')
+need('RC.scrollRect = { x = px, y = py + listTop, w = W, h = listH }' in s and
+     'and GRND_RC.scrollRect and grndMouseInside(GRND_RC.scrollRect) then' in s and
+     '(GRND_RC.scroll or 0) - notch * step' in s and
+     'local step = tonumber(GRND_RC.scrollStep) or 26' in s,
+     'колесо мыши над карточкой не листает её список')
+need('"NoScrollWithMouse"' in card or 'NoScrollWithMouse' in s,
+     'ImGui снова может крутить содержимое карточки своим колесом')
+# кнопок наказаний в карточке — ровно четыре (образец заказчика)
+need('local PUN_TOP = 4' in s and 'if punCnt > PUN_TOP then punCnt = PUN_TOP end' in s,
+     'в карточке снова не четыре кнопки наказаний')
+# скорость: только число в км/ч, сырые серверные строки в карточку не идут
+need('local g = grndSpeedFromGame(id)' in s and
+     'if kmh < 3 and sNum and sNum > kmh then kmh = sNum end' in s and
+     'return tostring(math.floor(kmh + 0.5)) .. " км/ч"' in s,
+     'строка «Скорость» снова берёт сырой текст сервера')
+absent('if num and num > 0 then return txt end', 'вернулся возврат сырой серверной строки скорости')
+absent('local txt = grndParamLabel(id, "speed", serverRaw)', 'grndSpeedDisplay снова показывает серверный текст')
+need('if ms ~= ms or ms < 0 or ms > 300 then return nil end' in s,
+     'замер скорости не отбрасывает мусорные значения (NaN/выбросы)')
+need('ms * 3.6' in s and 'скорость в м/с' in s,
+     'перевод м/с -> км/ч потерян (getCarSpeed/getCharSpeed дают м/с)')
+
+# геометрия карточки без прокрутки: на обычном экране семь строк и четыре
+# кнопки должны влезать в окно целиком — проверяем прямо по числам из файла
+import re as _re
+def _num(pat):
+    hits = _re.findall(pat, s)
+    return int(hits[0]) if len(hits) == 1 else None
+_ROW_H = _num(r'local ROW_H = (\d+)')
+_ROWS_N = _num(r'local ROWS_N = (\d+)')
+_PUN_BH = _num(r'local PUN_BH = (\d+)')
+_PUN_BG = _num(r'local PUN_BG = (\d+)')
+_PUN_PAD = _num(r'local PUN_PAD = (\d+)')
+_PUN_TOP = _num(r'local PUN_TOP = (\d+)')
+_LIST_TOP = _num(r'local LIST_TOP = (\d+)')
+need(None not in (_ROW_H, _ROWS_N, _PUN_BH, _PUN_BG, _PUN_PAD, _PUN_TOP, _LIST_TOP),
+     'не разобрать числа раскладки карточки (ROW_H…LIST_TOP)')
+if None not in (_ROW_H, _ROWS_N, _PUN_BH, _PUN_BG, _PUN_PAD, _PUN_TOP, _LIST_TOP):
+    _content = (84 + _ROWS_N * _ROW_H
+                + (_PUN_PAD - 2 + _PUN_TOP * _PUN_BH + (_PUN_TOP - 1) * _PUN_BG + 12))
+    _H = min(560, 768 - 42)
+    need(_content <= _H,
+         'карточка «%dpx» не влезает в окно «%dpx» на обычном экране (768 строк)' % (_content, _H))
+    _listH = _H - _LIST_TOP - 6
+    _rowsBottom = 84 + _ROWS_N * _ROW_H
+    _punBottom = 84 + _ROWS_N * _ROW_H + _PUN_PAD - 2 + (_PUN_TOP - 1) * (_PUN_BH + _PUN_BG) + _PUN_BH
+    need(_rowsBottom <= _LIST_TOP + _listH,
+         'последняя строка карточки не видна без прокрутки')
+    need(_punBottom <= _LIST_TOP + _listH,
+         'последняя кнопка наказания не видна без прокрутки')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
