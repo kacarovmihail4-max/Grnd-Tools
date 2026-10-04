@@ -45,6 +45,59 @@ check(serverDialog() == nil, "и сам хук его не трогает")
 check(GRND_RC.live.rc_level == before, "в слежке рекон из ручного окна тоже не обновляется")
 GRND_SPEC.active = false
 
+-- 4b) v1.19.66: в слежке ЧУЖИЕ окна не прячем — в том числе похожие на
+--     статистику, если их открыл сам администратор (например, через меню
+--     сервера, без команды в чате). Прячем только ответ на свой запрос.
+GRND_SPEC.active = true
+GRND_SPEC.id = 77
+GRND_STATS.waiting = false
+GRND_STATS.awaitAt, GRND_STATS.awaitHave = nil, true
+GRND_STATS.manualAt = -999
+local liveBefore = GRND_RC.live.rc_level
+check(serverDialog() == nil, "окно статистики, открытое вручную, не прячем (v1.19.66)")
+check(GRND_RC.live.rc_level == liveBefore, "и рекон из него не обновляется")
+check(_G.grndStatsShouldHide("Покупка", "Купить дом за 500000?") == false,
+    "обычное окно в слежке не прячем")
+-- а страница ПРОДОЛЖЕНИЯ нашего ответа (встык, со своей целью) — по-прежнему
+-- прячется и разбирается
+GRND_STATS.waiting = true
+GRND_STATS.waitAt = os.clock()
+GRND_STATS.lastIngestAt = os.clock()
+GRND_STATS.targetId = 77
+check(_G.grndStatsOnDialog(1, 0, DIALOG_TITLE, "Ок", "",
+    "Статистика игрока Test_Player[77]\nУровень: 19\nНомер аккаунта: 54") == true,
+    "страница продолжения своего ответа не спрятана")
+check(GRND_RC.live.rc_level == "19", "данные страницы продолжения не дошли до рекона")
+GRND_SPEC.active = false
+
+-- 4c) медленный сервер: ответ на НАШ автозапрос пришёл позже 6 с — окно
+--     показываем игроку (прятать так поздно нельзя), но данные всё равно
+--     разбираем: ответ помечен нашей целью «[77]»
+closeRecon()
+advance(30)
+GRND_STATS.doneKey, GRND_STATS.curKey, GRND_STATS.tries = nil, nil, 0
+GRND_STATS.pendingOpen, GRND_STATS.lastTarget = false, 0
+GRND_STATS.manualAt, GRND_STATS.manualHold = -999, false
+GRND_STATS.waiting, GRND_STATS.reqAt = false, -999
+GRND_STATS.awaitAt, GRND_STATS.awaitHave = nil, false
+GRND_RC.live = {}
+openRecon(77)
+gameFrame()
+check(GRND_STATS.waiting == true, "автозапрос ушёл (медленный сервер)")
+advance(9)
+check(_G.grndStatsOnDialog(1, 0, DIALOG_TITLE, "Ок", "",
+    "Статистика игрока Test_Player[77]\nУровень: 21") == nil,
+    "поздний ответ показываем (прятать после 6 с нельзя)")
+check(GRND_RC.live.rc_level == "21", "но данные позднего ответа дошли до карточки")
+
+-- 4d) окно ПО ДРУГОМУ игроку в слежке: показываем и в рекон не берём
+GRND_RC.live = {}
+GRND_STATS.waitAt = os.clock()
+check(_G.grndStatsOnDialog(1, 0, DIALOG_TITLE, "Ок", "",
+    "Статистика игрока Other_Player[88]\nУровень: 5") == nil,
+    "окно по другому игроку показываем")
+check(GRND_RC.live.rc_level == nil, "и в рекон его не берём (другая цель)")
+
 -- 5) запасной канал (textdraw) во время ручного окна тоже молчит
 _G.grndStatsOnTextDraw(DIALOG_TEXT)
 check(GRND_RC.live.rc_level == before, "textdraw-канал ручное окно в рекон не тянет")

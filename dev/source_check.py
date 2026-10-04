@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.65"' in s, 'версия не 1.19.65')
+need('GRND_SCRIPT_VERSION = "1.19.66"' in s, 'версия не 1.19.66')
 
 # v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
 # 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
@@ -945,11 +945,14 @@ need('local function stOurs()' in s and
      'if ST.ownPending then return true end' in s and
      'return os.clock() - (ST.reqAt or -999) <= 15' in s,
      'нет признака «ответ на наш запрос» (stOurs)')
-need('if not stOurs() then return nil end' in s,
+need('local function stOursIngest(full)' in s and
+     'if not stOursIngest(full) then return nil end' in s and
+     'return ST.waiting and stTargetIn(full)' in s,
      'окно без нашего запроса снова разбирается и прячется')
-need('if stSpecActive() then return stOurs() end' in s,
+need('if stSpecActive() then return stOursAwaiting() or stOurPage(full) end' in s,
      'в слежке прячется и ручное окно (должно прятаться только своё)')
-need('if stIsManual() or not stOurs() then return end' in s,
+need('if stIsManual() then return end' in s and
+     'if not stOursIngest(full) then return end' in s,
      'запасной канал (textdraw) наполняет рекон без нашего запроса')
 need('ST.ownPending, ST.ownId = true, tonumber(id)' in s,
      'своя отправка /stats не помечается точно (текст + id)')
@@ -964,17 +967,40 @@ need('local manualHold = (os.clock() - (ST.manualAt or -999)) < MANUAL_HOLD' in 
      'свой автозапрос не замолкает на время ручного окна')
 need('ST.pendingOpen = true' in s and 'ST.manualHold = false' in s,
      'после паузы карточка не просит статистику заново')
+need('local function stOursAwaiting()' in s and
+     'return ST.awaitAt ~= nil and not ST.awaitHave' in s and
+     'local AWAIT_MAX = 6' in s,
+     'нет состояния «ждём первую страницу своего ответа» (stOursAwaiting)')
+need('local function stOurPage(full)' in s and
+     "return tostring(full or \"\"):find(\"[\" .. tid .. \"]\", 1, true) ~= nil" in s and
+     'local PAGE_GAP = 3.5' in s,
+     'нет проверки «страница продолжения нашего ответа» (stOurPage)')
+need('if stSpecActive() then return stOursAwaiting() or stOurPage(full) end' in s and
+     'return stOursAwaiting() or stOurPage(full)' in s,
+     'окно сервера прячется не только «пока ждём свой ответ»')
+need('if not stOursIngest(full) then return nil end' in s,
+     'окно без нашего запроса снова разбирается (данные утекут в рекон)')
+need('local hideNow = _G.grndStatsShouldHide(title, text)' in s and
+     'if hideNow then' in s,
+     'решение «прятать ли» принимается после разбора (окно спрячется всегда)')
+need('ST.awaitAt, ST.awaitHave = os.clock(), false   -- v1.19.66: ждём ответ' in s,
+     'своя отправка не помечает ожидание первой страницы')
+need('ST.awaitAt, ST.awaitHave = nil, true' in s,
+     'ручной /stats не снимает ожидание своего ответа (окно администратора спрячется)')
+need('if not relB then return nil end' in s and
+     'if P.pid and lowB:find(tostring(P.pid), 1, true) then relB = true end' in s,
+     'окно /getinfo принимается даже без связи с запрошенным игроком (чужое окно проглотится)')
 hide_start = s.index('_G.grndStatsShouldHide = function(title, text)')
 hide_end = s.index('_G.grndStatsOnDialog = function', hide_start)
 hide_src = s[hide_start:hide_end]
 _manual_guard = 'if stIsManual() then return false end' in hide_src
-_spec_guard = 'if stSpecActive() then return stOurs() end' in hide_src
+_spec_guard = 'if stSpecActive() then return stOursAwaiting() or stOurPage(full) end' in hide_src
 need(_manual_guard and _spec_guard and
      hide_src.index('if stIsManual() then return false end') if _manual_guard and _spec_guard else False,
      'ручное окно /stats всё ещё прячется в слежке')
 if _manual_guard and _spec_guard:
     need(hide_src.index('if stIsManual() then return false end')
-         < hide_src.index('if stSpecActive() then return stOurs() end'),
+         < hide_src.index('if stSpecActive() then return stOursAwaiting() or stOurPage(full) end'),
          'порядок проверок: ручное окно должно проверяться раньше слежки')
 dlg_start = s.index('_G.grndStatsOnDialog = function')
 dlg_src = s[dlg_start:dlg_start + 3000]
@@ -989,8 +1015,8 @@ need('ST.manualAt = now' in chat_src and 'ST.waiting = false' in chat_src,
 need('grndStatsPopup' not in chat_src,
      'на ручной /stats снова открывается своё окно статистики')
 need('return nil' in chat_src, 'ручной /stats не выходит из обработчика сразу (сессия заведётся)')
-need('print("{00FFAA}[GRND]{FFFFFF} МОДУЛЬ 14 (v1.11.71) загружен — /stats встроен; '
-     'прячем только ответ на СВОЙ запрос, ручной /stats не трогаем")' in s,
+need('МОДУЛЬ 14 (v1.11.71) загружен — /stats встроен; прячем только ответ на '
+     'СВОЙ запрос, окна администратора не трогаем' in s,
      'строка загрузки модуля 14 не отражает новое правило')
 
 if fails:

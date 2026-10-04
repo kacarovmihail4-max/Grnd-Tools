@@ -624,6 +624,24 @@ check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игро�
     "ручное окно не спрятано")
 check(CHAT[1] == "/ans 40 Приветствую, ваши активные наказания >> Мут 60 минут | Бан 3 дня",
     "ручной режим: не тот ответ: " .. tostring(CHAT[1]) .. " | " .. tostring(QUEUE[1]))
+-- v1.19.66: пока ждём окно /getinfo, чужие окна НЕ глотаем — принимаем ответ
+-- только если он связан с запрошенным игроком (ник или ID)
+local savedChat, savedQueue = CHAT, QUEUE
+CHAT, QUEUE = {}, {}
+check(Q.punBegin(42, "Цель_Игрок", "manual") == true, "ручное ожидание (42) не началось")
+check(_G.grndQrPunOnDialog(10, 0, "Дом", "OK", "", "Ваш дом: Дом 3, гараж 2") == nil,
+    "чужое окно проглочено ожиданием /getinfo (v1.19.66)")
+check(_G.grndQrPunOnDialog(10, 0, "Магазин", "OK", "", "Купить хлеб за 5 рублей") == nil,
+    "чужое окно магазина проглочено (v1.19.66)")
+check(#CHAT == 0 and #QUEUE == 0, "на чужое окно ушёл ответ игроку")
+check(Q.punReq.on == true, "чужое окно сняло ожидание /getinfo")
+check(_G.grndQrPunOnDialog(10, 0, "Инфо", "OK", "",
+    "Аккаунт Цель_Игрок[42]\nМут 10 минут") == true,
+    "окно с ником запрошенного игрока не принято (v1.19.66)")
+local punOut = (CHAT[1] or QUEUE[1] or "")
+check(punOut:find("Мут 10 минут", 1, true) ~= nil,
+    "ответ по окну с ником не ушёл: " .. tostring(punOut))
+CHAT, QUEUE = savedChat, savedQueue
 -- убираем третью вкладку: дальше идут сценарии с двумя
 Q.autoDel(3)
 Q.autoEnsure()

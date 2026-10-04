@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.65"
+GRND_SCRIPT_VERSION = "1.19.66"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -11575,6 +11575,10 @@ end
 --  + время), а на время ручного запроса его собственный автозапрос молчит —
 --  иначе ответ на ручной /stats считался «нашим» и окно сервера пропадало.
 --  Прятать и разбирать можно ТОЛЬКО ответ на свой запрос (stOurs).
+--  v1.19.66: прячем ровно одну вещь — ПЕРВУЮ страницу ответа на свой запрос
+--  (пока её ждём, не дольше 6 с) и страницы его продолжения (встык, ≤3.5 с,
+--  с нашей целью «[ID]»). Любое окно, открытое администратором сам (командой
+--  или через меню сервера), остаётся на экране и в рекон не попадает.
 --  Запасной канал — «окно» из textdraw'ов.
 --  АВТОЗАПРОС: при открытом реконе и смене цели скрипт сам шлёт /stats.
 --  Обновление: кнопка «Статистика» в реконе.
@@ -11587,10 +11591,12 @@ GRND_STATS = _G.GRND_STATS or {
     -- v1.19.65: ownPending/ownId — «наша» отправка /stats; manualHold — пауза
     -- своего автозапроса на время ручного окна администратора
     ownPending = false, ownId = nil, manualHold = false, manualDialog = 0,
+    -- v1.19.66: awaitAt/awaitHave — ждём первую страницу ответа на свой запрос
+    awaitAt = nil, awaitHave = false,
 }
 -- маркер в консоль MoonLoader в момент загрузки файла: если этой строки
 -- нет в moonloader.log — игра грузит НЕ этот файл (старый/другой).
-print("{00FFAA}[GRND]{FFFFFF} МОДУЛЬ 14 (v1.11.71) загружен — /stats встроен; прячем только ответ на СВОЙ запрос, ручной /stats не трогаем")
+print("{00FFAA}[GRND]{FFFFFF} МОДУЛЬ 14 (v1.11.71) загружен — /stats встроен; прячем только ответ на СВОЙ запрос, окна администратора не трогаем")
 do
     local ST = GRND_STATS
 
@@ -11784,6 +11790,7 @@ do
         fullText = grndToUtf(tostring(fullText or ""))
         local u = stLower(fullText)
         if not ST.waiting and not stLooksStats(u) then return false end
+        ST.awaitHave = true     -- v1.19.66: страница ответа получена
 
         local lines = {}
         for seg in (fullText .. "\n"):gmatch("(.-)\n") do
@@ -11872,6 +11879,44 @@ do
         return os.clock() - (ST.reqAt or -999) <= 15
     end
 
+    -- v1.19.66: прятать окно сервера можно ТОЛЬКО пока ждём первую страницу
+    -- своего ответа (и не дольше 6 с). Всё, что приходит позже, — показываем:
+    -- администратор мог открыть окно сам, даже если оно похоже на статистику.
+    local AWAIT_MAX = 6
+    local function stOursAwaiting()
+        if ST.ownPending then return true end
+        return ST.awaitAt ~= nil and not ST.awaitHave
+            and os.clock() - ST.awaitAt <= AWAIT_MAX
+    end
+
+    -- Страница продолжения: пришла встык после страницы НАШЕГО ответа (≤3.5 с)
+    -- и содержит нашу цель — «[ID]» из своего запроса. Только такие страницы
+    -- ещё можно прятать и разбирать; отдельное окно, открытое позже, не трогаем.
+    local PAGE_GAP = 3.5
+    local function stTargetIn(full)
+        local tid = tostring(ST.targetId or "")
+        if tid == "" then return false end
+        return tostring(full or ""):find("[" .. tid .. "]", 1, true) ~= nil
+    end
+    local function stOurPage(full)
+        if not ST.waiting then return false end
+        local last = ST.lastIngestAt or 0
+        if last <= 0 or os.clock() - last > PAGE_GAP then return false end
+        return stTargetIn(full)
+    end
+
+    -- Разбор (данные в рекон) — чуть шире, чем прятать: ответ медленного
+    -- сервера приходит позже AWAIT_MAX, и окно уже показывается игроку, но
+    -- данные всё равно нужны карточке. Разбираем такой ответ, если он про
+    -- НАШУ цель («[ID]» из запроса) и сессия разбора ещё открыта. Окно,
+    -- открытое администратором по другому игроку, не подходит по цели и
+    -- остаётся нетронутым.
+    local function stOursIngest(full)
+        if not stOurs() then return false end
+        if stOursAwaiting() or stOurPage(full) then return true end
+        return ST.waiting and stTargetIn(full)
+    end
+
     _G.grndStatsShouldHide = function(title, text)
         local full = ("%s\n%s"):format(tostring(title or ""), tostring(text or ""))
         local looks = stLooksStats(stLower(grndToUtf(full)))
@@ -11880,14 +11925,12 @@ do
         -- Ручной /stats — окно сервера оставляем игроку как есть (и в слежке).
         if stIsManual() then return false end
         -- В слежке прячем модальный ответ сервера на СВОЙ запрос: он заслонил
-        -- бы рекон, а данные и так идут в карточку слежки. Ответ на ЧУЖОЙ
-        -- (ручной) запрос прятать нельзя — v1.19.65.
-        if stSpecActive() then return stOurs() end
-        -- Вне слежки — то же самое, пока наш запрос свежий.
-        if ST.waiting and os.clock() - (ST.waitAt or -999) <= 6 then
-            return true
-        end
-        return false
+        -- бы рекон, а данные и так идут в карточку слежки. Любое другое окно
+        -- (в т.ч. окно, открытое администратором вручную через меню сервера)
+        -- остаётся на экране — v1.19.65/66.
+        if stSpecActive() then return stOursAwaiting() or stOurPage(full) end
+        -- Вне слежки — то же самое.
+        return stOursAwaiting() or stOurPage(full)
     end
 
     _G.grndStatsOnDialog = function(id, style, title, b1, b2, text)
@@ -11905,16 +11948,21 @@ do
                 ST.manualDialog = (ST.manualDialog or 0) + 1
                 return nil
             end
-            -- v1.19.65: разбираем ТОЛЬКО ответ на свой запрос. Окно, которое
+            -- v1.19.65/66: разбираем ТОЛЬКО ответ на свой запрос — его первую
+            -- страницу (пока ждём) или страницы продолжения. Окно, которое
             -- администратор открыл сам (или вообще без нашего запроса), в
             -- рекон не попадает и не прячется — даже если признак ручного
             -- ввода потерялся.
-            if not stOurs() then return nil end
+            if not stOursIngest(full) then return nil end
+            -- v1.19.66: решение «прятать ли» принимаем ДО разбора. Разбор
+            -- обновляет метку времени страницы, и окно иначе выглядело бы
+            -- «страницей продолжения» самого себя (и пряталось бы всегда).
+            local hideNow = _G.grndStatsShouldHide(title, text)
             -- v1.11.63: разбор — в pcall: ошибка в инжесте больше не
             -- может помешать спрятать окно.
             local okI, errI = pcall(stIngest, full, id)
             if not okI then ST.lastIngestErr = tostring(errI) end
-            if _G.grndStatsShouldHide(title, text) then
+            if hideNow then
                 ST.dlgHidden = (ST.dlgHidden or 0) + 1
                 return true
             end
@@ -11936,6 +11984,10 @@ do
             and now - (ST.ownSentAt or -999) <= 1.0
         if not ours then
             ST.ownPending = false
+            -- v1.19.66: ручной /stats отменяет ожидание ответа на свой запрос —
+            -- иначе окно администратора, пришедшее «в окне ожидания», могло
+            -- быть спрятано как наше
+            ST.awaitAt, ST.awaitHave = nil, true
             ST.src = "chat"
             ST.manualAt = now          -- v1.11.62: метка ручного /stats
             ST.manualHold = true       -- v1.19.65: свой автозапрос — на паузу
@@ -11959,9 +12011,12 @@ do
 
     -- «окно» из textdraw'ов (запасной канал)
     _G.grndStatsOnTextDraw = function(text)
-        -- v1.19.65: запасной канал наполняет рекон, только пока наш запрос
-        -- свеж; во время ручного окна администратора он молчит
-        if stIsManual() or not stOurs() then return end
+        -- v1.19.65/66: запасной канал наполняет рекон, только пока ждём ответ
+        -- на свой запрос (или идёт страница продолжения/ответ по нашей цели);
+        -- во время ручного окна администратора и после него он молчит
+        if stIsManual() then return end
+        local full = grndToUtf(tostring(text or ""))
+        if not stOursIngest(full) then return end
         if type(text) == "string" and text ~= "" then
             stIngest(text, "textdraw")
         end
@@ -11982,6 +12037,7 @@ do
         -- после нашего автозапроса, считался нашей же отправкой — окно
         -- сервера пряталось, а данные уходили в рекон.
         ST.ownPending, ST.ownId = true, tonumber(id)
+        ST.awaitAt, ST.awaitHave = os.clock(), false   -- v1.19.66: ждём ответ
         ST.manualAt = -999          -- свой запрос снимает ручное окно
         ST.manualHold = false
         ST.src = src or "auto"
@@ -28154,6 +28210,29 @@ do
         -- ответом, даже если формулировки сервера разошлись с ожиданием
         -- (админ сам нажал кнопку или автопилот сам спросил — окно наше).
         if not looks and age <= 3.0 and #body >= 5 then
+            -- v1.19.66: даже «ответ почти сразу» принимаем, только если окно
+            -- связано с запрошенным игроком (ник или ID) — иначе админ мог
+            -- открыть своё окно, и глотать его нельзя
+            local lowB = QR.punNorm(body)
+            if type(_G.grndLowerUtf) == "function" then
+                local okL, l = pcall(_G.grndLowerUtf, lowB)
+                if okL and type(l) == "string" then lowB = l end
+            else
+                lowB = lowB:lower()
+            end
+            local relB = false
+            if P.pid and lowB:find(tostring(P.pid), 1, true) then relB = true end
+            if P.nick and P.nick ~= "" then
+                local nk = P.nick
+                if type(_G.grndLowerUtf) == "function" then
+                    local okN, l = pcall(_G.grndLowerUtf, nk)
+                    if okN and type(l) == "string" then nk = l end
+                else
+                    nk = nk:lower()
+                end
+                if lowB:find(nk, 1, true) then relB = true end
+            end
+            if not relB then return nil end
             local foreign = false
             if type(_G.grndRepAcceptDialog) == "function" then
                 local okR, r = pcall(_G.grndRepAcceptDialog, dialogId, title, body)
