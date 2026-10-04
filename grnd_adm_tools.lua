@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.60"
+GRND_SCRIPT_VERSION = "1.19.61"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -38960,24 +38960,35 @@ function grndMainBody()
             -- 3D-модель персонажа в ImGui нарисовать нельзя, поэтому на её
             -- месте — буква ника; «Оружие», «Патроны» и «AFK» в карточку не
             -- выводятся (просьба заказчика).
+            -- v1.19.61: карточка рекона — по образцу заказчика.
+            --   • ник слева, рядом ЗНАЧОК «копировать» (в игровом шрифте
+            --     символа нет — рисуем две наложенные рамки сами);
+            --   • место 3D-модели персонажа пустое: ImGui модель нарисовать
+            --     не может, поэтому там НИЧЕГО нет (просьба заказчика);
+            --   • справа — один прокручиваемый список: сначала характеристика
+            --     игрока (Пинг, Здоровье, Броня, Скорость), затем
+            --     полупрозрачная линия и статистика (Имя, Номер аккаунта,
+            --     Уровень). «Оружие», «Патроны» и «AFK» не выводятся;
+            --   • стрелка внизу сворачивает и разворачивает весь блок
+            --     информации и статистики.
             local W = math.floor(math.max(400, math.min(460, resX * 0.28)))
             local pad = 14
-            local HEAD = 34             -- шапка: «Ник [ID]» по центру
-            local BOT = 22              -- низ: треугольник «наверх» по центру
-            local LW = math.floor(W * 0.30)   -- левая колонка: модель и кнопки
+            local HEAD = 34             -- шапка: ник слева + значок «копировать»
+            local BOT = 22              -- низ: стрелка «свернуть/развернуть»
+            local LW = math.floor(W * 0.30)   -- левая колонка: кнопки наказаний
             local RX = pad + LW + 12    -- с этой линии — колонка строк
             local RW = W - pad - 12 - RX      -- ширина колонки строк
             local ROW_H = 24            -- высота строки сведений
-            local ROWS_N = 7            -- сколько строк в списке
-            local AV_H = 84             -- место «модели» (буква ника)
+            local ROWS_A = 4            -- характеристика игрока
+            local ROWS_B = 3            -- статистика
+            local DIV_H = 13            -- полупрозрачная линия между блоками
+            local MODEL_H = ROWS_A * ROW_H    -- пустое место «3D-модели»
             local PUN_BH = 30           -- высота кнопки наказания
             local PUN_BG = 6            -- зазор между кнопками
-            -- v1.19.59: в карточке — четыре кнопки наказаний, как просил
-            -- заказчик (JAIL, BAN, KICK, MUTE — по списку из настроек).
-            local PUN_TOP = 4
-            local LIST_TOP = HEAD + 2   -- с этой линии начинается САМ СПИСОК
+            local PUN_TOP = 4           -- сколько кнопок в карточке
+            local TOP_Y = HEAD + 6      -- верх списка и колонки кнопок
             local SCROLL_STEP = ROW_H   -- один оборот колеса = одна строка
-            local H_MIN = 200           -- ниже карточка не сжимается
+            local H_MIN = 180           -- ниже карточка не сжимается
             -- карточка сама загружает настройки наказаний (раньше это делала
             -- отдельная панель): оттуда приходит и тумблер «кнопки в карточке»
             if GRND_PUN and not GRND_PUN.loaded then pcall(GRND_PUN.load) end
@@ -38985,25 +38996,30 @@ function grndMainBody()
                 and GRND_PUN.list or nil
             local punCnt = (type(punItems) == "table") and #punItems or 0
             if punCnt > PUN_TOP then punCnt = PUN_TOP end
-            local rowsH = ROWS_N * ROW_H
-            local leftH = AV_H + ((punCnt > 0)
-                and (punCnt * PUN_BH + (punCnt - 1) * PUN_BG + 8) or 0)
-            local contentH = HEAD + math.max(rowsH, leftH) + BOT + 6
+            local punH = (punCnt > 0)
+                and (punCnt * PUN_BH + (punCnt - 1) * PUN_BG) or 0
+            local rowsH = ROWS_A * ROW_H + DIV_H + ROWS_B * ROW_H
+            -- состояние «свёрнуто» живёт в RC: стрелка внизу его меняет
+            local openState = (RC.statsOpen ~= false)
+            local leftTop = TOP_Y + (openState and MODEL_H or 0) + 4
+            local leftBottom = leftTop + punH
+            local contentH = math.max(openState and (TOP_Y + rowsH) or 0,
+                leftBottom) + BOT + 6
             -- Высота окна ограничена ЭКРАНОМ, а не содержимым: всё, что не
             -- влезло, живёт в окне прокрутки (шапка при этом не уезжает).
             local H_MAX = math.max(H_MIN, math.min(560, resY - 42))
             local H = math.max(H_MIN, math.min(H_MAX, contentH))
-            local listTop = LIST_TOP
-            local listH = math.max(40, H - listTop - BOT - 4)
-            local scrollMax = math.max(0, rowsH - listH)
+            local listTop = TOP_Y
+            local listH = math.max(24, H - listTop - BOT - 4)
+            local scrollMax = openState and math.max(0, rowsH - listH) or 0
             local scroll = math.max(0, math.min(scrollMax,
                 tonumber(RC.scroll) or 0))
             RC.scroll = scroll
-            -- рисуем и нажимаем только те строки/кнопки, что видны ЦЕЛИКОМ
-            -- (текст ImGui не режется нашей маской — половина строки,
-            -- вылезшая за окно прокрутки, выглядела бы обрывком)
+            -- рисуем и нажимаем только те строки, что видны ЦЕЛИКОМ (текст
+            -- ImGui не режется нашей маской — половина строки, вылезшая за
+            -- окно прокрутки, выглядела бы обрывком)
             local function inList(y0, h0)
-                return (y0 >= listTop - 0.5)
+                return openState and (y0 >= listTop - 0.5)
                     and (y0 + h0 <= listTop + listH + 0.5)
             end
             -- правый край значений и короткая шкала ХП/брони под ними
@@ -39013,38 +39029,39 @@ function grndMainBody()
             local px = resX - W - 24
             local py = math.max(22, math.floor((resY - H) / 2))
             if RC.posX and RC.posY then px, py = RC.posX, RC.posY end
-            -- перетаскивание за шапку; короткий клик по ней — «копировать ник»
-            -- (отдельной кнопки в образце нет). Доступно при включённом
-            -- курсоре (ПКМ): иначе ЛКМ-клик уходит в игру (выстрел).
+            -- перетаскивание за шапку. Доступно при включённом курсоре (ПКМ):
+            -- иначе ЛКМ-клик уходит в игру (выстрел) — тащить было бы нельзя.
             local headRect = { x = px, y = py, w = W, h = HEAD }
-            local headClick = false
             if RC.cursor and GRND_MOUSE.down then
                 if not RC.dragging and grndMouseInside(headRect) then
                     RC.dragging = true
                     RC.dragDX = GRND_MOUSE.x - px
                     RC.dragDY = GRND_MOUSE.y - py
-                    RC.dragMoved = false
                 end
             elseif RC.dragging then
                 RC.dragging = false
                 pcall(grndCamCfgSave)   -- запомнили позицию окна
-                if not RC.dragMoved then headClick = true end
             end
             if RC.dragging then
-                local nx = math.max(0, math.min(resX - W, GRND_MOUSE.x - (RC.dragDX or 0)))
-                local ny = math.max(0, math.min(resY - H, GRND_MOUSE.y - (RC.dragDY or 0)))
-                if math.abs(nx - px) > 3 or math.abs(ny - py) > 3 then RC.dragMoved = true end
-                px, py = nx, ny
+                px = math.max(0, math.min(resX - W, GRND_MOUSE.x - (RC.dragDX or 0)))
+                py = math.max(0, math.min(resY - H, GRND_MOUSE.y - (RC.dragDY or 0)))
                 RC.posX, RC.posY = px, py
             end
+            local valueX = math.floor(W * 0.51)
+            local valueW = W - pad - valueX
             RC.activeTab = "overview"
             -- Курсор включается только правой кнопкой мыши.
             if RC.cursor == nil then RC.cursor = false end
             RC.windowPos = { x = px, y = py }
             RC.windowSize = { w = W, h = H }
             -- v1.19.59: колесо мыши над этим прямоугольником листает список
-            RC.scrollRect = { x = px + RX - 6, y = py + listTop,
-                w = RW + 18, h = listH }
+            -- (свёрнутый блок не листается — колесо уходит игре, как раньше)
+            if openState and scrollMax > 0 then
+                RC.scrollRect = { x = px + RX - 8, y = py + listTop,
+                    w = math.min(RW + 20, W - RX - 4), h = listH }
+            else
+                RC.scrollRect = nil
+            end
             RC.scrollStep = SCROLL_STEP   -- шаг прокрутки (его читает обработчик колеса)
 
             local function textValue(key, fallback)
@@ -39103,7 +39120,8 @@ function grndMainBody()
             -- v1.11.83: серверная скорость сглаживается окном ПО КАДРАМ
             -- (прошлая версия считала окно по os.clock — в игре это
             -- процессорное время, окно растянулось и показывало 0), а если
-            -- сервер молчит или показывает 0, скорость берём у игры (км/ч)
+            -- сервер молчит или показывает 0, скорость берём у игры (км/ч).
+            -- v1.19.61: в карточке — просто число, как в образце.
             local speed = grndSpeedDisplay(id, textValue("speed", ""), true)
             -- «Уровень» — только число уровня: если отдельного поля нет,
             -- берём его из «Уровень (EXP)» («18 (12345)» → «18»)
@@ -39121,9 +39139,9 @@ function grndMainBody()
             if grndPushCol(im.Col and im.Col.WindowBg, rgba(0, 0, 0, 0)) then colorN = colorN + 1 end
             if grndPushCol(im.Col and im.Col.Border, rgba(0, 0, 0, 0)) then colorN = colorN + 1 end
 
-            -- Без NoInputs: шапка (клик — копировать ник) и кнопки должны
-            -- быть кликабельны. NoScrollWithMouse: карточка листается своим
-            -- колесом (см. RC.scrollRect), а не колесом ImGui.
+            -- Без NoInputs: значок «копировать», кнопки наказаний и стрелка
+            -- должны быть кликабельны. NoScrollWithMouse: карточка листается
+            -- своим колесом (см. RC.scrollRect), а не колесом ImGui.
             local flags = wf("NoTitleBar", "NoResize", "NoMove", "NoScrollbar",
                 "NoCollapse", "NoFocusOnAppearing", "NoBringToFrontOnFocus",
                 "NoScrollWithMouse")
@@ -39178,45 +39196,47 @@ function grndMainBody()
                 frame(0.5, 0.5, W - 1, H - 1, col32(255, 255, 255, 25), 13)
                 -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
 
-                -- Шапка (образец): «Ник [ID]» по центру. Отдельной кнопки
-                -- копирования нет — короткий клик по шапке копирует ник.
-                local title = shortValue(nick, 20) .. " [" .. tostring(id) .. "]"
+                -- Шапка: ник СЛЕВА, сразу за ним значок «копировать».
+                local title = shortValue(nick, 18) .. " [" .. tostring(id) .. "]"
                 local titleW = drawnW(title, 1.0)
-                local headHover = RC.cursor and grndMouseInside(headRect) or false
-                if headHover then
-                    fill(4, 3, W - 8, HEAD - 3,
-                        col32(TH.accent[1], TH.accent[2], TH.accent[3], 16), 10)
+                put(pad, 9, title, c4(TH.textHi), 1.0)
+                local icS = 22
+                local icX = pad + titleW + 10
+                local icY = 6
+                im.SetCursorPos(im.ImVec2(icX, icY))
+                local copyClick = im.InvisibleButton("##grnd_recon_copy", im.ImVec2(icS, icS))
+                local copyHover = (im.IsItemHovered and im.IsItemHovered()) or false
+                if copyHover then
+                    fill(icX, icY, icS, icS,
+                        col32(TH.accent[1], TH.accent[2], TH.accent[3], 26), 6)
                 end
-                put(math.floor((W - titleW) / 2), 9, title, c4(TH.textHi), 1.0)
-                if headClick and notify and notify.add then
+                -- значок рисуем сами: в игровом шрифте символа «копировать» нет
+                local icCol = copyHover
+                    and col32(TH.accent[1], TH.accent[2], TH.accent[3], 235)
+                    or col32(255, 255, 255, 150)
+                if dl.AddRect then
+                    pcall(dl.AddRect, dl, at(icX + 5, icY + 4), at(icX + 13, icY + 12),
+                        icCol, 2, 0, 1.2)
+                    fill(icX + 8, icY + 7, 8, 8, col32(10, 15, 20, 255), 1)
+                    pcall(dl.AddRect, dl, at(icX + 8, icY + 7), at(icX + 16, icY + 15),
+                        icCol, 2, 0, 1.2)
+                end
+                if copyClick and notify and notify.add then
                     local copied = reconCopyNickname(nick)
                     pcall(notify.add,
                         copied and "Ник скопирован в буфер" or "Не удалось скопировать ник",
                         copied and "ok" or "warn", 2)
                 end
 
-                -- Левая колонка: на месте 3D-модели (её ImGui не умеет) —
-                -- крупная буква ника в акцентном круге.
-                local avatar = string.upper(nick:match("^[%z\1-\127\194-\244][\128-\191]*") or "?")
-                local avX = pad + math.floor(LW / 2)
-                local avY = HEAD + math.floor(AV_H / 2)
-                dl:AddCircleFilled(at(avX, avY), 30,
-                    col32(TH.accent[1], TH.accent[2], TH.accent[3], 26), 40)
-                if dl.AddCircle then
-                    pcall(dl.AddCircle, dl, at(avX, avY), 30,
-                        col32(TH.accent[1], TH.accent[2], TH.accent[3], 120), 40, 1.2)
-                end
-                put(avX - grndTextW(avatar) * 0.6, avY - 14, avatar, c4(TH.accent), 1.6)
-
-                -- Кнопки наказаний: столбиком в левой колонке под «моделью»
-                -- (в образце они именно там). Тумблер GRND_PUN.barOn прячет
-                -- и показывает весь блок.
+                -- Кнопки наказаний: столбиком в левой колонке. Место 3D-модели
+                -- над ними пустое (модель ImGui нарисовать не может). Тумблер
+                -- GRND_PUN.barOn прячет и показывает весь блок.
                 for i = 1, punCnt do
                     local itm = punItems[i]
                     local btnLabel = tostring((itm and itm.id) or "")
                     local bw2 = LW - 12
                     local bxx = pad + 6
-                    local byy = HEAD + AV_H + (i - 1) * (PUN_BH + PUN_BG)
+                    local byy = leftTop + (i - 1) * (PUN_BH + PUN_BG)
                     im.SetCursorPos(im.ImVec2(bxx, byy))
                     local clicked = im.InvisibleButton("##rcb_p_" .. btnLabel,
                         im.ImVec2(bw2, PUN_BH))
@@ -39238,9 +39258,9 @@ function grndMainBody()
                     end
                 end
 
-                -- Строки: метка слева, значение справа (как в образце).
-                -- v1.19.59: список может не влезть в окно — тогда он едет
-                -- вверх/вниз по прокрутке (колесо мыши, см. RC.scrollRect).
+                -- Список: метка слева, значение справа (как в образце).
+                -- v1.19.61: один прокручиваемый блок — характеристика игрока,
+                -- полупрозрачная линия, статистика.
                 local y = listTop - scroll
                 local rowN = 0
                 local function row(name, value, color, numeric, maxValue, height)
@@ -39270,13 +39290,23 @@ function grndMainBody()
                         end
                     end
                 end
+                -- полупрозрачная линия между характеристикой и статистикой
+                local function divider()
+                    y = y + 6
+                    local dy = y
+                    y = y + 1 + 6
+                    if inList(dy, 1) then
+                        fill(RX, dy, W - pad - RX - 12, 1, col32(255, 255, 255, 38), 0)
+                    end
+                end
 
-                -- v1.19.60: порядок строк — как в образце; «Оружие»,
+                -- v1.19.61: порядок строк — как в образце; «Оружие»,
                 -- «Патроны» и «AFK» в карточку не выводятся.
                 row("Пинг", ping, c4(TH.text), nil, nil, ROW_H)
                 row("Здоровье", hpText, c4(TH.accent), hpNum, grndParamScale(hpNum), ROW_H)
                 row("Броня", armText, c4(TH.accent2), armNum, grndParamScale(armNum), ROW_H)
                 row("Скорость", speed, c4(TH.text), nil, nil, ROW_H)
+                divider()
                 row("Имя:", nick, c4(TH.textHi), nil, nil, ROW_H)
                 row("Номер аккаунта:", textValue("rc_account", "—"), c4(TH.text), nil, nil, ROW_H)
                 row("Уровень:", lvlRaw, c4(TH.text), nil, nil, ROW_H)
@@ -39284,7 +39314,7 @@ function grndMainBody()
                 -- v1.19.59: полоса прокрутки у правого края (появляется
                 -- только когда список длиннее окна). Ведём и мышью, а
                 -- основное — колесо мыши (см. RC.scrollRect).
-                if scrollMax > 0 then
+                if openState and scrollMax > 0 then
                     local trX = W - pad + 2
                     roundRect(dl, at(trX, listTop), at(trX + 3, listTop + listH),
                         col32(255, 255, 255, 14), 2)
@@ -39293,20 +39323,30 @@ function grndMainBody()
                     roundRect(dl, at(trX, barY), at(trX + 3, barY + barH),
                         col32(255, 255, 255, 120), 2)
                 end
-                -- Треугольник внизу по центру (как в образце): клик — список
-                -- наверх. Пока список и так наверху, он приглушён.
+                -- Стрелка внизу по центру: сворачивает и разворачивает весь
+                -- блок информации и статистики (свёрнуто — стрелка вниз).
                 im.SetCursorPos(im.ImVec2(math.floor(W / 2) - 12, H - BOT + 1))
                 local topClick = im.InvisibleButton("##grnd_recon_top", im.ImVec2(24, 18))
                 local topHover = (im.IsItemHovered and im.IsItemHovered()) or false
                 local cx2 = math.floor(W / 2)
                 local cy2 = H - BOT / 2 + 1
-                local triA = (scroll > 1) and 200 or (topHover and 120 or 60)
+                local triA = topHover and 235 or (openState and 170 or 120)
+                local triCol = col32(TH.accent[1], TH.accent[2], TH.accent[3], triA)
                 if dl.AddTriangleFilled then
-                    pcall(dl.AddTriangleFilled, dl,
-                        at(cx2 - 5, cy2 + 3), at(cx2, cy2 - 3), at(cx2 + 5, cy2 + 3),
-                        col32(TH.accent[1], TH.accent[2], TH.accent[3], triA))
+                    if openState then
+                        pcall(dl.AddTriangleFilled, dl,
+                            at(cx2 - 5, cy2 + 3), at(cx2, cy2 - 3), at(cx2 + 5, cy2 + 3),
+                            triCol)
+                    else
+                        pcall(dl.AddTriangleFilled, dl,
+                            at(cx2 - 5, cy2 - 3), at(cx2 + 5, cy2 - 3), at(cx2, cy2 + 3),
+                            triCol)
+                    end
                 end
-                if topClick and scroll > 1 then RC.scroll = 0 end
+                if topClick then
+                    RC.statsOpen = not openState
+                    RC.scroll = 0          -- развернём — список с начала
+                end
             end
             if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
             grndPopCol(colorN)

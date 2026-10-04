@@ -1,7 +1,7 @@
--- ==== стенд карточки рекона (v1.19.59): раскладка, прокрутка, кнопки ====
--- Грузим НАСТОЯЩИЙ кусок отрисовки карточки (строки «Пинг…Уровень» и кнопки
--- наказаний) и подменяем только ImGui: видим, какие строки и кнопки реально
--- нарисованы и какие кнопки ImGui создал (по ним и клики).
+-- ==== стенд карточки рекона (v1.19.61): раскладка, группы, скролл, сворачивание ====
+-- Грузим НАСТОЯЩИЙ кусок отрисовки карточки и подменяем только ImGui: видим,
+-- какие строки и кнопки реально нарисованы, какие прямоугольники залиты (по ним
+-- проверяем полупрозрачную линию и полосу прокрутки) и какие кнопки ImGui создал.
 HPRINT = print
 function print(...) end
 FAILS = 0
@@ -15,8 +15,10 @@ function check(cond, msg)
 end
 
 -- ---- что «нарисовано» в этом кадре ----
-DRAWN = {}      -- { kind = "row"/"button"/"label", name = ..., y = ... }
-BTNS = {}       -- id кнопок ImGui в кадре
+DRAWN = {}      -- текст: { name, x, y }
+FILLS = {}      -- заливки: { x, y, w, h, r, g, b, a }
+CIRCLES = {}    -- круги (в карточке v1.19.61 их быть не должно)
+BTNS = {}       -- кнопки ImGui в кадре: { id, x, y, w, h }
 CLICK = {}      -- какие кнопки «нажаты» в этом кадре
 TOASTS = {}
 CURSOR = { x = 0, y = 0 }
@@ -24,17 +26,16 @@ resX, resY = 1920, 1080
 COND_ALWAYS = 0
 
 local function newFrame()
-    DRAWN, BTNS = {}, {}
-    TOASTS = TOASTS or {}
+    DRAWN, FILLS, CIRCLES, BTNS = {}, {}, {}, {}
 end
 
 -- ---- заглушки ImGui ----
 local POS = { x = 0, y = 0, w = 0, h = 0 }
 local dl = {}
-function dl.AddRectFilled() end
+function dl.AddRectFilled(x1, y1, x2, y2, c, r) FILLS[#FILLS + 1] = { } end
 function dl.AddRect() end
-function dl.AddCircleFilled() end
-function dl.AddCircle() end
+function dl.AddCircleFilled() CIRCLES[#CIRCLES + 1] = true end
+function dl.AddCircle() CIRCLES[#CIRCLES + 1] = true end
 function dl.AddLine() end
 function dl.AddTriangleFilled() end
 function dl.PushClipRect() return true end
@@ -78,10 +79,18 @@ TH = {
     textMuted = { 140, 149, 168, 255 }, textDim = { 110, 118, 134, 255 },
     accent = { 0, 214, 170, 255 }, accent2 = { 90, 160, 255, 255 },
 }
-function col32(r, g, b, a) return 0 end
-function rgba(r, g, b, a) return 0 end
+function col32(r, g, b, a)
+    return { r = r, g = g, b = b, a = a, [1] = r, [2] = g, [3] = b, [4] = a }
+end
+function rgba(r, g, b, a) return { r = r, g = g, b = b, a = a } end
 function c4(t) return 0 end
-function roundRect(a, b, c, d, e, f) end
+-- в карточке заливка идёт как roundRect(drawList, p1, p2, color, radius)
+function roundRect(dll, p1, p2, col, rad)
+    local cc = (type(col) == 'table') and col or {}
+    FILLS[#FILLS + 1] = { x = p1.x, y = p1.y, w = p2.x - p1.x, h = p2.y - p1.y,
+                          r = cc[1] or 0, g = cc[2] or 0, b = cc[3] or 0,
+                          a = cc[4] or 0 }
+end
 function uiText(x, y, s, col, scale)
     DRAWN[#DRAWN + 1] = { kind = 'text', name = tostring(s), x = x, y = y }
 end
@@ -108,6 +117,8 @@ function grndParamLabel(id, key, raw) return tostring(raw or '') end
 notify = { add = function(text, kind, sec) TOASTS[#TOASTS + 1] = tostring(text) end }
 
 -- ---- состояние рекона (обычно его держит игра) ----
+endDepth = 0
+GRND_MOUSE = { x = 0, y = 0, down = false, clicked = false }
 -- в игре id цели — локальная переменная кадра рекона
 id = 77
 RC = {
@@ -115,10 +126,6 @@ RC = {
     live = { hp = "100", arm = "80", ping = "30", speed = "45",
              rc_account = "12345", rc_level = "18" },
 }
--- в игре endDepth — локальная переменная кадра ImGui (в стенде просто счётчик)
-endDepth = 0
-GRND_MOUSE = { x = 0, y = 0, down = false, clicked = false }
-
 GRND_PUN = {
     loaded = true, barOn = true,
     list = { { id = "JAIL" }, { id = "BAN" }, { id = "KICK" },
@@ -138,14 +145,33 @@ function drawnRows()
             out[#out + 1] = { name = d.name, y = d.y, x = d.x }
         end
     end
-    -- порядок как на экране: сверху вниз
     table.sort(out, function(a, b) return a.y < b.y end)
     return out
+end
+function drawnText(name)
+    for _, d in ipairs(DRAWN) do
+        if d.kind == 'text' and d.name == name then return d end
+    end
+    return nil
 end
 function drawnPunButtons()
     local out = {}
     for _, b in ipairs(BTNS) do
         if b.id:sub(1, 8) == '##rcb_p_' then out[#out + 1] = b end
+    end
+    return out
+end
+function drawnButton(id)
+    for _, b in ipairs(BTNS) do
+        if b.id == id then return b end
+    end
+    return nil
+end
+-- полупрозрачные линии (разделитель блоков): высота 1 px и альфа < 255
+function drawnLines()
+    local out = {}
+    for _, f in ipairs(FILLS) do
+        if f.h == 1 and f.a > 0 and f.a < 255 then out[#out + 1] = f end
     end
     return out
 end

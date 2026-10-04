@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.60"' in s, 'версия не 1.19.60')
+need('GRND_SCRIPT_VERSION = "1.19.61"' in s, 'версия не 1.19.61')
 
 # v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
 # 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
@@ -108,27 +108,43 @@ need('function klScanCandidates(limit, maxBytes, timeLimit)' in s and
      'KL.scanStat = "перебор прерван по времени — продолжаю позже"' in s,
      'авто-перебор памяти килл-листа снова читает мегабайты в одном тике')
 
-# v1.19.60: карточка рекона — раскладка как в образце заказчика:
-# слева колонка с «моделью» и кнопками наказаний, справа единый список строк,
-# шапка «Ник [ID]» по центру, низ — треугольник «наверх».
+# v1.19.61: карточка рекона — по образцу заказчика:
+#   • ник слева + ЗНАЧОК «копировать» (символа в шрифте нет — две рамки);
+#   • место 3D-модели ПУСТОЕ (модель ImGui нарисовать не может);
+#   • справа один прокручиваемый список: характеристика игрока, затем
+#     полупрозрачная линия и статистика;
+#   • стрелка внизу сворачивает и разворачивает блок информации и статистики.
+card_start = s.index('if grndBegin("##grnd_recon_card", flags) then')
+card_end = s.index('if endDepth > 0 then endDepth = endDepth - 1', card_start)
+card = s[card_start:card_end]
+need(len(card) > 4000, 'не найти блок отрисовки карточки рекона')
 need('local W = math.floor(math.max(400, math.min(460, resX * 0.28)))' in s,
      'карточка рекона снова узкая (в образце две колонки, ~430 px)')
 need('local LW = math.floor(W * 0.30)' in s and 'local RX = pad + LW + 12' in s,
-     'в карточке нет левой колонки под «модель» и кнопки наказаний')
-# шапка
-need('local title = shortValue(nick, 20) .. " [" .. tostring(id) .. "]"' in s and
-     'put(math.floor((W - titleW) / 2), 9, title, c4(TH.textHi), 1.0)' in s,
-     'в шапке нет «Ник [ID]» по центру (как в образце)')
-need('if not RC.dragMoved then headClick = true end' in s and
+     'в карточке нет левой колонки под кнопки наказаний')
+# ник слева и значок «копировать» рядом с ним
+need('local title = shortValue(nick, 18) .. " [" .. tostring(id) .. "]"' in s and
+     'put(pad, 9, title, c4(TH.textHi), 1.0)' in s,
+     'ник в шапке не прижат влево')
+absent('math.floor((W - titleW) / 2)', 'ник в шапке снова по центру')
+need('im.InvisibleButton("##grnd_recon_copy"' in s and
+     'pcall(dl.AddRect, dl, at(icX + 5, icY + 4), at(icX + 13, icY + 12),' in s and
+     'pcall(dl.AddRect, dl, at(icX + 8, icY + 7), at(icX + 16, icY + 15),' in s and
      'local copied = reconCopyNickname(nick)' in s,
-     'короткий клик по шапке не копирует ник (кнопки копирования в образце нет)')
-# единый список строк, ровно семь, в колонке справа
-need('local ROW_H = 24' in s and 'local ROWS_N = 7' in s,
-     'у карточки снова не семь строк по 24 px')
-need('label(RX, ry + 3, name, 0.80)' in s and 'put(valueRight - tw, ry + 2, s' in s,
-     'строки рисуются не в колонке (метка слева, значение справа)')
-need('local valueRight = W - pad - 12' in s and 'local barW = math.max(40, math.floor(RW * 0.35))' in s,
-     'правое выравнивание значений и шкалы ХП/брони потеряны')
+     'рядом с ником нет значка «копировать»')
+# место 3D-модели пустое: ни аватара, ни кругов
+absent('string.upper(nick:match', 'в карточку вернулся аватар-буква (место 3D-модели)')
+need('local MODEL_H = ROWS_A * ROW_H' in s and 'local leftTop = TOP_Y + (openState and MODEL_H or 0) + 4' in s,
+     'в карточке нет пустого места под 3D-модель')
+need('AddCircleFilled' not in card, 'в карточке что-то рисуется в зоне 3D-модели (круг)')
+# две группы строк и полупрозрачная линия между ними
+need('local ROWS_A = 4' in s and 'local ROWS_B = 3' in s and 'local DIV_H = 13' in s,
+     'блоки «характеристика» и «статистика» не разделены')
+need('local function divider()' in s and
+     'fill(RX, dy, W - pad - RX - 12, 1, col32(255, 255, 255, 38), 0)' in s,
+     'нет полупрозрачной линии между характеристикой и статистикой')
+need('local rowsH = ROWS_A * ROW_H + DIV_H + ROWS_B * ROW_H' in s,
+     'высота прокручиваемого блока считается не по обеим группам')
 for _row in ('row("Пинг", ping, c4(TH.text), nil, nil, ROW_H)',
              'row("Здоровье", hpText, c4(TH.accent), hpNum, grndParamScale(hpNum), ROW_H)',
              'row("Броня", armText, c4(TH.accent2), armNum, grndParamScale(armNum), ROW_H)',
@@ -143,7 +159,7 @@ absent('row("Патроны"', '«Патроны» вернулись в кар�
 absent('local function section(title, open, key)',
        'в карточке снова сворачиваемые разделы')
 absent('"##grnd_recon_section_"', 'вернулись заголовки-кнопки сворачиваемых разделов')
-# значения как в образце: пинг без « ms», ХП/броня с одним знаком, скорость без «км/ч»
+# значения как в образце
 need('local ping = pingStable and tostring(math.floor(pingStable + 0.5))' in s,
      'пинг снова с « ms» (в образце просто число)')
 need('local hpText = hpNum and string.format("%.1f", hpNum) or "—"' in s and
@@ -156,7 +172,7 @@ need('local lvlRaw = textValue("rc_level", "")' in s and 'gsub("%s*%b()", "")' i
 # кнопки наказаний — в левой колонке, четыре
 need('local PUN_TOP = 4' in s and 'if punCnt > PUN_TOP then punCnt = PUN_TOP end' in s,
      'в карточке снова не четыре кнопки наказаний')
-need('local byy = HEAD + AV_H + (i - 1) * (PUN_BH + PUN_BG)' in s and
+need('local byy = leftTop + (i - 1) * (PUN_BH + PUN_BG)' in s and
      'im.InvisibleButton("##rcb_p_" .. btnLabel' in s,
      'кнопки наказаний не в левой колонке карточки')
 need('if GRND_PUN and not GRND_PUN.loaded then pcall(GRND_PUN.load) end' in s,
@@ -165,33 +181,32 @@ absent('"##grnd_recon_bar"', 'вернулось отдельное окно п�
 need('"Кнопки наказаний в карточке"' in s and
      'JAIL · BAN · KICK · MUTE — столбиком под аватаром · курсор — ПКМ' in s,
      'описание тумблера наказаний не соответствует карточке')
-# 3D-модель нарисовать нельзя — на её месте буква ника
-need('dl:AddCircleFilled(at(avX, avY), 30,' in s and
-     'put(avX - grndTextW(avatar) * 0.6, avY - 14, avatar, c4(TH.accent), 1.6)' in s,
-     'на месте 3D-модели нет буквы ника (пустая колонка)')
-# прокрутка: только строки, шапка и кнопки на месте
-need('local SCROLL_STEP = ROW_H' in s and 'local H_MIN = 200' in s,
+# прокрутка: листается весь блок (характеристика + статистика)
+need('local SCROLL_STEP = ROW_H' in s and 'local H_MIN = 180' in s,
      'у карточки нет прокрутки (окно снова режет низ карточки)')
-need('local rowsH = ROWS_N * ROW_H' in s and
-     'local scrollMax = math.max(0, rowsH - listH)' in s and
-     'local function inList(y0, h0)' in s,
-     'высота карточки снова считается только по содержимому')
-need('local y = listTop - scroll' in s and
+need("local scrollMax = openState and math.max(0, rowsH - listH) or 0" in s and
+     'local function inList(y0, h0)' in s and 'local y = listTop - scroll' in s and
      'if not inList(ry, height) then return end' in s,
-     'строки не прячутся за границей окна прокрутки (обрывки текста)')
-need('local barH = math.max(26, listH * (listH / rowsH))' in s and
+     'высота карточки снова считается только по содержимому')
+need('if openState and scrollMax > 0 then' in s and
+     'local barH = math.max(26, listH * (listH / rowsH))' in s and
      'roundRect(dl, at(trX, barY), at(trX + 3, barY + barH),' in s,
      'нет полосы прокрутки у списка карточки')
-need('RC.scrollRect = { x = px + RX - 6, y = py + listTop,' in s and
+need('RC.scrollRect = { x = px + RX - 8, y = py + listTop,' in s and
      'and GRND_RC.scrollRect and grndMouseInside(GRND_RC.scrollRect) then' in s and
      '(GRND_RC.scroll or 0) - notch * step' in s and
      'local step = tonumber(GRND_RC.scrollStep) or 26' in s,
      'колесо мыши над карточкой не листает её список')
 need('"NoScrollWithMouse"' in s,
      'ImGui снова может крутить содержимое карточки своим колесом')
+# стрелка внизу: сворачивает и разворачивает блок информации и статистики
 need('im.InvisibleButton("##grnd_recon_top"' in s and
-     'if topClick and scroll > 1 then RC.scroll = 0 end' in s,
-     'внизу карточки нет треугольника «наверх» (как в образце)')
+     'if topClick then' in s and 'RC.statsOpen = not openState' in s and
+     'RC.scroll = 0          -- развернём — список с начала' in s,
+     'стрелка внизу не сворачивает блок информации и статистики')
+need('pcall(dl.AddTriangleFilled, dl,\n                            at(cx2 - 5, cy2 + 3), at(cx2, cy2 - 3), at(cx2 + 5, cy2 + 3),' in s and
+     'at(cx2 - 5, cy2 - 3), at(cx2 + 5, cy2 - 3), at(cx2, cy2 + 3),' in s,
+     'стрелка не меняет направление при сворачивании/разворачивании')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
