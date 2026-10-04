@@ -23,3 +23,5 @@ function wmButton(btn, frame, msgN)
     grndWmMouseStamp(true, false, false, msg)
 end
 function newFrame(n) GRND_UIFRAME = n end
+-- новый кадр отрисовки: список окон поверх чекера считается раз на кадр
+function bump() newFrame((GRND_UIFRAME or 0) + 1) end

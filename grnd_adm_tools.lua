@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.67"
+GRND_SCRIPT_VERSION = "1.19.68"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -1765,6 +1765,128 @@ function grndMouseFrameBegin()
     M.frame = nil
     M.clicked, M.rclicked, M.mclicked = false, false, false
     M.clickedBtn, M.rclickedBtn, M.mclickedBtn = nil, nil, nil
+end
+-- v1.19.68: чекеры рисуются ПОД окнами (окно закрывает их там, где стоит),
+-- поэтому клик, который пришёлся на окно поверх чекера, чекеру НЕ принадлежит:
+-- иначе он «украл» бы нажатие у карточки рекона (её тянут мышью), у оверлея
+-- репортов (у него свои кнопки) и у окна статистики игрока. Окна, которые
+-- перекрывают чекер целиком (меню, табло, репорт, перехват, формы, гос.волна,
+-- выпадающие списки, лог, ввод, диалог сервера), и раньше полностью скрывали
+-- чекер — это правило осталось.
+function grndCheckerRectOk(r)
+    if type(r) ~= "table" and type(r) ~= "userdata" then return false end
+    local rx, ry = tonumber(r.x), tonumber(r.y)
+    local rw, rh = tonumber(r.w), tonumber(r.h)
+    if not (rx and ry and rw and rh) then return false end
+    if rw <= 0 or rh <= 0 then return false end
+    return true
+end
+-- Список окон, которые лежат ПОВЕРХ чекеров и закрывают их своей плашкой.
+-- Считается один раз на кадр отрисовки: стеков и таблиц на каждый вызов
+-- (а вызовов на кадр сотни — по строке текста) не выделяем.
+function grndCheckerCovers()
+    -- панель в «руке» (её тащат мышью) показываем поверх окон: иначе её не
+    -- поставить — при перетаскивании пользователь обязан её видеть
+    do
+        local kl = _G.GRND_KL
+        local ao = _G.GRND_AO
+        if (kl and kl.moving) or (ao and ao.moving) then
+            _G.GRND_CHECKER_COVERS_FRAME = nil
+            _G.GRND_CHECKER_COVERS = nil
+            return {}
+        end
+    end
+    local fr = _G.GRND_UIFRAME
+    if fr and _G.GRND_CHECKER_COVERS_FRAME == fr
+       and type(_G.GRND_CHECKER_COVERS) == "table" then
+        return _G.GRND_CHECKER_COVERS
+    end
+    local out = {}
+    local RC = _G.GRND_RC
+    if RC and RC.show then
+        local p, sz = RC.windowPos, RC.windowSize
+        if type(p) == "table" and type(sz) == "table" then
+            local r = { x = tonumber(p.x), y = tonumber(p.y),
+                        w = tonumber(sz.w), h = tonumber(sz.h) }
+            if grndCheckerRectOk(r) then out[#out + 1] = r end
+        end
+        if RC.statsPop and grndCheckerRectOk(RC.statsPopRect) then
+            out[#out + 1] = RC.statsPopRect
+        end
+    end
+    local R = _G.GRND_REPHUD
+    if R and R.enabled and grndCheckerRectOk(R.rect) then
+        out[#out + 1] = R.rect
+    end
+    if fr then
+        _G.GRND_CHECKER_COVERS_FRAME = fr
+        _G.GRND_CHECKER_COVERS = out
+    end
+    return out
+end
+function grndCheckerPointTaken(x, y)
+    x, y = tonumber(x), tonumber(y)
+    if not x or not y then return false end
+    local list = grndCheckerCovers()
+    for i = 1, #list do
+        local r = list[i]
+        if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+            return true
+        end
+    end
+    return false
+end
+-- Отрезок текста [x1..x2] на высоте [y1..y2] пересекает окно поверх чекера?
+function grndCheckerBandTaken(x1, y1, x2, y2)
+    local list = grndCheckerCovers()
+    for i = 1, #list do
+        local r = list[i]
+        if x1 < r.x + r.w and x2 > r.x and y1 < r.y + r.h and y2 > r.y then
+            return true
+        end
+    end
+    return false
+end
+-- Разрезает прямоугольник на части, свободные от окон поверх чекера: DX-текст
+-- и подложка рисуются поверх ВСЕХ окон ImGui, поэтому их надо не «прятать», а
+-- вырезать по габаритам окна — иначе низкий кейс из-за GDI-текста снова лез бы
+-- сквозь карточку.
+function grndCheckerClipRect(x, y, w, h)
+    local list = grndCheckerCovers()
+    if #list == 0 then return nil end
+    local out = { { x = x, y = y, w = w, h = h } }
+    for ci = 1, #list do
+        local c = list[ci]
+        local cx1, cy1 = c.x, c.y
+        local cx2, cy2 = c.x + c.w, c.y + c.h
+        local nextOut = {}
+        for ri = 1, #out do
+            local r = out[ri]
+            local rx1, ry1 = r.x, r.y
+            local rx2, ry2 = r.x + r.w, r.y + r.h
+            if rx2 <= cx1 or rx1 >= cx2 or ry2 <= cy1 or ry1 >= cy2 then
+                nextOut[#nextOut + 1] = r
+            else
+                if cy1 > ry1 then
+                    nextOut[#nextOut + 1] = { x = rx1, y = ry1, w = rx2 - rx1, h = cy1 - ry1 }
+                end
+                if cy2 < ry2 then
+                    nextOut[#nextOut + 1] = { x = rx1, y = cy2, w = rx2 - rx1, h = ry2 - cy2 }
+                end
+                local iy1, iy2 = math.max(ry1, cy1), math.min(ry2, cy2)
+                if iy2 > iy1 then
+                    if cx1 > rx1 then
+                        nextOut[#nextOut + 1] = { x = rx1, y = iy1, w = cx1 - rx1, h = iy2 - iy1 }
+                    end
+                    if cx2 < rx2 then
+                        nextOut[#nextOut + 1] = { x = cx2, y = iy1, w = rx2 - cx2, h = iy2 - iy1 }
+                    end
+                end
+            end
+        end
+        out = nextOut
+    end
+    return out
 end
 function grndConsumeMsg(passGame)
     if type(consumeWindowMessage) ~= "function" then return end
@@ -12166,14 +12288,21 @@ end
 -- =====================================================================
 --  МОДУЛЬ 11 (v1.5.1, сборка 2): GRND KILL LIST — кастомный килл-лист (чекер №1).
 --  ------------------------------------------------------------------
---  v1.19.67: чекеры (килл-лист и «Админы в сети») больше не «просвечивают»
---  через окна: пока открыто любое окно скрипта (меню, табло, репорт, рекон,
---  перехват, лог, форма, гос.волна, выпадающий список) или диалог сервера,
---  они не рисуются и не ловят клики. Исключение — режим перемещения панели,
---  когда её держат мышью. И нажать на игрока можно ТОЛЬКО ЛЕВОЙ кнопкой:
---  у «сырого» клика теперь есть источник (1/2/3), а сами флаги гасятся в
---  начале следующего кадра отрисовки — раньше несъеденный клик «залипал»
---  на след. кадр и ПКМ/СКМ срабатывала как ЛКМ.
+--  v1.19.68: чекеры (килл-лист и «Админы в сети») рисуются ПЕРВЫМИ — ПОД
+--  всеми окнами: любое окно (карточка рекона, оверлей репортов, окно
+--  статистики) закрывает их там, где стоит, и «сквозь окно» чекер не видно.
+--  Целиком они прячутся только под большими окнами, которые и раньше их
+--  закрывали: меню, табло, репорт, перехват, формы, гос.волна, выпадающие
+--  списки, лог, ввод и диалог САМОГО сервера (его рисует игра). В слежке
+--  чекеры НЕ пропадают: их видно рядом с карточкой.
+--  DX-текст и DX-плашки рисует render-библиотека ПОВЕРХ окон ImGui, поэтому
+--  под окном они не рисуются вовсе, а плашка режется на куски вокруг окна
+--  (grndCheckerBandTaken/grndCheckerClipRect) — иначе GDI-текст «просвечивал»
+--  сквозь карточку. Клик, попавший на окно поверх чекера, чекеру не
+--  принадлежит (grndCheckerPointTaken).
+--  v1.19.67: нажать на игрока можно ТОЛЬКО ЛЕВОЙ кнопкой: у «сырого» клика
+--  есть источник (1/2/3), а флаги гасятся в начале след. кадра отрисовки —
+--  раньше несъеденный клик «залипал» и ПКМ/СКМ срабатывала как ЛКМ.
 --  Полностью СВОЯ реализация вместо системного килл-листа SA-MP:
 --    * структура stKillInfo (= CDeathWindow в SA-MP API) читается прямо из
 --      памяти: BOOL iEnabled (+0x00), дальше killEntry[5] по 59 байт
@@ -32998,6 +33127,13 @@ function grndMainBody()
             local mx, my
             if doInteract then
                 mx, my = klMousePos()
+                -- v1.19.68: под окном (карточка рекона, оверлей репортов,
+                -- окно статистики) строки чекера не нажимаются — клик там
+                -- принадлежит окну
+                if mx and tonumber(my) and type(grndCheckerPointTaken) == "function"
+                   and grndCheckerPointTaken(mx, my) then
+                    mx, my = nil, nil
+                end
                 if mx and tonumber(my) and KL.x and KL.y
                    and mx >= KL.x and mx <= KL.x + W
                    and my >= KL.y and my <= KL.y + H then
@@ -33027,8 +33163,19 @@ function grndMainBody()
             -- ImGui, закрыл бы надписи. Скругления в DX-режиме нет — фон
             -- по умолчанию выключен, включённый становится прямым.
             if dxf and KL.bg then
-                pcall(renderDrawBox, KL.x, KL.y, W, H,
-                    klDxCol(9, 11, 15, (KL.bgAlpha or 120) * a))
+                -- v1.19.68: DX-плашка ложится поверх ВСЕХ окон ImGui, поэтому
+                -- под окном её не рисуем — разрезаем по габаритам окна
+                local pieces = grndCheckerClipRect(KL.x, KL.y, W, H)
+                if pieces then
+                    for i = 1, #pieces do
+                        local q = pieces[i]
+                        pcall(renderDrawBox, q.x, q.y, q.w, q.h,
+                            klDxCol(9, 11, 15, (KL.bgAlpha or 120) * a))
+                    end
+                else
+                    pcall(renderDrawBox, KL.x, KL.y, W, H,
+                        klDxCol(9, 11, 15, (KL.bgAlpha or 120) * a))
+                end
             end
             im.SetNextWindowPos(im.ImVec2(KL.x, KL.y), COND_ALWAYS)
             im.SetNextWindowSize(im.ImVec2(W, H), COND_ALWAYS)
@@ -33047,19 +33194,36 @@ function grndMainBody()
                 -- (GDI), тень — чёрная копия со сдвигом +1/+1; иначе прежний
                 -- uiText с той же тенью. shMul — доля силы тени (у подписи
                 -- оружия она была слабее).
+                -- ширина строки для обрезки DX-текста по окну: считаем по
+                -- фактическому шрифту, с запасом на символы «жирнее» среднего
+                local function klTextPx(txt)
+                    local w
+                    if type(renderGetFontDrawTextLength) == "function" then
+                        local ok, v = pcall(renderGetFontDrawTextLength, dxf, txt)
+                        if ok and tonumber(v) then w = tonumber(v) end
+                    end
+                    if not w then w = grndTextW(txt) * fsc end
+                    return math.max(8, math.floor((w or 8) + fpx))
+                end
                 local function outText(x, y, txt, r, g, b, al, shMul)
                     shMul = (shMul == nil) and 1 or shMul
                     x, y = math.floor(x), math.floor(y)
                     txt = dxStr(txt)
                     local sal = (shA > 0) and math.floor(shA * shMul) or 0
+                    local twPx = klTextPx(txt)
                     if dxf then
                         local ax, ay = KL.x + x, KL.y + y
-                        if sal > 0 then
-                            pcall(renderFontDrawText, dxf, txt, ax + 1, ay + 1,
-                                klDxCol(0, 0, 0, sal * a))
+                        -- v1.19.68: надпись GDI рисуется поверх всех окон —
+                        -- под окном её просто НЕ рисуем (иначе чекер был бы
+                        -- виден сквозь карточку рекона и оверлей репортов)
+                        if not grndCheckerBandTaken(ax, ay, ax + twPx, ay + fpx + 6) then
+                            if sal > 0 then
+                                pcall(renderFontDrawText, dxf, txt, ax + 1, ay + 1,
+                                    klDxCol(0, 0, 0, sal * a))
+                            end
+                            pcall(renderFontDrawText, dxf, txt, ax, ay,
+                                klDxCol(r, g, b, al * a))
                         end
-                        pcall(renderFontDrawText, dxf, txt, ax, ay,
-                            klDxCol(r, g, b, al * a))
                     else
                         if sal > 0 then
                             uiText(x + 1, y + 1, txt, col(0, 0, 0, sal * a), fsc)
@@ -33470,6 +33634,11 @@ function grndMainBody()
                     end
                 end
                 if not mx then mx, my = klMousePos() end
+                -- v1.19.68: под окном строки не нажимаются (см. килл-лист)
+                if mx and tonumber(my) and type(grndCheckerPointTaken) == "function"
+                   and grndCheckerPointTaken(mx, my) then
+                    mx, my = nil, nil
+                end
                 if mx and tonumber(my) and AO.x and AO.y
                    and mx >= AO.x and mx <= AO.x + W
                    and my >= AO.y + listY0 and my <= AO.y + H then
@@ -33489,6 +33658,15 @@ function grndMainBody()
                 end
             end
 
+            local function aoTextPx(txt)
+                local w
+                if type(renderGetFontDrawTextLength) == "function" then
+                    local ok, v = pcall(renderGetFontDrawTextLength, dxf, txt)
+                    if ok and tonumber(v) then w = tonumber(v) end
+                end
+                if not w then w = grndTextW(txt) * fsc end
+                return math.max(8, math.floor((w or 8) + fpx))
+            end
             local function outText(x, y, txt, r, g, b, al)
                 x, y = math.floor(x + 0.5), math.floor(y + 0.5)
                 txt = dxStr(txt)
@@ -33496,12 +33674,16 @@ function grndMainBody()
                 local sal = shA
                 if dxf then
                     local ax, ay = AO.x + x, AO.y + y
-                    if sal > 0 then
-                        pcall(renderFontDrawText, dxf, txt, ax + 1, ay + 1,
-                            klDxCol(0, 0, 0, sal * a))
+                    -- v1.19.68: GDI-надпись поверх всех окон — под окном её
+                    -- не рисуем (см. килл-лист)
+                    if not grndCheckerBandTaken(ax, ay, ax + aoTextPx(txt), ay + fpx + 6) then
+                        if sal > 0 then
+                            pcall(renderFontDrawText, dxf, txt, ax + 1, ay + 1,
+                                klDxCol(0, 0, 0, sal * a))
+                        end
+                        pcall(renderFontDrawText, dxf, txt, ax, ay,
+                            klDxCol(r, g, b, al * a))
                     end
-                    pcall(renderFontDrawText, dxf, txt, ax, ay,
-                        klDxCol(r, g, b, al * a))
                 else
                     if sal > 0 then
                         uiText(x + 1, y + 1, txt, col32(0, 0, 0, math.floor(sal * a)), fsc)
@@ -33513,6 +33695,17 @@ function grndMainBody()
                 x, y, w, h = math.floor(x), math.floor(y), math.floor(w), math.floor(h)
                 if w < 1 or h < 1 then return end
                 if type(renderDrawBox) == "function" then
+                    -- v1.19.68: DX-плашка поверх всех окон — под окном не
+                    -- рисуем (режем по габаритам окна)
+                    local pieces = grndCheckerClipRect(AO.x + x, AO.y + y, w, h)
+                    if pieces then
+                        for i = 1, #pieces do
+                            local q = pieces[i]
+                            pcall(renderDrawBox, q.x, q.y, q.w, q.h,
+                                klDxCol(r, g, b, al * a))
+                        end
+                        return
+                    end
                     pcall(renderDrawBox, AO.x + x, AO.y + y, w, h,
                         klDxCol(r, g, b, al * a))
                 elseif not dxf then
@@ -37843,6 +38036,9 @@ function grndMainBody()
             local fx = math.floor((resX - FW) / 2)
             local fy = math.max(20, math.floor((resY - FH) / 2) - 30)
 
+            -- v1.19.68: габариты окна нужны чекерам — под ним строки не
+            -- нажимаются (клик принадлежит этому окну, а не чекеру)
+            if RC then RC.statsPopRect = { x = fx, y = fy, w = FW, h = FH } end
             im.SetNextWindowPos(im.ImVec2(fx, fy), COND_ALWAYS)
             im.SetNextWindowSize(im.ImVec2(FW, FH), COND_ALWAYS)
 
@@ -40469,30 +40665,18 @@ function grndMainBody()
                 end
             end
             local wantCursor = false
-            if menu.open or menu.anim > 0 then
-                local ok, e = pcall(drawMenu, dt)
-                if not ok then
-                    -- v1.14.58 (фикс): если меню упало на середине кадра,
-                    -- обязательно закрываем окно и снимаем стили — иначе весь
-                    -- кадр ImGui ломается: остальные окна рисуются без текста,
-                    -- а курсор пропадает.
-                    pcall(grndEnds)
-                    logRenderErr("menu", e)
-                else wantCursor = menu.open end
-            end
-            if GRND_TAB.open or scoreboard.anim > 0 then
-                local ok, e = pcall(drawScoreboard, dt)
-                if not ok then logRenderErr("scoreboard", e)
-                elseif e then wantCursor = true end
-            end
-            if #queue > 0 then
-                local ok, e = pcall(drawToasts)
-                if not ok then logRenderErr("toast", e) end
-            end
-            -- v1.19.67: чекеры (килл-лист и «Админы в сети») не «просвечивают»
-            -- через окна: пока открыто ЛЮБОЕ наше окно, они не рисуются и не
-            -- ловят клики. Исключение — режим перемещения панели (её держат
-            -- мышью, меню при этом закрывается само).
+            -- v1.19.68: чекеры (килл-лист и «Админы в сети») рисуются ПЕРВЫМИ,
+            -- под всеми окнами: любое окно закрывает их там, где стоит, — и
+            -- «сквозь окно» чекер больше не видно. При этом в слежке (карточка
+            -- рекона открыта постоянно) чекеры НЕ пропадают: их видно рядом с
+            -- окном, а клик, попавший на окно поверх чекера, чекеру не
+            -- принадлежит (grndCheckerPointTaken).
+            -- Полностью прячем чекеры только под большими окнами, которые
+            -- занимают экран и раньше их и закрывали: меню, табло, репорт,
+            -- перехват, формы, гос.волна, выпадающие списки, лог, ввод и
+            -- диалог САМОГО сервера (его рисует игра, поверх него наше окно
+            -- ничего не закрывает). Исключение — режим перемещения панели
+            -- (её держат мышью, меню при этом закрывается само).
             local checkersHidden = false
             if not (GRND_KL and GRND_KL.moving) then
                 local formsUp = false
@@ -40511,18 +40695,12 @@ function grndMainBody()
                     (menu.open or menu.anim > 0),
                     (GRND_TAB.open == true) or (scoreboard.anim > 0),
                     (GRND_REP and GRND_REP.open) and true or false,
-                    (GRND_RC and GRND_RC.show) and true or false,
                     (GRND_CATCH and GRND_CATCH.active) and true or false,
                     GRND_INPUT.wanted() and true or false,
                     GRND_LOG.wanted() and true or false,
                     formsUp, gnewsUp, pickerUp,
-                    -- окна САМОГО сервера (диалоги) — тоже «окно»: чекер
-                    -- не должен быть виден поверх них
-                    -- окно статистики игрока (v1.11.78): тоже окно
-                    (GRND_RC and type(GRND_RC.statsPop) == "table"
-                        and type(_G.grndDrawStatsPopup) == "function") and true or false,
-                    -- окна САМОГО сервера (диалоги) — тоже «окно»: чекер
-                    -- не должен быть виден поверх них
+                    -- диалог САМОГО сервера: его рисует игра, и ни одно наше
+                    -- окно его не закрывает — под ним чекер прячем целиком
                     (type(_G.grndDialogActive) == "function"
                         and _G.grndDialogActive()) and true or false,
                 }
@@ -40531,8 +40709,9 @@ function grndMainBody()
                 end
             end
             -- МОДУЛЬ 11 (v1.5): килл-лист (чекер №1). Рисуется, пока чекер
-            -- включён (или пока панель «в руке» при перемещении) и ни одно
-            -- окно его не перекрывает.
+            -- включён (или пока панель «в руке» при перемещении); под большими
+            -- окнами прячется целиком, под остальными его закрывает само окно
+            -- (чекеры рисуются ПЕРВЫМИ — см. v1.19.68 выше).
             if not gated and GRND_KL and not checkersHidden then
                 local ok, e = pcall(drawKillList, dt)
                 if not ok then logRenderErr("killlist", e)
@@ -40542,6 +40721,26 @@ function grndMainBody()
                 local ok, e = pcall(drawAdminsOnline, dt)
                 if not ok then logRenderErr("admins", e)
                 elseif e then wantCursor = true end
+            end
+            if menu.open or menu.anim > 0 then
+                local ok, e = pcall(drawMenu, dt)
+                if not ok then
+                    -- v1.14.58 (фикс): если меню упало на середине кадра,
+                    -- обязательно закрываем окно и снимаем стили — иначе весь
+                    -- кадр ImGui ломается: остальные окна рисуются без текста,
+                    -- а курсор пропадает.
+                    pcall(grndEnds)
+                    logRenderErr("menu", e)
+                elseif menu.open then wantCursor = true end
+            end
+            if GRND_TAB.open or scoreboard.anim > 0 then
+                local ok, e = pcall(drawScoreboard, dt)
+                if not ok then logRenderErr("scoreboard", e)
+                elseif e then wantCursor = true end
+            end
+            if #queue > 0 then
+                local ok, e = pcall(drawToasts)
+                if not ok then logRenderErr("toast", e) end
             end
             if not gated and GRND_RC and (GRND_RC.show
                 or (GRND_RC.live and (GRND_RC.live.id or GRND_RC.live.weap

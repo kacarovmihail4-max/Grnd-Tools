@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.67"' in s, 'версия не 1.19.67')
+need('GRND_SCRIPT_VERSION = "1.19.68"' in s, 'версия не 1.19.68')
 
 # v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
 # 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
@@ -1031,33 +1031,91 @@ need('W = openState and Wfull or Wmini' in s, 'ширина карточки н�
 # кнопки наказаний прижаты к краю колонки и той же ширины, что и раньше
 need('PUN_PAD' in s and 'punOrder' in s, 'пропала раскладка кнопок наказаний')
 
-# v1.19.67 (2): чекеры (килл-лист и «Админы в сети») не «просвечивают» через окна
-need('local checkersHidden = false' in s, 'нет гейта «чекер под окном»')
-need('if not gated and GRND_KL and not checkersHidden then' in s,
-     'килл-лист всё ещё рисуется поверх окон')
-need('if not gated and GRND_AO and not checkersHidden then' in s,
-     '«Админы в сети» всё ещё рисуются поверх окон')
+# v1.19.68: чекеры — ПОД окнами. Рисуются ПЕРВЫМИ, значит любое окно
+# (карточка рекона, оверлей репортов, окно статистики) закрывает их там, где
+# стоит, и «сквозь окно» чекер не видно. Порядок отрисовки обязателен.
+need('        local function drawAll()' in s, 'пропала отрисовка кадра')
+_draw_start = s.index('        local function drawAll()')
+_draw_end = s.index('            if menu.open or menu.anim > 0 then', _draw_start)
+_pre = s[_draw_start:_draw_end]
+need('pcall(drawKillList, dt)' in _pre and 'pcall(drawAdminsOnline, dt)' in _pre,
+     'чекеры не рисуются первыми — окна их больше не закроют')
+need(s.index('pcall(drawKillList, dt)') < s.index('pcall(drawMenu, dt)'),
+     'килл-лист рисуется после меню (просвечивает сквозь окно)')
+need(s.index('pcall(drawKillList, dt)') < s.index('pcall(drawRecon)'),
+     'килл-лист рисуется поверх карточки рекона (сквозь неё видно)')
+need(s.index('pcall(drawAdminsOnline, dt)') < s.index('pcall(drawRecon)'),
+     '«Админы в сети» рисуются поверх карточки рекона')
+need(s.index('pcall(drawKillList, dt)') < s.index('pcall(drawReportHud)'),
+     'килл-лист рисуется поверх оверлея репортов')
+need(s.index('pcall(drawKillList, dt)') < s.index('pcall(_G.grndDrawStatsPopup)'),
+     'килл-лист рисуется поверх окна статистики игрока')
+need('elseif menu.open then wantCursor = true end' in s,
+     'меню затирает запрос курсора от чекеров (рисуются раньше меню)')
+
+# в слежке чекеры обязаны остаться: карточка рекона и окно статистики НЕ прячут
+need('local checkersHidden = false' in s, 'нет гейта «чекер под большим окном»')
 _chk = s[s.index('local checkersHidden = false'):]
 _chk = _chk[:_chk.index('for i = 1, #list do')]
 for _part in ['(menu.open or menu.anim > 0)',
               '(GRND_TAB.open == true) or (scoreboard.anim > 0)',
               '(GRND_REP and GRND_REP.open) and true or false',
-              '(GRND_RC and GRND_RC.show) and true or false',
               '(GRND_CATCH and GRND_CATCH.active) and true or false',
               'GRND_INPUT.wanted() and true or false',
               'GRND_LOG.wanted() and true or false',
               'formsUp, gnewsUp, pickerUp',
-              'and _G.grndDialogActive()) and true or false',
-              'and type(_G.grndDrawStatsPopup) == "function") and true or false']:
+              'and _G.grndDialogActive()) and true or false']:
     need(_part in _chk, 'в гейте чекеров нет условия: ' + _part)
+need('(GRND_RC and GRND_RC.show) and true or false' not in _chk,
+     'карточка рекона снова прячет чекеры целиком — в слежке они пропадут')
+need('GRND_RC.statsPop' not in _chk,
+     'окно статистики снова прячет чекеры целиком')
 need('if not (GRND_KL and GRND_KL.moving) then' in _chk,
      'режим перемещения чекера перестал быть исключением')
-# DX-проход килл-листа обязан уважать тот же гейт, иначе текст останется поверх
-need('GRND_RC.show and GRND_RC.cursor' in s, 'DX-проход чекеров пропал')
-_kl_dx = s[s.index('if GRND_KL and GRND_KL.enabled then'):]
-_kl_dx = _kl_dx[:_kl_dx.index('end', _kl_dx.index('pcall'))] if 'end' in _kl_dx else _kl_dx
-need('grndMouseFrameBegin' in s,
-     'DX-проход чекеров не связан с кадровой логикой мыши')
+need('if not gated and GRND_KL and not checkersHidden then' in s and
+     'if not gated and GRND_AO and not checkersHidden then' in s,
+     'гейт «больших окон» больше не применяется к чекерам')
+# клик, попавший на окно поверх чекера, чекеру не принадлежит
+need('function grndCheckerPointTaken(x, y)' in s, 'нет проверки «точка занята окном»')
+need('RC.windowPos, RC.windowSize' in s or ('RC.windowPos' in s and 'RC.windowSize' in s),
+     'карточка рекона не отдаёт свои габариты')
+need('grndCheckerRectOk(RC.statsPopRect)' in s, 'окно статистики не отдаёт свои габариты')
+need('grndCheckerRectOk(R.rect)' in s, 'оверлей репортов не отдаёт свои габариты')
+_kl_guard = s[s.index('-- v1.19.68: под окном (карточка рекона'):]
+_kl_guard = _kl_guard[:_kl_guard.index('if mx and tonumber(my) and KL.x')]
+need('grndCheckerPointTaken(mx, my)' in _kl_guard, 'килл-лист игнорирует окна поверх себя')
+_ao_guard = s[s.index('-- v1.19.68: под окном строки не нажимаются (см. килл-лист)'):]
+_ao_guard = _ao_guard[:_ao_guard.index('if mx and tonumber(my) and AO.x')]
+need('grndCheckerPointTaken(mx, my)' in _ao_guard, '«Админы в сети» игнорируют окна поверх себя')
+need('RC.statsPopRect = { x = fx, y = fy, w = FW, h = FH }' in s,
+     'окно статистики не запоминает свои габариты')
+
+# v1.19.68: DX-текст и DX-плашки рисуются поверх ВСЕХ окон ImGui, поэтому их
+# недостаточно «закрыть окном» — их надо не рисовать под окном и разрезать по
+# габаритам окна. Иначе кейс «чекер виден сквозь карточку» возвращается вместе
+# с GDI-текстом (это и был реальный «просвет»).
+need('function grndCheckerBandTaken(x1, y1, x2, y2)' in s, 'нет обрезки DX-строки по окну')
+need('function grndCheckerClipRect(x, y, w, h)' in s, 'нет разрезания DX-плашки по окну')
+need('function grndCheckerCovers()' in s, 'нет списка окон поверх чекера')
+need('_G.GRND_CHECKER_COVERS_FRAME = fr' in s,
+     'список окон поверх чекера не кэшируется на кадр (лишние таблицы каждый вызов)')
+need('if (kl and kl.moving) or (ao and ao.moving) then' in s and
+     'GRND_CHECKER_COVERS = nil\n            return {}' in s,
+     'перетаскиваемая панель снова режется окном (её не поставить)')
+need('local function klTextPx(txt)' in s, 'нет замера ширины строки килл-листа')
+need('local function aoTextPx(txt)' in s, 'нет замера ширины строки «Админов в сети»')
+_kl = s[s.index('local function drawKillList(dt)'):]
+_kl = _kl[:_kl.index('local function drawAdminsOnline(dt)')]
+need('if not grndCheckerBandTaken(ax, ay, ax + twPx, ay + fpx + 6) then' in _kl,
+     'DX-текст килл-листа снова рисуется поверх окон')
+need('local pieces = grndCheckerClipRect(KL.x, KL.y, W, H)' in _kl,
+     'DX-плашка килл-листа снова лезет под окно')
+_ao = s[s.index('local function drawAdminsOnline(dt)'):]
+_ao = _ao[:_ao.index('local function drawMenu(dt)')]
+need('if not grndCheckerBandTaken(ax, ay, ax + aoTextPx(txt), ay + fpx + 6) then' in _ao,
+     'DX-текст «Админов в сети» снова рисуется поверх окон')
+need('local pieces = grndCheckerClipRect(AO.x + x, AO.y + y, w, h)' in _ao,
+     'DX-плашки «Админов в сети» снова лезут под окно')
 
 # v1.19.67 (3): нажать на игрока в чекере — ТОЛЬКО левой кнопкой
 need('function grndLeftClickPending()' in s, 'нет проверки «только ЛКМ» для чекеров')

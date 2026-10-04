@@ -15,7 +15,9 @@ def grab(name):
     return src[start:stop]
 
 
-parts = [grab('grndClickAlive'), grab('grndLeftClickPending'), grab('grndMouseFrameBegin')]
+parts = [grab('grndClickAlive'), grab('grndLeftClickPending'), grab('grndMouseFrameBegin'),
+         grab('grndCheckerRectOk'), grab('grndCheckerCovers'), grab('grndCheckerPointTaken'),
+         grab('grndCheckerBandTaken'), grab('grndCheckerClipRect')]
 
 # реальная разметка кнопки-источника и кадра из onWindowMessage (WM_*BUTTON*)
 start = src.index('    if msgN == 0x0201 then')
