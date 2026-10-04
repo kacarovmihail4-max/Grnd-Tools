@@ -40518,6 +40518,11 @@ function grndMainBody()
                     formsUp, gnewsUp, pickerUp,
                     -- окна САМОГО сервера (диалоги) — тоже «окно»: чекер
                     -- не должен быть виден поверх них
+                    -- окно статистики игрока (v1.11.78): тоже окно
+                    (GRND_RC and type(GRND_RC.statsPop) == "table"
+                        and type(_G.grndDrawStatsPopup) == "function") and true or false,
+                    -- окна САМОГО сервера (диалоги) — тоже «окно»: чекер
+                    -- не должен быть виден поверх них
                     (type(_G.grndDialogActive) == "function"
                         and _G.grndDialogActive()) and true or false,
                 }

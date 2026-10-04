@@ -1047,7 +1047,8 @@ for _part in ['(menu.open or menu.anim > 0)',
               'GRND_INPUT.wanted() and true or false',
               'GRND_LOG.wanted() and true or false',
               'formsUp, gnewsUp, pickerUp',
-              'and _G.grndDialogActive()) and true or false']:
+              'and _G.grndDialogActive()) and true or false',
+              'and type(_G.grndDrawStatsPopup) == "function") and true or false']:
     need(_part in _chk, 'в гейте чекеров нет условия: ' + _part)
 need('if not (GRND_KL and GRND_KL.moving) then' in _chk,
      'режим перемещения чекера перестал быть исключением')

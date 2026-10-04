@@ -8,7 +8,7 @@ local function gateScene(opt)
     GRND_TAB = { open = opt.tab or false }
     scoreboard = { anim = opt.tabAnim or 0 }
     GRND_REP = opt.rep and { open = true } or nil
-    GRND_RC = opt.rc and { show = true } or nil
+    GRND_RC = opt.rc and { show = true } or (opt.rcPop and { statsPop = { id = 7 } } or nil)
     GRND_CATCH = opt.catch and { active = true } or nil
     GRND_INPUT = { wanted = function() return opt.input == true end }
     GRND_LOG = { wanted = function() return opt.log == true end }
@@ -17,6 +17,7 @@ local function gateScene(opt)
     _G.grndGnewsUiWanted = function() return opt.gnews == true end
     _G.GRND_QR = { pickOpen = opt.pick == true, pun = { pickOpen = opt.pickPun == true } }
     _G.grndDialogActive = function() return opt.dialog == true end
+    _G.grndDrawStatsPopup = opt.rcPop and function() return true end or nil
     return grndGate()
 end
 
@@ -35,6 +36,7 @@ check(gateScene({gnews = true}) == true, "окно гос.волны: чекер
 check(gateScene({pick = true}) == true, "выпадающий список: чекер прячется")
 check(gateScene({pickPun = true}) == true, "выпадающий список наказаний: чекер прячется")
 check(gateScene({dialog = true}) == true, "диалог сервера: чекер прячется")
+check(gateScene({rcPop = true}) == true, "окно статистики игрока: чекер прячется")
 check(gateScene({kl = { moving = true }}) == false,
     "чекер тащат мышью — он остаётся видимым (меню закрыто само)")
 check(gateScene({kl = { moving = true }, rc = true, menu = true}) == false,
