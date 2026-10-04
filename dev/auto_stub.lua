@@ -96,6 +96,13 @@ function grndUiSwitchPaint(ctx, px, py, on, hov, id, dt)
 end
 function grndStorageRead() return nil end
 function grndToUtf(s) return tostring(s) end
+-- ---- игроки: ники по ID (для {ник} «того, на кого пожаловались») ----
+-- По умолчанию таблица пуста: ник по ID не находится, и автопилот ведёт себя
+-- как раньше (подставляет ник автора репорта). Сценарии заполняют её сами.
+NICK_BY_ID = {}
+function sampIsPlayerConnected(id) return true end
+function sampGetPlayerNickname(id) return NICK_BY_ID[tonumber(id) or -1] end
+function sampGetMaxPlayerId() return 1000 end
 function grndLowerUtf(s) return tostring(s):lower() end
 function grndRepToAnsi(s) return tostring(s) end   -- UTF-8 → CP1251 (в стенде — как есть)
 function grndRepHudRemove() return true end

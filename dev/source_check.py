@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.44"' in s, 'версия не 1.19.44')
+need('GRND_SCRIPT_VERSION = "1.19.45"' in s, 'версия не 1.19.45')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -184,7 +184,7 @@ need('на паузе — слежка, вернётся сам' in auto_draw_sr
 need('на паузе — идёт мероприятие, вернётся сам' in auto_draw_src2,
      'пропало состояние паузы на мероприятии')
 # v1.19.36: внизу раздела — подсказки про переменные {ID} и {all}
-need('"{ID} — найдёт ID в репорте («дм 234», «234 дм») и подставит его в ответ; на слове в триггере («дм{ID}») ответ собирается сам: «Приветствую, слежу за игроком Ник[ID]»"' in auto_draw_src2,
+need('"{ID} — ID того, на кого пожаловались: в репорте («дм 234») или по написанному в нём нику; на слове в триггере («дм{ID}») ответ собирается сам: «Приветствую, слежу за игроком Ник[ID]»"' in auto_draw_src2,
      'пропала подсказка про {ID}')
 need('"После ответа автопилот сам зайдёт в слежку за этим игроком — даже если выбрана команда /goto"'
      in auto_draw_src2, 'пропала подсказка про автослежку за найденным ID')
@@ -260,6 +260,19 @@ need('local function autoWordHit(low, trig)' in s,
      'нет поиска триггера целым словом в любом месте репорта')
 need('local function autoLastChar(t)' in s,
      'нет проверки границы слова слева')
+# v1.19.45: {ник}/{ID} — тот, НА КОГО пожаловались, а не автор строки репорта
+need('function QR.autoNickById(id)' in s and 'function QR.autoNickInText(text)' in s and
+     'function QR.autoTargetOf(text, foundId)' in s,
+     'нет поиска «того, на кого пожаловались» (ник по ID или по нику в тексте)')
+need('local tNick, tId = QR.autoTargetOf(text, foundId)' in s and
+     'if tId and not foundId then foundId = tId end' in s,
+     'цель жалобы не ищется в autoOnReport')
+need('local rep = { nick = tNick or nick, author = nick, id = id, foundId = foundId }' in s,
+     '{ник} в отчёте по-прежнему берётся у автора репорта')
+need('["{автор}"] = author, ["{reporter}"] = author' in s and
+     'local target = tostring(rep.foundId or "") ~= "" and tostring(rep.foundId) or pid' in s,
+     'нет {автор} (автор строки) и {ID}/{ид} как цели жалобы')
+
 # v1.19.44: {ID} на слове в триггере — ответ собирается САМ, поле ответа не нужно
 need('QR.AUTO_GREET = "Приветствую, слежу за игроком {ник}[{ID}]"' in s and
      'function QR.autoIDInTrigger(tab)' in s and 'function QR.autoGreet(rep)' in s,
@@ -396,7 +409,7 @@ need('"Приветствую, уже смотрю…", true, sel2.answer' in s,
 auto_draw_src = s[s.index('_G.grndQrAutoDraw = function(ctx)'):s.index('_G.grndQrAutoOnReport = function')]
 need('{ник}' not in auto_draw_src, 'в разделе «Автопилот» снова подсказка с {ник}')
 # v1.19.36: подсказки про {ID}/{all} живут только внизу раздела
-need(auto_draw_src.count('{ID} — найдёт ID в репорте') == 1,
+need(auto_draw_src.count('{ID} — ID того, на кого пожаловались') == 1,
      'подсказка про {ID} должна быть ровно одна (внизу раздела)')
 need('local tab = QR.autoTab(hits[k].idx)' in s, 'срабатывание не привязано к вкладке')
 need('return QR.autoCmdFor(pid, tab)' in s, 'команда берётся не из вкладки')

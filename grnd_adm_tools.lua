@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.44"
+GRND_SCRIPT_VERSION = "1.19.45"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24989,12 +24989,17 @@ function QR.apply(text, rep)
     local s = tostring(text or "")
     rep = (type(rep) == "table") and rep or {}
     local nick = tostring(rep.nick or rep.author or "")
+    local author = tostring(rep.author or rep.nick or "")
     local pid = tostring(rep.id or rep.playerId or "")
+    -- v1.19.36: {ID} — ID из текста репорта («дм 234»), если он там был.
+    -- v1.19.45: {ник}/{ID}/{ид} — тот, НА КОГО пожаловались (нарушитель), а не
+    -- автор строки репорта; автор доступен как {автор}/{reporter}.
+    local target = tostring(rep.foundId or "") ~= "" and tostring(rep.foundId) or pid
     local map = {
         ["{ник}"] = nick, ["{nick}"] = nick,
-        ["{ид}"] = pid, ["{id}"] = pid,
-        -- v1.19.36: {ID} — ID из текста репорта («дм 234»), если он там был
-        ["{ID}"] = tostring(rep.foundId or "") ~= "" and tostring(rep.foundId) or pid,
+        ["{автор}"] = author, ["{reporter}"] = author,
+        ["{ид}"] = target, ["{id}"] = target,
+        ["{ID}"] = target,
         ["{время}"] = os.date("%H:%M"), ["{time}"] = os.date("%H:%M"),
         ["{мой_ник}"] = QR.myNick(), ["{mynick}"] = QR.myNick(),
     }
@@ -26996,6 +27001,10 @@ end
 --      только точное совпадение; переменная действует ровно на одно слово;
 --    * {ID} на слове в триггере — ответ собирается САМ («Приветствую, слежу
 --      за игроком Ник[ID]»), поле «Ответ игроку» у такой вкладки не нужно;
+--    * {ник} и {ID} — это тот, НА КОГО пожаловались: ник берётся по найденному
+--      ID из игры, а если числа в репорте не было — по нику, написанному в
+--      тексте (если такой игрок на сервере). Автор репорта доступен как
+--      {автор} — ему и уходит /ans;
 --
 --  Конфиг — общий config.json, секция reportAuto (домен grnd_repauto в
 --  GRND_CONFIG.sources): on / sel / t1_trigger / t1_answer / t1_command / …
@@ -27294,6 +27303,62 @@ do
             end
             init = s2 + 1
         end
+    end
+
+    -- Ник игрока по ID — спрашиваем игру (единственный надёжный источник).
+    function QR.autoNickById(id)
+        local num = tonumber(id)
+        if not num or num < 0 or num > 1003 then return nil end
+        if type(_G.sampGetPlayerNickname) ~= "function" then return nil end
+        local ok, n = pcall(_G.sampGetPlayerNickname, num)
+        if ok and type(n) == "string" and n ~= "" then return n, num end
+        return nil
+    end
+
+    -- Ник, написанный в САМОМ тексте репорта, — но только если такой игрок
+    -- сейчас на сервере (иначе «обман», «чит» и любое слово из жалобы
+    -- посчитались бы ником). Возвращает ник и его ID.
+    function QR.autoNickInText(text)
+        text = tostring(text or "")
+        if text == "" then return nil end
+        if type(_G.sampIsPlayerConnected) ~= "function"
+            or type(_G.sampGetPlayerNickname) ~= "function" then return nil end
+        local maxid = 1003
+        if type(_G.sampGetMaxPlayerId) == "function" then
+            local ok, n = pcall(_G.sampGetMaxPlayerId)
+            if ok and tonumber(n) then
+                maxid = math.max(0, math.min(1003, math.floor(tonumber(n))))
+            end
+        end
+        local players = {}
+        for id = 0, maxid do
+            local okC, on = pcall(_G.sampIsPlayerConnected, id)
+            if okC and on then
+                local okN, nick = pcall(_G.sampGetPlayerNickname, id)
+                if okN and type(nick) == "string" and nick ~= "" then
+                    players[autoLower(nick)] = { nick = nick, id = id }
+                end
+            end
+        end
+        local low = autoLower(text)
+        for w in low:gmatch("[%w_%.%-]+") do
+            -- ники латиницей: буквы/цифры/«_»/«.»/«-», 3–24 знака, есть буква
+            if #w >= 3 and #w <= 24 and w:find("%a") then
+                local hit = players[w]
+                if hit then return hit.nick, hit.id end
+            end
+        end
+        return nil
+    end
+
+    -- Кто в репорте «на кого пожаловались»: сначала ID из текста («дм 234») →
+    -- ник из игры; если числа не было — ник, написанный в тексте. Автор строки
+    -- репорта (тот, кому отвечает /ans) здесь не участвует — он приходит
+    -- отдельно и остаётся в {автор}.
+    function QR.autoTargetOf(text, foundId)
+        local n, id = QR.autoNickById(foundId)
+        if n then return n, id end
+        return QR.autoNickInText(text)
     end
 
     -- Переменные вкладки — их можно писать И В ТРИГГЕРЕ, И В ОТВЕТЕ:
@@ -28032,6 +28097,11 @@ do
         -- v1.19.36: {ID} — ID из текста репорта («дм 234» → 234); если он
         -- найден, вкладка уходит в слежку (/sp ID) даже при команде /goto.
         local foundId = QR.autoFindReportId(text)
+        -- v1.19.45: ник и ID — того, НА КОГО пожаловались, а не автора строки
+        -- (раньше в «слежу за игроком Ник[ID]» подставлялся ник автора репорта
+        -- и получалась смесь: ник репортёра + ID нарушителя).
+        local tNick, tId = QR.autoTargetOf(text, foundId)
+        if tId and not foundId then foundId = tId end
         if pause then
             -- слежка: молчат вкладки, которые после ответа что-то делают
             -- (своя команда /sp|/goto или автослежка /sp по {ID}) — телепорт
@@ -28077,7 +28147,7 @@ do
 
         -- Что уйдёт игроку и на сервер: сначала собираем план по всем
         -- совпавшим вкладкам (пустые вкладки в план не попадают).
-        local rep = { nick = nick, id = id, foundId = foundId }
+        local rep = { nick = tNick or nick, author = nick, id = id, foundId = foundId }
         local plan = {}
         for k = 1, #hits do
             local tab = QR.autoTab(hits[k].idx)
@@ -28552,7 +28622,7 @@ do
         local hintY = yy + lineH(ctx, 0.86) + 6
         local varHints = {
             "Переменные {ID}, {all}, {punishments} пишутся в ответе или на слове в триггере («дм{ID}») — тогда слово ищется в любом месте репорта",
-            "{ID} — найдёт ID в репорте («дм 234», «234 дм») и подставит его в ответ; на слове в триггере («дм{ID}») ответ собирается сам: «Приветствую, слежу за игроком Ник[ID]»",
+            "{ID} — ID того, на кого пожаловались: в репорте («дм 234») или по написанному в нём нику; на слове в триггере («дм{ID}») ответ собирается сам: «Приветствую, слежу за игроком Ник[ID]»",
             "После ответа автопилот сам зайдёт в слежку за этим игроком — даже если выбрана команда /goto",
             "{all} — на слове в триггере («спек{all}»): сработает, даже если репорт из нескольких слов",
             "{punishments} — активные наказания игрока (как кнопка «Наказания игрока»)",
