@@ -6,7 +6,8 @@ SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', 'grnd_adm_t
 OUT = sys.argv[2] if len(sys.argv) > 2 else '/tmp/card_harness.lua'
 src = io.open(SRC, encoding='utf-8').read()
 
-start = src.index('            local W = math.floor(math.max(400, math.min(460, resX * 0.28)))')
+start = src.index('            local pad = 14')
+endmark0 = '            local Wfull = math.floor(math.max(400, math.min(460, resX * 0.28)))'
 endmark = '            grndPopCol(colorN)'
 end = src.index(endmark, start) + len(endmark)
 card = src[start:end]

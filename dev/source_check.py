@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.63"' in s, 'версия не 1.19.63')
+need('GRND_SCRIPT_VERSION = "1.19.64"' in s, 'версия не 1.19.64')
 
 # v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
 # 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
@@ -118,12 +118,12 @@ card_start = s.index('if grndBegin("##grnd_recon_card", flags) then')
 card_end = s.index('if endDepth > 0 then endDepth = endDepth - 1', card_start)
 card = s[card_start:card_end]
 need(len(card) > 4000, 'не найти блок отрисовки карточки рекона')
-need('local W = math.floor(math.max(400, math.min(460, resX * 0.28)))' in s,
+need('local Wfull = math.floor(math.max(400, math.min(460, resX * 0.28)))' in s,
      'карточка рекона снова узкая (в образце две колонки, ~430 px)')
-need('local LW = math.floor(W * 0.30)' in s and 'local RX = pad + LW + 12' in s,
+need('local LW = math.floor(Wfull * 0.30)' in s and 'local RX = pad + LW + 12' in s,
      'в карточке нет левой колонки под кнопки наказаний')
 # ник слева и значок «копировать» рядом с ним
-need('local title = shortValue(nick, 18) .. " [" .. tostring(id) .. "]"' in s and
+need('local title = shortValue(nick, nickShort) .. " [" .. tostring(id) .. "]"' in s and
      'put(pad, 9, title, c4(TH.textHi), 1.0)' in s,
      'ник в шапке не прижат влево')
 absent('math.floor((W - titleW) / 2)', 'ник в шапке снова по центру')
@@ -185,9 +185,14 @@ need('local speed = grndSpeedDisplay(id, textValue("speed", ""), true)' in s,
      'скорость в карточке снова с единицами (в образце — просто число)')
 need('local lvlRaw = textValue("rc_level", "")' in s and 'gsub("%s*%b()", "")' in s,
      '«Уровень» снова показывает «18 (12345)» вместо числа')
-# кнопки наказаний — в левой колонке, четыре
-need('local PUN_TOP = 4' in s and 'if punCnt > PUN_TOP then punCnt = PUN_TOP end' in s,
+# кнопки наказаний — в левой колонке, четыре (v1.19.64: MUTE обязана быть)
+need('local PUN_TOP = 4' in s,
      'в карточке снова не четыре кнопки наказаний')
+need('local punOrder = { "JAIL", "BAN", "KICK", "MUTE", "WARN", "SKICK", "SBAN" }' in s and
+     'if it and not used[j] and tostring(it.id) == punOrder[i] then' in s,
+     'кнопки снова берутся в порядке настроек — MUTE выпадет из карточки')
+need('if #punItems >= PUN_TOP then break end' in s,
+     'набор кнопок карточки не ограничен четырьмя')
 need('local byy = leftTop + (i - 1) * (PUN_BH + PUN_BG)' in s and
      'im.InvisibleButton("##rcb_p_" .. btnLabel' in s,
      'кнопки наказаний не в левой колонке карточки')
@@ -235,9 +240,21 @@ need('"NoScrollWithMouse"' in s,
      'ImGui снова может крутить содержимое карточки своим колесом')
 # стрелка внизу: сворачивает и разворачивает блок информации и статистики
 need('im.InvisibleButton("##grnd_recon_top"' in s and
-     'if topClick then' in s and 'RC.statsOpen = not openState' in s and
+     'if topClick then' in s and 'RC.cardOpen = not openState' in s and
+     'RC.posX, RC.posY = px, py' in s and
      'RC.scroll = 0          -- развернём — список с начала' in s,
-     'стрелка внизу не сворачивает блок информации и статистики')
+     'стрелка внизу не сворачивает карточку (или теряет левый край)')
+# v1.19.64: карточка складывается ВЛЕВО — остаётся узкая полоса с кнопками
+# наказаний и стрелочкой; левый край окна при этом не прыгает
+need('local openState = (RC.cardOpen ~= false)' in s,
+     'состояние «свёрнуто/развёрнуто» снова живёт не в RC.cardOpen')
+need('local Wmini = pad + LW + 6' in s and
+     'local W = openState and Wfull or Wmini' in s,
+     'карточка не складывается влево в узкую полосу')
+need('local RW = Wfull - pad - 12 - RX' in s,
+     'ширина колонки строк считается от свёрнутой карточки (строки сломаются)')
+need('local nickShort = openState and 18 or 8' in s,
+     'в свёрнутой полосе ник не укорачивается (не влезет)')
 need('pcall(dl.AddTriangleFilled, dl,\n                            at(cx2 - 5, cy2 + 3), at(cx2, cy2 - 3), at(cx2 + 5, cy2 + 3),' in s and
      'at(cx2 - 5, cy2 - 3), at(cx2 + 5, cy2 - 3), at(cx2, cy2 + 3),' in s,
      'стрелка не меняет направление при сворачивании/разворачивании')
@@ -914,6 +931,38 @@ absent('local rows, contentW = pickerLayout(ctx, math.min(920, math.max(240, res
        'раскладка полосы считается по старой ширине')
 absent('local y = math.max(16, math.min(resY - H - 40, math.floor((resY - H) * 0.72)))',
        'осталась старая «оторванная» позиция полосы')
+
+# v1.19.64: /stats, который администратор ввёл РУКАМИ, не трогаем: серверное
+# окно открывается как обычно, рекон не обновляется. Прячем ТОЛЬКО ответ на
+# автозапрос карточки слежки.
+need('local function stIsManual()' in s and
+     'return ST.src == "chat" and os.clock() - (ST.manualAt or -999) < 15' in s and
+     '_G.grndStatsIsManual = stIsManual' in s,
+     'нет признака «ручной /stats»')
+hide_start = s.index('_G.grndStatsShouldHide = function(title, text)')
+hide_end = s.index('_G.grndStatsOnDialog = function', hide_start)
+hide_src = s[hide_start:hide_end]
+need('if not looks then return false end' in hide_src and
+     'if stIsManual() then return false end' in hide_src and
+     hide_src.index('if stIsManual() then return false end')
+     < hide_src.index('if stSpecActive() then return true end'),
+     'ручное окно /stats всё ещё прячется в слежке')
+dlg_start = s.index('_G.grndStatsOnDialog = function')
+dlg_src = s[dlg_start:dlg_start + 3000]
+need('if _G.grndStatsIsManual and _G.grndStatsIsManual() then' in dlg_src and
+     'ST.manualDialog = (ST.manualDialog or 0) + 1' in dlg_src and
+     'return nil' in dlg_src,
+     'окно ручного /stats разбирается в рекон (должно остаться нетронутым)')
+chat_start = s.index('_G.grndStatsOnSendChat = function')
+chat_src = s[chat_start:s.index('return nil\n    end', chat_start)]
+need('ST.manualAt = os.clock()' in chat_src and 'ST.waiting = false' in chat_src,
+     'ручной /stats становится «нашей» сессией (автозапрос спрячет чужое окно)')
+need('grndStatsPopup' not in chat_src,
+     'на ручной /stats снова открывается своё окно статистики')
+need('return nil' in chat_src, 'ручной /stats не выходит из обработчика сразу (сессия заведётся)')
+need('print("{00FFAA}[GRND]{FFFFFF} МОДУЛЬ 14 (v1.11.71) загружен — /stats встроен; '
+     'прячем только ответ на СВОЙ запрос, ручной /stats не трогаем")' in s,
+     'строка загрузки модуля 14 не отражает новое правило')
 
 if fails:
     for f in fails:

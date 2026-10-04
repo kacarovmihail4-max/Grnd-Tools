@@ -1,5 +1,5 @@
 
--- ---- сценарии карточки рекона (v1.19.61) ----
+-- ---- сценарии карточки рекона (v1.19.64) ----
 
 local function render()
     newFrame()
@@ -26,7 +26,7 @@ end
 -- 1) обычный экран: карточка компактная — кончается на конце панели кнопок
 resX, resY = 1920, 1080
 RC.scroll = nil
-RC.statsOpen = nil
+RC.cardOpen = nil
 render()
 local rows = drawnRows()
 local btns = drawnPunButtons()
@@ -45,7 +45,12 @@ check((RC.scrollMax or 0) > 0 or true, "есть что прокручивать
 check(#btns == 4, "кнопок наказаний ровно четыре (нарисовано " .. tostring(#btns) .. ")")
 check(#btns == 4 and btns[1].id == "##rcb_p_JAIL" and btns[2].id == "##rcb_p_BAN"
     and btns[3].id == "##rcb_p_KICK" and btns[4].id == "##rcb_p_MUTE",
-    "это JAIL, BAN, KICK, MUTE — как в списке настроек")
+    "это JAIL, BAN, KICK, MUTE (в настройках порядок другой — MUTE была бы пятой)")
+local hasMute = false
+for _, b in ipairs(btns) do
+    if b.id == "##rcb_p_MUTE" then hasMute = true end
+end
+check(hasMute, "кнопка MUTE есть в карточке (v1.19.64)")
 check((RC.scroll or 0) == 0, "прокрутка на большом экране стоит на нуле")
 
 -- ник СЛЕВА (а не по центру), рядом — значок «копировать»
@@ -199,28 +204,79 @@ for _, f in ipairs(FILLS) do
 end
 check(bar ~= nil, "у списка видна полоса прокрутки")
 
--- 3) стрелка внизу сворачивает весь блок информации и статистики
+-- 3) стрелка внизу сворачивает карточку ВЛЕВО: правая часть складывается,
+--    остаётся узкая полоса с колонкой кнопок и самой стрелочкой
 resX, resY = 1920, 1080
 RC.scroll = nil
-RC.statsOpen = nil
+RC.cardOpen = nil
+RC.posX, RC.posY = nil, nil
 render()
 local hExpanded = RC.windowSize.h
+local wExpanded = RC.windowSize.w
+local xExpanded = RC.windowPos.x
 check(#drawnRows() > 0, "до сворачивания строки на месте")
+check(wExpanded >= 400, "развёрнутая карточка широкая (" .. tostring(wExpanded) .. ")")
+check(#TRIANGLES > 0, "внизу карточки нарисована стрелочка")
 clickAndRender("##grnd_recon_top")
-check(RC.statsOpen == false, "клик по стрелке свернул блок")
+check(RC.cardOpen == false, "клик по стрелке свернул карточку")
+local wMini = RC.windowSize.w
+check(wMini < wExpanded and wMini <= 200,
+    "карточка свернулась ВЛЕВО в узкую полосу (было " .. tostring(wExpanded)
+    .. ", стало " .. tostring(wMini) .. ")")
+check(wMini == 14 + math.floor(wExpanded * 0.30) + 6,
+    "ширина свёрнутой карточки = колонка кнопок + рамка (" .. tostring(wMini) .. ")")
+check(RC.windowPos.x == xExpanded,
+    "левый край карточки не прыгнул (x=" .. tostring(RC.windowPos.x) .. ")")
+check(RC.posX == xExpanded and RC.posY == RC.windowPos.y,
+    "позиция окна запомнена до смены ширины (RC.posX=" .. tostring(RC.posX) .. ")")
 check(#drawnRows() == 0, "свёрнутый блок информации и статистики не рисуется")
 check(#drawnLines() == 0, "линия-разделитель в свёрнутом виде тоже не рисуется")
 check(RC.scrollRect == nil, "в свёрнутом виде колесо не перехватывается (уходит игре)")
 check(RC.windowSize.h == hExpanded,
     "высота карточки не скачет при сворачивании (карточка всегда по концу кнопок)")
-check(#drawnPunButtons() == 4, "кнопки наказаний остаются на месте и в свёрнутом виде")
+local btnsMini = drawnPunButtons()
+check(#btnsMini == 4, "кнопки наказаний остаются на месте и в свёрнутом виде")
+local fits = true
+for _, b in ipairs(btnsMini) do
+    if b.x + b.w > wMini then fits = false end
+end
+check(fits, "кнопки не вылезают за узкую свёрнутую карточку")
+check(#TRIANGLES > 0, "стрелочка остаётся на месте в свёрнутой полосе")
+do
+    local tri = TRIANGLES[1]
+    local wx = RC.windowPos.x
+    local maxX = math.max(tri.p1.x, tri.p2.x, tri.p3.x)
+    check(maxX <= wx + wMini, "стрелочка целиком внутри свёрнутой полосы")
+end
+local miniTitle = nil
+for _, d in ipairs(DRAWN) do
+    if d.kind == 'text' and tostring(d.name):find("%[77%]") then miniTitle = d.name end
+end
+check(miniTitle ~= nil and miniTitle:find("%[77%]") ~= nil,
+    "в свёрнутой полосе ник по-прежнему виден (найдено: " .. tostring(miniTitle) .. ")")
+check(miniTitle ~= nil and #miniTitle < #("Test_Player [77]"),
+    "в узкой полосе ник показан сокращённо (" .. tostring(miniTitle) .. ")")
 check(drawnButton("##grnd_recon_copy") ~= nil, "значок копирования остаётся в шапке")
 
--- разворачиваем обратно
+-- разворачиваем обратно: ширина возвращается, левый край — там же
 clickAndRender("##grnd_recon_top")
-check(RC.statsOpen ~= false, "повторный клик развернул блок обратно")
+check(RC.cardOpen ~= false, "повторный клик развернул карточку обратно")
+check(RC.windowSize.w == wExpanded, "ширина вернулась к развёрнутой "
+    .. "(" .. tostring(RC.windowSize.w) .. ")")
+check(RC.windowPos.x == xExpanded, "левый край и после разворота там же")
 check(#drawnRows() > 0, "после разворота строки вернулись")
 check((RC.scroll or 0) == 0, "после разворота список начинается сверху")
+
+-- сворачиваем и разворачиваем, когда окно уже перетащено: край не «прыгает»
+RC.posX, RC.posY = 1000, 300
+render()
+local xDragged = RC.windowPos.x
+clickAndRender("##grnd_recon_top")
+check(RC.windowPos.x == xDragged,
+    "у перетащенного окна левый край тоже не прыгает (" .. tostring(RC.windowPos.x) .. ")")
+clickAndRender("##grnd_recon_top")
+check(RC.windowPos.x == xDragged, "и при развороте он на месте")
+RC.posX, RC.posY = nil, nil
 
 -- 4) клик по кнопке внутри карточки даёт тост
 CLICK["##rcb_p_BAN"] = true
@@ -255,7 +311,7 @@ RC.live = { hp = "100", arm = "80", ping = "30", speed = "45",
 -- 8) окно можно взять за ЛЮБОЕ свободное место
 resX, resY = 1920, 1080
 RC.scroll = nil
-RC.statsOpen = nil
+RC.cardOpen = nil
 RC.posX, RC.posY = nil, nil
 RC.dragging = nil
 render()

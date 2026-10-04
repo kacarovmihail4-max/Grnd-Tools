@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.63"
+GRND_SCRIPT_VERSION = "1.19.64"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -11566,9 +11566,11 @@ end
 --  снимаются, кодировка CP1251/UTF-8 любая) и кладём поля в GRND_RC.live
 --  (ключи rc_*) — секция «Сведения игрока» рекона показывает их через
 --  textValue(), внизу секции — время получения данных.
---  Автоответы скрипта скрываются. Во время слежки скрывается и нативное
---  модальное окно ответа на ручной /stats: вместо него открывается отдельное
---  немодальное окно статистики, не блокирующее остальные окна.
+--  v1.19.64: прячется ТОЛЬКО ответ на СВОЙ запрос (автозапрос карточки
+--  слежки) — своё немодальное окно статистики при этом не открывается.
+--  /stats, который администратор ввёл РУКАМИ, неприкосновенен: серверное
+--  окно открывается как обычно (и в слежке тоже), рекон из него не
+--  обновляется, свои окна скрипт не показывает и чужие не прячет.
 --  Запасной канал — «окно» из textdraw'ов.
 --  АВТОЗАПРОС: при открытом реконе и смене цели скрипт сам шлёт /stats.
 --  Обновление: кнопка «Статистика» в реконе.
@@ -11581,7 +11583,7 @@ GRND_STATS = _G.GRND_STATS or {
 }
 -- маркер в консоль MoonLoader в момент загрузки файла: если этой строки
 -- нет в moonloader.log — игра грузит НЕ этот файл (старый/другой).
-print("{00FFAA}[GRND]{FFFFFF} МОДУЛЬ 14 (v1.11.71) загружен — /stats встроен, окно прячется")
+print("{00FFAA}[GRND]{FFFFFF} МОДУЛЬ 14 (v1.11.71) загружен — /stats встроен; прячем только ответ на СВОЙ запрос, ручной /stats не трогаем")
 do
     local ST = GRND_STATS
 
@@ -11836,19 +11838,26 @@ do
 
     -- v1.11.63: ЕДИНОЕ решение «прятать ли окно» — чтобы и хук, и
     -- аварийная ветка работали одинаково.
+    -- v1.19.64: /stats, который администратор ввёл РУКАМИ, неприкосновенен:
+    -- серверное окно открывается как обычно, рекон из него не обновляется, и
+    -- никакие свои окна мы не скрываем. Прячем только ответ на СВОЙ запрос
+    -- (/stats, который отправил сам скрипт для карточки слежки).
+    local function stIsManual()
+        return ST.src == "chat" and os.clock() - (ST.manualAt or -999) < 15
+    end
+    _G.grndStatsIsManual = stIsManual
+
     _G.grndStatsShouldHide = function(title, text)
         local full = ("%s\n%s"):format(tostring(title or ""), tostring(text or ""))
         local looks = stLooksStats(stLower(grndToUtf(full)))
-        -- Never suppress an unrelated dialog while waiting for /stats.
+        -- Чужое окно не трогаем, даже пока ждём ответ на свой /stats.
         if not looks then return false end
-        -- In spectate, hide the server's modal response. A manual /stats
-        -- opens the separate modeless stats popup instead, so other windows
-        -- remain usable and the recon target is not replaced.
+        -- Ручной /stats — окно сервера оставляем игроку как есть (и в слежке).
+        if stIsManual() then return false end
+        -- В слежке прячем модальный ответ сервера на СВОЙ запрос: он заслонил
+        -- бы рекон, а данные и так идут в карточку слежки.
         if stSpecActive() then return true end
-        -- Outside spectate, preserve manual /stats and hide background replies.
-        local manual = ST.src == "chat"
-            and os.clock() - (ST.manualAt or -999) < 15
-        if manual then return false end
+        -- Вне слежки — то же самое, пока наш запрос свежий.
         if ST.waiting and ST.src ~= "chat"
             and os.clock() - (ST.waitAt or -999) <= 6 then
             return true
@@ -11863,6 +11872,14 @@ do
         if looks then
             ST.dlgSeen = (ST.dlgSeen or 0) + 1
             ST.lastDlgTitle = tostring(title or "?")
+            -- v1.19.64: окно, которое админ открыл РУКАМИ, не разбираем:
+            -- рекон и карточка слежки из него не обновляются, окно живёт
+            -- своей жизнью (страховка: и данные, и решение — через одну
+            -- функцию, чтобы ветки не разошлись).
+            if _G.grndStatsIsManual and _G.grndStatsIsManual() then
+                ST.manualDialog = (ST.manualDialog or 0) + 1
+                return nil
+            end
             -- v1.11.63: разбор — в pcall: ошибка в инжесте больше не
             -- может помешать спрятать окно.
             local okI, errI = pcall(stIngest, full, id)
@@ -11877,13 +11894,20 @@ do
 
     -- хук в sampev.onSendChat: запомнили, что ушёл /stats.
     -- Если команду отправили НЕ мы (ownSentAt старый) — это ввод игрока:
-    -- вне слежки такое окно оставляем видимым (src = "chat").
+    -- такое окно НЕ прячем и в рекон не кладём (v1.19.64), свои окна тоже
+    -- не открываем — админ увидит ровно серверное окно.
     _G.grndStatsOnSendChat = function(msg)
         local m = stLower(stTrim(tostring(msg or "")))
         if m:match("^/stats%s") or m == "/stats" then
             if os.clock() - (ST.ownSentAt or -999) > 1 then
                 ST.src = "chat"
                 ST.manualAt = os.clock()   -- v1.11.62: метка ручного /stats
+                -- v1.19.64: ручной запрос не становится «нашей сессией» —
+                -- иначе автозапрос для карточки считал бы его своим и
+                -- следующий ответ сервера снова спрятался бы.
+                ST.waiting = false
+                ST.targetNick = ""
+                return nil
             end
             ST.fields = {}          -- новая сессия разбора
             ST.lastIngestAt = 0
@@ -11891,17 +11915,6 @@ do
             ST.waitAt = os.clock()
             ST.targetId = tonumber(tostring(msg):match("^/stats%s+(%d+)"))
             ST.targetNick = ""
-            -- v1.11.77: ручной /stats — открыть окно со статистикой игрока
-            do
-                local RC = _G.GRND_RC
-                local mid = ST.targetId
-                    or (type(RC) == "table" and tonumber(RC.id))
-                    or (_G.GRND_SPEC and _G.GRND_SPEC.active
-                        and tonumber(_G.GRND_SPEC.id))
-                if mid and type(_G.grndStatsPopup) == "function" then
-                    pcall(_G.grndStatsPopup, mid, "")
-                end
-            end
         end
         return nil
     end
@@ -38971,14 +38984,22 @@ function grndMainBody()
             --     («Имя» в неё не входит — ник есть в шапке).
             --     «Оружие», «Патроны» и «AFK» не выводятся;
             --   • стрелка внизу сворачивает и разворачивает весь блок
-            --     информации и статистики.
-            local W = math.floor(math.max(400, math.min(460, resX * 0.28)))
+            --     информации и статистики: в свёрнутом виде карточка
+            --     складывается ВЛЕВО — остаётся узкая полоса с колонкой
+            --     кнопок наказаний и со самой стрелочкой (v1.19.64).
             local pad = 14
             local HEAD = 34             -- шапка: ник слева + значок «копировать»
             local BOT = 22              -- низ: стрелка «свернуть/развернуть»
-            local LW = math.floor(W * 0.30)   -- левая колонка: кнопки наказаний
+            -- состояние «развёрнуто/свёрнуто» живёт в RC: стрелка внизу его
+            -- меняет, а свёрнутая карточка уезжает ВЛЕВО (правая часть
+            -- складывается, стрелка остаётся на месте — внизу полосы)
+            local openState = (RC.cardOpen ~= false)
+            local Wfull = math.floor(math.max(400, math.min(460, resX * 0.28)))
+            local LW = math.floor(Wfull * 0.30)  -- колонка кнопок наказаний
+            local Wmini = pad + LW + 6  -- свёрнутая: остаётся только эта колонка
+            local W = openState and Wfull or Wmini
             local RX = pad + LW + 12    -- с этой линии — колонка строк
-            local RW = W - pad - 12 - RX      -- ширина колонки строк
+            local RW = Wfull - pad - 12 - RX  -- ширина колонки строк
             local ROW_H = 24            -- высота строки сведений
             local ROWS_A = 4            -- характеристика игрока
             -- статистика: все поля ответа /stats (без «Имя» — ник есть в шапке)
@@ -38990,18 +39011,45 @@ function grndMainBody()
             local TOP_Y = HEAD + 6      -- верх списка и колонки кнопок
             local SCROLL_STEP = ROW_H   -- один оборот колеса = одна строка
             local H_MIN = 180           -- ниже карточка не сжимается
+            -- ник в шапке: в свёрнутой карточке он короче (места меньше)
+            local nickShort = openState and 18 or 8
             -- карточка сама загружает настройки наказаний (раньше это делала
             -- отдельная панель): оттуда приходит и тумблер «кнопки в карточке»
             if GRND_PUN and not GRND_PUN.loaded then pcall(GRND_PUN.load) end
-            local punItems = (GRND_PUN and GRND_PUN.barOn ~= false)
+            local punList = (GRND_PUN and GRND_PUN.barOn ~= false)
                 and GRND_PUN.list or nil
-            local punCnt = (type(punItems) == "table") and #punItems or 0
-            if punCnt > PUN_TOP then punCnt = PUN_TOP end
+            -- v1.19.64: порядок кнопок в карточке — ФИКСИРОВАННЫЙ:
+            -- JAIL, BAN, KICK, MUTE. Раньше брались первые PUN_TOP записей
+            -- из настроек, а там обычный порядок (JAIL, BAN, WARN, KICK,
+            -- MUTE) — и кнопка MUTE в карточку не попадала вовсе
+            local punOrder = { "JAIL", "BAN", "KICK", "MUTE", "WARN", "SKICK", "SBAN" }
+            local punItems = {}
+            if type(punList) == "table" then
+                local used = {}
+                for i = 1, #punOrder do
+                    if #punItems >= PUN_TOP then break end
+                    for j = 1, #punList do
+                        local it = punList[j]
+                        if it and not used[j] and tostring(it.id) == punOrder[i] then
+                            used[j] = true
+                            punItems[#punItems + 1] = it
+                            break
+                        end
+                    end
+                end
+                -- наказания, которых нет в списке приоритета, — после них
+                for j = 1, #punList do
+                    if #punItems >= PUN_TOP then break end
+                    if not used[j] and punList[j] then
+                        used[j] = true
+                        punItems[#punItems + 1] = punList[j]
+                    end
+                end
+            end
+            local punCnt = #punItems
             local punH = (punCnt > 0)
                 and (punCnt * PUN_BH + (punCnt - 1) * PUN_BG) or 0
             local rowsH = ROWS_A * ROW_H + DIV_H + ROWS_B * ROW_H
-            -- состояние «свёрнуто» живёт в RC: стрелка внизу его меняет
-            local openState = (RC.statsOpen ~= false)
             -- v1.19.62: панель наказаний прижата к шапке (была ниже — под
             -- пустым местом 3D-модели, из-за чего кнопки «уезжали» вниз)
             local leftTop = TOP_Y + 2
@@ -39124,7 +39172,7 @@ function grndMainBody()
             -- Тянем только при включённом курсоре (ПКМ): иначе ЛКМ-клик уходит
             -- в игру (выстрел) — тащить было бы нельзя. Позиция окна — экранная,
             -- курсор тоже, поэтому всё сравниваем в одних координатах.
-            local title = shortValue(nick, 18) .. " [" .. tostring(id) .. "]"
+            local title = shortValue(nick, nickShort) .. " [" .. tostring(id) .. "]"
             local titleW = grndTextW(title)
             local icRect = { x = px + pad + titleW + 10, y = py + 6, w = 22, h = 22 }
             local function onWidget(mx, my)
@@ -39401,7 +39449,12 @@ function grndMainBody()
                     end
                 end
                 if topClick then
-                    RC.statsOpen = not openState
+                    -- v1.19.64: стрелка сворачивает карточку ВЛЕВО (правая
+                    -- часть складывается — остаётся колонка кнопок и стрелка)
+                    -- и разворачивает обратно. Левый край окна не прыгает:
+                    -- запоминаем текущую позицию до смены ширины.
+                    RC.cardOpen = not openState
+                    RC.posX, RC.posY = px, py
                     RC.scroll = 0          -- развернём — список с начала
                 end
             end

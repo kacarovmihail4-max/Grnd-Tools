@@ -18,6 +18,7 @@ end
 DRAWN = {}      -- текст: { name, x, y }
 FILLS = {}      -- заливки: { x, y, w, h, r, g, b, a }
 CIRCLES = {}    -- круги (в карточке v1.19.61 их быть не должно)
+TRIANGLES = {}  -- треугольники (стрелка «свернуть/развернуть» внизу)
 BTNS = {}       -- кнопки ImGui в кадре: { id, x, y, w, h }
 CLICK = {}      -- какие кнопки «нажаты» в этом кадре
 TOASTS = {}
@@ -26,7 +27,7 @@ resX, resY = 1920, 1080
 COND_ALWAYS = 0
 
 local function newFrame()
-    DRAWN, FILLS, CIRCLES, BTNS = {}, {}, {}, {}
+    DRAWN, FILLS, CIRCLES, BTNS, TRIANGLES = {}, {}, {}, {}, {}
 end
 
 -- ---- заглушки ImGui ----
@@ -37,7 +38,11 @@ function dl.AddRect() end
 function dl.AddCircleFilled() CIRCLES[#CIRCLES + 1] = true end
 function dl.AddCircle() CIRCLES[#CIRCLES + 1] = true end
 function dl.AddLine() end
-function dl.AddTriangleFilled() end
+function dl.AddTriangleFilled(self, p1, p2, p3, c)
+    -- вызывается через pcall(dl.AddTriangleFilled, dl, p1, p2, p3, c)
+    if type(self) == 'table' and self.x then p1, p2, p3 = self, p1, p2 end
+    TRIANGLES[#TRIANGLES + 1] = { p1 = p1, p2 = p2, p3 = p3 }
+end
 function dl.PushClipRect() return true end
 function dl.PopClipRect() end
 
@@ -139,8 +144,10 @@ RC = {
 }
 GRND_PUN = {
     loaded = true, barOn = true,
-    list = { { id = "JAIL" }, { id = "BAN" }, { id = "KICK" },
-             { id = "MUTE" }, { id = "WARN" }, { id = "SKICK" }, { id = "SBAN" } },
+    -- порядок как в настройках скрипта (GRND_PUN.list): именно из-за него
+    -- кнопка MUTE раньше не попадала в карточку
+    list = { { id = "JAIL" }, { id = "BAN" }, { id = "WARN" }, { id = "KICK" },
+             { id = "MUTE" }, { id = "SKICK" }, { id = "SBAN" } },
 }
 function GRND_PUN.load() end
 
