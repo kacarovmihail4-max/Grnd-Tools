@@ -186,7 +186,7 @@ legend_top = H + 10
 cols = 3
 rows = (len(labels) + cols - 1) // cols
 LW = max(W, 1060)
-img2 = Image.new('RGB', (LW, legend_top + rows * 34 + 16), (26, 30, 36))
+img2 = Image.new('RGB', (LW, legend_top + rows * 34 + 30), (26, 30, 36))
 img2.paste(img, (0, 0))
 d2 = ImageDraw.Draw(img2, 'RGBA')
 col_w = LW // cols
