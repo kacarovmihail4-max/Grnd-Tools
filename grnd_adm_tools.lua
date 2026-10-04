@@ -28485,9 +28485,10 @@ do
 
         -- v1.19.36: внизу — подсказки про переменные {ID} и {all}. Текст
         -- постоянный (не зависит от полей вкладки), длинные строки переносятся.
-        local hintSc = 0.72
+        -- v1.19.41: под ними — строка диагностики («Репорт: … → …»). Если
+        -- места в окне мало, кегль всего блока уменьшается — подсказки и
+        -- диагностика остаются целиком, ничего не обрезается краем.
         local hintY = yy + lineH(ctx, 0.86) + 6
-        local hintStep = lineH(ctx, hintSc) + 2
         local varHints = {
             "Переменные {ID}, {all}, {punishments} пишутся в ответе — или прямо в триггере («дм{ID}»)",
             "{ID} — найдёт ID в репорте («дм 234», «234 дм») и подставит его в ответ",
@@ -28495,27 +28496,38 @@ do
             "{all} — триггер сработает, даже если репорт состоит из нескольких слов",
             "{punishments} — активные наказания игрока (как кнопка «Наказания игрока»)",
         }
-        local hy = hintY
-        for hi = 1, #varHints do
-            local lines = wrapW(varHints[hi], iw, ctx.drawnW, hintSc)
-            for li = 1, #lines do
-                ctx.uiText(x, hy, lines[li], mut, hintSc)
-                hy = hy + hintStep
-            end
-        end
-
         -- v1.19.41: диагностика — что сделал последний репорт. Раньше при
         -- «триггер не сработал» причину было не видно; теперь она в окне.
         local dbgTxt = tostring(A.lastReport or "")
         if dbgTxt == "" then dbgTxt = "репортов ещё не было" end
-        local dbgLines = wrapW(
-            "Репорт: " .. utf8Cut(dbgTxt, 44)
-                .. (A.lastCheck and A.lastCheck ~= "" and (" → " .. tostring(A.lastCheck)) or ""),
-            iw, ctx.drawnW, 0.74)
-        for li = 1, math.min(2, #dbgLines) do
-            ctx.uiText(x, hy, dbgLines[li], mut, 0.74)
-            hy = hy + lineH(ctx, 0.74) + 2
+        local dbgLine = "Репорт: " .. utf8Cut(dbgTxt, 44)
+            .. (A.lastCheck and A.lastCheck ~= "" and (" → " .. tostring(A.lastCheck)) or "")
+        -- Подбираем кегль блока: подсказки (с переносами) + строка диагностики
+        local hintSc, hintStep, hintLines = 0.72, 0, nil
+        local scales = { 0.72, 0.68, 0.64, 0.60, 0.56, 0.52 }
+        for si = 1, #scales do
+            local sc = scales[si]
+            local step = lineH(ctx, sc) + 2
+            local rows, packed = 1, {}          -- 1 — строка диагностики
+            for hi = 1, #varHints do
+                local ls = wrapW(varHints[hi], iw, ctx.drawnW, sc)
+                packed[#packed + 1] = ls
+                rows = rows + #ls
+            end
+            if si == #scales or hintY + rows * step <= h - 4 then
+                hintSc, hintStep, hintLines = sc, step, packed
+                break
+            end
         end
+        local hy = hintY
+        for hi = 1, #hintLines do
+            local ls = hintLines[hi]
+            for li = 1, #ls do
+                ctx.uiText(x, hy, ls[li], mut, hintSc)
+                hy = hy + hintStep
+            end
+        end
+        ctx.uiText(x, hy, fit(dbgLine, iw, ctx.drawnW, hintSc), mut, hintSc)
 
         -- Список команд рисуем ПОСЛЕДНИМ: он ложится поверх полей и клики
         -- попадают в него, а не в поле под ним.
