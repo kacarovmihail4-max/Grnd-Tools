@@ -147,7 +147,7 @@ function grndRepAnswer(pid, text)
     pid = tostring(pid or "")
     if pid:match("^%d+$") == nil then return false end
     local enc = grndAnsiText(tostring(text))      -- UTF-8 → CP1251, как в игре
-    -- v1.19.41: строку ответа собирает сам скрипт (проверка /n — там же)
+    -- v1.19.56: строку ответа собирает сам скрипт — боевая «/ans ID текст»
     local Q = _G.GRND_QR
     if type(Q) == "table" and type(Q.answerCmd) == "function" then
         grndRepQueue(Q.answerCmd(pid, enc))

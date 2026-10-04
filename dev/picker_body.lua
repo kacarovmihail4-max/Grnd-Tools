@@ -9,7 +9,7 @@ function setItems(n, name)
     Q.nextId = n + 1
 end
 setItems(2, "Шаблон")
-Q.mode = "test"
+Q.mode = "ans"
 Q.loaded = true   -- конфиг уже прочитан: стенд подставляет шаблоны сам
 
 local POS, TXT = {}, {}
@@ -182,7 +182,7 @@ TOOLTIP = nil
 GRND_REP.open = true
 GRND_REP.playerId = "25"
 Q.pickOpen = true
-Q.mode = "test"
+Q.mode = "ans"
 local before = #CHAT
 check(Q.choose(Q.items[1]) == true, "шаблон не отправился")
 local want = "25|" .. Q.apply(Q.items[1].text, { nick = GRND_REP.author, id = GRND_REP.playerId })
@@ -192,14 +192,27 @@ check(GRND_REP.open == false, "окно репорта НЕ закрылось �
 check(Q.pickOpen == false, "полоса шаблонов не закрылась")
 HPRINT("ответ игроку: /ans 25 «" .. want:gsub("^25|", "") .. "», окно репорта закрыто")
 
--- 5b. нет ID игрока (ответить некому): прежний тестовый путь в /n
+-- 5b. нет ID игрока (ответить некому): служебного канала /n больше нет
+-- (v1.19.56) — в чат НИЧЕГО не уходит, текст шаблона кладём в поле ответа
 GRND_REP.open = true
 GRND_REP.playerId = "—"
+GRND_REP.answer = nil
 Q.pickOpen = true
-check(Q.choose(Q.items[1]) == true, "шаблон не отправился (без ID)")
-check(#CHAT == before + 1 and CHAT[#CHAT]:sub(1, 3) == "/n ",
-    "без ID шаблон не ушёл в /n: " .. tostring(CHAT[#CHAT]))
-HPRINT("без ID игрока: шаблон уходит в /n — «" .. CHAT[#CHAT] .. "»")
+local chatBefore, toastBefore = #CHAT, #TOASTS
+check(Q.choose(Q.items[1]) == false, "без ID и без поля шаблон не должен отправляться")
+check(#CHAT == chatBefore, "без ID в чат всё равно ушло: " .. tostring(CHAT[#CHAT]))
+check(#TOASTS > toastBefore and
+    TOASTS[#TOASTS]:find("отвечать некому", 1, true) ~= nil,
+    "нет предупреждения, что отвечать некому: " .. tostring(TOASTS[#TOASTS]))
+GRND_REP.answer = { v = "" }
+Q.pickOpen = true
+check(Q.choose(Q.items[1]) == true, "без ID шаблон не вставился в поле ответа")
+check(GRND_REP.answer.v ~= "" and GRND_REP.answer.v:find("текст 1", 1, true) ~= nil,
+    "текст шаблона не попал в поле ответа: " .. tostring(GRND_REP.answer.v))
+check(#CHAT == chatBefore, "без ID в чат всё равно ушло: " .. tostring(CHAT[#CHAT]))
+HPRINT("без ID игрока: в чат ничего не уходит, текст — в поле ответа («"
+    .. tostring(GRND_REP.answer.v) .. "»)")
+GRND_REP.answer = nil
 GRND_REP.playerId = "25"
 
 -- 6. режим «в поле ответа»: окно НЕ закрываем (там ещё правят текст)

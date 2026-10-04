@@ -2,6 +2,7 @@
 HPRINT = print
 function print(...) end
 TOASTS, CHAT, ANS = {}, {}, {}
+notify = { add = function(text, kind, life) TOASTS[#TOASTS + 1] = tostring(text) end }
 
 local dl = {}
 function dl.AddRectFilled() end

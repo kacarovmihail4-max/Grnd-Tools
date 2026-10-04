@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.55"
+GRND_SCRIPT_VERSION = "1.19.56"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24360,8 +24360,8 @@ end)()
 --    * хранит набор шаблонов ответа (название + текст) в config.json
 --      (секция reportTemplates, кодировка — UTF-8);
 --    * кнопка «Быстрые ответы» в окне репорта открывает окно со списком:
---      клик по шаблону отправляет его содержимое (по умолчанию — в /n,
---      тестовый режим) и закрывает окно;
+--      клик по шаблону отвечает игроку боевой /ans ID текст и закрывает окно
+--      (режим «в поле ответа» — вставляет текст в поле и окно не закрывает);
 --    * редактор шаблонов — в меню: «Репорт» → вкладка «Ответы на репорт»;
 --    * список шаблонов НЕ предзаполняется: пользователь создаёт свои сам
 --      (демо-набор прошлых сборок один раз вычищается при загрузке).
@@ -24390,7 +24390,7 @@ local QR = {
     loaded = false,        -- конфиг прочитан
     items = nil,           -- массив шаблонов { id, name, text }
     nextId = 1,            -- генератор id
-    mode = "test",         -- test (/n) | input (в поле ответа) | ans (/ans)
+    mode = "ans",          -- ans (боевой /ans игроку) | input (в поле ответа)
     selId = nil,           -- выбранный шаблон в редакторе
     isNew = false,         -- редактор создаёт новый шаблон
     delArm = nil,          -- id, для которого удаление ждёт подтверждения
@@ -24444,7 +24444,7 @@ local QR = {
 
 local MAX_TEXT = 512       -- символов в тексте шаблона
 local MAX_NAME = 48        -- символов в названии
-local MAX_CHAT = 118       -- символов на одну строку чата (/n …): у SA-MP лимит 128
+local MAX_CHAT = 118       -- символов на одну строку чата: у SA-MP лимит 128
 local MAX_BUF  = 244       -- байт для поля ответа окна репорта (буфер char[256])
 local MAX_PTIME = 8        -- символов в поле «Время» шаблона наказания
 local MAX_PREASON = 96     -- символов в «Причине» шаблона наказания
@@ -24764,8 +24764,10 @@ end
 
 function QR.modeOk(v)
     v = tostring(v or "")
-    if v == "test" or v == "input" or v == "ans" then return v end
-    return "test"
+    if v == "input" then return "input" end
+    -- v1.19.56: канала /n больше нет — старое значение «test» читается как
+    -- боевой ответ игроку
+    return "ans"
 end
 
 -- Демо-набор прошлых сборок. Сам он больше НЕ создаётся: список шаблонов
@@ -25062,7 +25064,7 @@ function QR.queueCmd(cmd)
     return QR.sendChat(cmd)
 end
 
--- Выбор шаблона: /n (тест) / вставить в поле ответа / ответить игроку.
+-- Выбор шаблона: ответить игроку (боевая /ans) / вставить в поле ответа.
 -- Закрыть окно репорта вместе с полосой шаблонов: ответ отправлен, держать
 -- окно на экране незачем (v1.19.10).
 function QR.closeReport()
@@ -25106,7 +25108,7 @@ function QR.choose(it)
                 return true
             end
         end
-        mode = "test"      -- нет буфера — уходим в тестовый канал
+        mode = "ans"       -- нет буфера — отвечаем игроку
     end
 
     -- v1.19.19: ответ игроку уходит штатной командой /ans ID текст — вместо
@@ -25123,23 +25125,21 @@ function QR.choose(it)
             end
         end
     end
-    mode = "test"
+    mode = "ans"
 
-    -- Нет ID игрока (ответить некому): остаётся прежний тестовый путь в /n.
-    -- В чат влезает ~128 символов, поэтому длинный текст аккуратно режем.
-    local line = oneLine(text)
-    if utf8Len(line) > MAX_CHAT then
-        line = utf8Cut(line, MAX_CHAT - 1) .. "…"
-        QR.toast("В чат ушло начало шаблона (лимит строки чата)", "warn", 3.2)
-    end
-    if QR.sendChat("/n " .. line) then
-        QR.toast("ID игрока не распознан — шаблон ушёл в /n", "warn", 3)
-        -- v1.19.10: шаблон отправлен — основное окно репорта закрывается.
-        -- В режиме «в поле ответа» окно НЕ закрываем: там ещё правят текст.
-        QR.closeReport()
+    -- Нет ID игрока (ответить некому): в боевом режиме в чат НИЧЕГО не уходит —
+    -- служебного канала /n больше нет (v1.19.56). Чтобы текст не потерялся,
+    -- кладём его в поле ответа открытого окна репорта; поля нет — предупреждаем.
+    local R = _G.GRND_REP
+    local buf = R and R.answer
+    if buf and type(grndBinderWriteCBuf) == "function" then
+        local line = byteCut(oneLine(text), MAX_BUF)
+        pcall(grndBinderWriteCBuf, buf, 256, line)
+        if R then R.focused = false end
+        QR.toast("В репорте нет ID игрока — текст шаблона вставлен в поле ответа", "warn", 3.4)
         return true
     end
-    QR.toast("Не удалось отправить шаблон в чат", "warn", 3)
+    QR.toast("В репорте нет ID игрока — отвечать некому", "warn", 3)
     return false
 end
 
@@ -25675,8 +25675,8 @@ end
 --      «Причина» — у команд, которым она нужна;
 --    * кнопка «Наказание» в окне репорта открывает ТАКУЮ ЖЕ полосу, как
 --      «Быстрые ответы», только по центру окна репорта;
---    * тестовый режим: команда уходит в /n (проверка), боевой — как есть,
---      а игроку уходит «Ответ на репорт».
+--    * боевой режим: игроку уходит «Ответ на репорт», следом — команда
+--      наказания как есть.
 --  Локальные имена живут в do-блоке: у Lua в функции не больше 200 активных
 --  локальных переменных, а модуль и без того большой (см. шапку модуля).
 -- =====================================================================
@@ -25910,7 +25910,7 @@ do
         return out
     end
 
-    -- Выбор наказания из полосы: /n в тестовом режиме, реальная команда в боевом.
+    -- Выбор наказания из полосы: игроку уходит ответ, затем команда наказания.
     function QR.punChoose(it)
         if type(it) ~= "table" then return false end
         QR.punEnsure()
@@ -26168,7 +26168,7 @@ do
             end
 
             -- под кнопками строк нет (как у быстрых ответов): готовая команда
-            -- показывается всплывающей подсказкой — её и проверяем в /n
+            -- показывается всплывающей подсказкой — её и проверяем в стенде
             if hoverIt and type(im.SetTooltip) == "function" then
                 local line = QR.punCommand(hoverIt, QR.repInfo())
                 local body = oneLine(hoverIt.text or "")
@@ -26465,7 +26465,7 @@ local function settingsDraw(ctx)
     end
 
     -- (v1.19.01: строка «Отправка шаблона» убрана — режим хранится в конфиге,
-    --  сейчас это /n; сменить канал = поменять QR.mode/«mode=» в конфиге)
+    --  сейчас это боевой /ans игроку; «mode=input» вставляет текст в поле)
 
     -- список + редактор
     local yy = y + 34
@@ -27547,13 +27547,12 @@ do
         return "/ans " .. pid .. " " .. tostring(text)
     end
 
-    -- Строка ответа игроку, которая уйдёт в чат: под проверкой (/n) — та же
-    -- самая строка с префиксом «/n», боевая — как есть. Этим пользуются и
-    -- автопилот, и ручной ответ из окна репорта — формат один.
+    -- Строка ответа игроку, которая уйдёт в чат: боевая — «/ans ID текст», а для
+    -- репорта от бота его команда «/pm ID текст». Этим пользуются и автопилот,
+    -- и ручной ответ из окна репорта — формат один. Служебного канала /n больше
+    -- нет (v1.19.56: слой проверки убран целиком).
     function QR.answerCmd(pid, text)
-        local real = QR.autoAnsCmd(pid, text)
-        if QR.autoTest ~= false then return "/n " .. real end
-        return real
+        return QR.autoAnsCmd(pid, text)
     end
 
     -- Итоговая команда вкладки после ответа: найденный в репорте ID важнее
@@ -28273,10 +28272,6 @@ do
                 -- запрос наказаний всегда настоящий (окно перехватывается и
                 -- игроку не показывается) — иначе списка не получить
                 QR.queueCmd("/getinfo " .. id)
-                if QR.autoTest ~= false then
-                    -- проверка: та же строка видна в чате как «/n /getinfo ID»
-                    QR.queueCmd("/n /getinfo " .. id)
-                end
                 QR.toast("Автопилот: читаю активные наказания игрока " .. id, "info", 2.6)
                 return true, "наказания"
             end
@@ -28294,18 +28289,15 @@ do
         return QR.autoDeliver(id, hit, hitTabsTxt, plan)
     end
 
-    -- v1.19.38–39: ПРОВЕРКА — ВСЕ строки автопилота уходят в /n, и ответы,
-    -- и команды: «/n Приветствую, слежу…», «/n /sp 234», «/n /goto 234»,
-    -- «/n /getinfo 234». Ничего не выполняется по-настоящему, админ видит в
-    -- чате ровно то, что ушло бы (тот же текст, та же очередь, тот же
-    -- CP1251). Убрать слой проверки — QR.autoTest = false.
-    QR.autoTest = true
+    -- v1.19.56: БОЕВОЙ РЕЖИМ. Слоя проверки (/n) больше нет: автопилот и
+    -- ручной ответ из окна репорта уходят настоящими строками — «/ans ID текст»
+    -- (для репорта от бота — «/pm ID текст»), команды вкладок («/sp», «/goto»)
+    -- и запрос наказаний (/getinfo) выполняются как есть, игроки получают ответ.
 
     -- Отправка готового плана: /ans каждой вкладки и её команда, по порядку
     -- вкладок. Сюда же — предохранители (после отправки) и тост.
     function QR.autoDeliver(id, hit, tabsTxt, plan)
         local A = QR.auto
-        local test = (QR.autoTest ~= false)
         local sentAns, sentCmd, cmdTxt, planTabs = 0, 0, {}, {}
         for k = 1, #plan do
             local it = plan[k]
@@ -28314,26 +28306,25 @@ do
                 -- (у строки чата есть лимит длины)
                 local chunks = autoChunks(it.line)
                 for ci = 1, #chunks do
-                    if test then
-                        -- проверка: та же строка, что ушла бы боевым режимом,
-                        -- но с префиксом /n — видно и команду, и ID: «/n /ans 25 …»
-                        if QR.queueCmd(QR.answerCmd(id, chunks[ci])) then
-                            sentAns = sentAns + 1
-                        end
-                    elseif type(grndRepAnswer) == "function" then
+                    local sent = false
+                    if type(grndRepAnswer) == "function" then
                         -- grndRepAnswer сам переводит текст в CP1251 и ставит
-                        -- «/ans ID …» в очередь репорта
+                        -- «/ans ID …» (для репорта от бота — его «/pm ID …»)
+                        -- в очередь репорта
                         local okA, res = pcall(grndRepAnswer, id, chunks[ci])
-                        if okA and res ~= false then sentAns = sentAns + 1 end
+                        sent = okA and res ~= false
                     end
+                    -- запасной путь, если grndRepAnswer недоступен: та же
+                    -- боевая строка через очередь репорта
+                    if not sent and QR.queueCmd(QR.autoAnsCmd(id, chunks[ci])) then
+                        sent = true
+                    end
+                    if sent then sentAns = sentAns + 1 end
                 end
             end
             if it.cmd then
-                -- v1.19.39: в проверке команда уходит строкой «/n /sp ID» —
-                -- как и ответы, ничего не выполняется по-настоящему
-                local sent = test and ("/n " .. it.cmd) or it.cmd
-                if QR.queueCmd(sent) then sentCmd = sentCmd + 1 end
-                -- в тост идёт команда без служебного /n: он виден в чате
+                -- команда вкладки уходит настоящей: «/sp ID», «/goto ID» и т.п.
+                if QR.queueCmd(it.cmd) then sentCmd = sentCmd + 1 end
                 cmdTxt[#cmdTxt + 1] = it.cmd
             end
             planTabs[#planTabs + 1] = tostring(it.idx)
@@ -28345,15 +28336,14 @@ do
         local planTabsTxt = table.concat(planTabs, ", ")
         local sentOk = (sentAns + sentCmd) > 0
         A.lastCheck = sentOk
-            and ((test and "проверка /n: " or "") .. "отправлено (вкладки " .. planTabsTxt
+            and ("отправлено (вкладки " .. planTabsTxt
                 .. "), триггер «" .. tostring(hit) .. "»"
                 .. (tabsTxt ~= planTabsTxt and (" · план " .. tostring(tabsTxt)) or "")
                 .. (A.lastDropped ~= "" and (" · позже «" .. A.lastDropped .. "»") or ""))
             or "не удалось отправить"
         if sentOk then
             local cmds = table.concat(cmdTxt, " + ")
-            -- v1.19.50: тост — всегда обычный; пометка «(проверка /n)» убрана
-            -- (сам слой /n, если включён, виден в чате и в строке диагностики)
+            -- тост короткий и всегда одинаковый: «Автопилот: /ans 25 + /sp 25 · «дм»»
             QR.toast("Автопилот: /ans " .. id .. (cmds ~= "" and (" + " .. cmds) or "")
                     .. " · «" .. tostring(hit) .. "»"
                     .. (#plan > 1 and (" · вкладок " .. tostring(#plan)) or ""),
@@ -30610,9 +30600,9 @@ function grndMainBody()
         pid = tostring(pid or "")
         if not pid:match("^%d+$") then return false end
         local enc = grndRepToAnsi(text)
-        -- v1.19.41: под проверкой (/n) ручной ответ уходит ровно так же, как
-        -- ответ автопилота: та же строка («/ans ID текст» или «/pm ID текст»
-        -- от бота) с префиксом «/n» — в чат, но никому не отправляется.
+        -- v1.19.56: ручной ответ уходит ровно так же, как ответ автопилота —
+        -- боевой строкой «/ans ID текст» (для репорта от бота «/pm ID текст»),
+        -- через ту же очередь репорта.
         if type(_G.grndQrAnswerCmd) == "function" then
             grndRepQueue(_G.grndQrAnswerCmd(pid, enc))
             pcall(grndRepHudRemove, pid)

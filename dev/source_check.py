@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.55"' in s, 'версия не 1.19.55')
+need('GRND_SCRIPT_VERSION = "1.19.56"' in s, 'версия не 1.19.56')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -93,7 +93,10 @@ need('math.min(math.max(10, resX - W - 10), repX)' in s,
 need('function QR.closeReport()' in s, 'нет функции закрытия окна репорта из полосы шаблонов')
 choose_start = s.index('function QR.choose(it)')
 choose = s[choose_start:s.index('function QR.openPicker()', choose_start)]
-need(choose.count('QR.closeReport()') == 2, 'окно репорта закрывается не после каждой отправки шаблона')
+# v1.19.56: окно закрывается после ответа игроку, а когда отвечать некому —
+# остаётся открытым: текст шаблона кладётся в поле ответа
+need(choose.count('QR.closeReport()') == 1,
+     'окно репорта закрывается не после отправки ответа игроку')
 need('R.open = false' in choose or 'R.open = false' in s, 'окно репорта не закрывается')
 
 # v1.19.11: полоса шаблонов приклеена под нижнюю кромку окна репорта
@@ -354,38 +357,36 @@ need('function QR.autoDeliver(id, hit, tabsTxt, plan)' in s,
      'нет общей отправки плана вкладок')
 need('local function autoChunks(line)' in s and 'pcall(QR.punChunks, line, 100)' in s,
      'длинный ответ не режется на сообщения')
-# v1.19.38-39: проверка — ВСЕ строки автопилота уходят в /n (/n текст,
-# /n /sp ID, /n /getinfo ID): ничего не выполняется, видно ровно то, что ушло бы
-need('QR.autoTest = true' in s, 'нет переключателя проверки QR.autoTest')
-need('local test = (QR.autoTest ~= false)' in s, 'отправка не смотрит на режим проверки')
-need('if QR.queueCmd(QR.answerCmd(id, chunks[ci])) then' in s,
-     'в режиме проверки ответ не уходит в /n')
-# v1.19.41: ручной ответ из окна репорта — той же строкой и тоже под /n
+# v1.19.56: БОЕВОЙ РЕЖИМ — служебного канала /n в автопилоте больше нет
+absent('QR.autoTest', 'вернулся слой проверки /n (QR.autoTest)')
+deliver = s[s.index('-- Отправка готового плана'):s.index('-- Тик из основного цикла')]
+absent('"/n "', 'в отправке плана автопилота остался служебный /n')
+need('if QR.queueCmd(it.cmd) then sentCmd = sentCmd + 1 end' in deliver,
+     'команда вкладки не уходит')
+need('local sent = false' in deliver and
+     'local okA, res = pcall(grndRepAnswer, id, chunks[ci])' in deliver and
+     'if not sent and QR.queueCmd(QR.autoAnsCmd(id, chunks[ci])) then' in deliver,
+     'ответ игроку уходит не боевой строкой (нет /ans и запасного пути)')
+need('and ("отправлено (вкладки " .. planTabsTxt' in deliver,
+     'в состоянии осталась пометка проверки /n')
+# v1.19.41/1.19.56: ручной ответ из окна репорта — той же боевой строкой
 need('_G.grndQrAnswerCmd = QR.answerCmd' in s and
      'grndRepQueue(_G.grndQrAnswerCmd(pid, enc))' in s,
-     'ручной ответ из окна репорта не уходит под проверкой «/n /ans ID текст»')
-need('(test and "проверка /n: " or "")' in s, 'в состоянии нет пометки проверки')
-# v1.19.50: тост — всегда обычный («Автопилот: /ans 25 + /sp 25 · «дм»»),
-# служебный /n остаётся в чате и в строке диагностики
+     'ручной ответ из окна репорта не уходит боевой строкой «/ans ID текст»')
+anscmd = s[s.index('function QR.answerCmd(pid, text)'):s.index('-- Итоговая команда вкладки')]
+absent('"/n "', 'служебный /n остался в сборке строки ответа')
+need('return QR.autoAnsCmd(pid, text)' in anscmd,
+     'строка ответа собирается не как «/ans ID текст» / «/pm ID текст»')
+# тост всегда обычный («Автопилот: /ans 25 + /sp 25 · «дм»»)
 absent('Автопилот (проверка /n)', 'вернулся тестовый тост с пометкой «проверка /n»')
-need('cmdTxt[#cmdTxt + 1] = it.cmd' in s, 'в тост попадает команда со служебным /n')
-deliver = s[s.index('-- Отправка готового плана'):s.index('-- Тик из основного цикла')]
-need('local sent = test and ("/n " .. it.cmd) or it.cmd' in deliver,
-     'команда вкладки в проверке не получает префикс /n')
-need('if QR.queueCmd(sent) then sentCmd = sentCmd + 1 end' in deliver,
-     'команда вкладки в проверке не уходит')
-need('QR.queueCmd("/n /getinfo " .. id)' in s,
-     'запрос /getinfo в проверке не уходит строкой «/n /getinfo ID»')
-# v1.19.41: строка ответа в проверке — целиком, вместе с командой и ID
-need('function QR.autoAnsCmd(pid, text)' in s and
-     'QR.queueCmd(QR.answerCmd(id, chunks[ci]))' in s and
-     'function QR.answerCmd(pid, text)' in s,
-     'ответ в проверке не уходит строкой «/n /ans ID текст»')
+need('cmdTxt[#cmdTxt + 1] = it.cmd' in s, 'в тост попадает не та команда вкладки')
+# запрос наказаний — один настоящий /getinfo
+need('QR.queueCmd("/getinfo " .. id)' in s and
+     'QR.queueCmd("/n /getinfo " .. id)' not in s,
+     'запрос /getinfo уходит не один раз (или со служебным /n)')
 # v1.19.40: сам запрос остаётся настоящим — иначе {punishments} нечего показать
 need('QR.queueCmd("/getinfo " .. id)' in s and 'local txt = lines and QR.autoPunText(lines)' in s,
      'запрос наказаний перестал быть настоящим — список не получить')
-need('if QR.autoTest ~= false then' in s,
-     'ветка проверки не проверяет QR.autoTest (в autOnReport нет локальной test)')
 need('QR.autoPunFill(it.line, txt)' in s and '"нет активных наказаний"' in s and
      '"нет данных о наказаниях"' in s,
      'нет подстановки списка наказаний вместо {punishments}')
@@ -655,10 +656,9 @@ for c in ('{ id = "jail"', '{ id = "kick"', '{ id = "warn"'):
     absent(c, 'в селекторе осталась убранная команда ' + c)
 need('function QR.punDef(id)' in s, 'нет разбора команды наказания')
 need('function QR.punCommand(it, rep)' in s, 'нет сборки команды наказания')
-# v1.19.17: в тестовом режиме в /n уходит и ответ на репорт
-need('QR.sendChat("/n " .. line)' in s, 'ответ на репорт не уходит в /n вместе с командой')
-need('и ответ игроку' in s, 'тост не сообщает про оба сообщения в /n')
-# v1.19.19: ответ игроку — штатной /ans ID текст, наказание — без /n
+# v1.19.56: ответ игроку — штатной /ans ID текст, служебного /n нет нигде
+absent('QR.sendChat("/n "', 'вернулся служебный канал /n')
+# v1.19.19: игроку уходит /ans ID текст, следом — команда наказания как есть
 need('pcall(grndRepAnswer, pid, line)' in s, 'ответ игроку не уходит командой /ans')
 pun_choose = s[s.index('function QR.punChoose(it)'):s.index('function QR.openPunPicker()')]
 tail_part = pun_choose[pun_choose.index('-- v1.19.19: сначала игроку уходит ОТВЕТ'):]
@@ -668,12 +668,18 @@ need('local sent = QR.queueCmd(cmd)' in pun_choose,
      'наказание не идёт через очередь репорта (обгонит ответ игроку)')
 absent('QR.sendChat("/n " .. cmd)', 'перед командой наказания остался /n')
 need('QR.queueCmd(cmd)' in pun_choose, 'команда наказания не отправляется')
-# быстрые ответы: ответ тоже через /ans, /n остаётся только как путь без ID
+# быстрые ответы: ответ игроку через /ans, без ID — текст в поле ответа
 need('QR.toast("Ответ игроку /ans " .. pid' in s, 'быстрые ответы не отвечают через /ans')
 choose = s[s.index('function QR.choose(it)'):s.index('function QR.openPicker()')]
-need(choose.index('pcall(grndRepAnswer, pid, text)') < choose.index('QR.sendChat("/n " .. line)'),
-     'в быстрых ответах /ans должен идти раньше резервного /n')
-need('Нет ID игрока (ответить некому)' in s, 'пропал резервный путь /n для репорта без ID')
+absent('"/n "', 'в быстрых ответах остался служебный /n')
+need('pcall(grndRepAnswer, pid, text)' in choose,
+     'быстрые ответы не отвечают игроку командой /ans')
+need('В репорте нет ID игрока — текст шаблона вставлен в поле ответа' in s and
+     'В репорте нет ID игрока — отвечать некому' in s,
+     'нет боевого поведения для репорта без ID (текст в поле ответа)')
+# старое значение режима «test» (/n) читается как боевой ответ игроку
+need('if v == "input" then return "input" end' in s and 'return "ans"' in s,
+     'режим «test» (/n) не сведён к боевому ответу')
 # v1.19.20: клавиши и кнопки мыши не залипают, пока окно владеет вводом
 need('function grndMsgIsPress(msgN)' in s, 'нет разбора «нажатие или отпускание»')
 need('local pressMsg=grndMsgIsPress(msgN)' in s, 'гейт UI не различает нажатие и отпускание')

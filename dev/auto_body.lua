@@ -5,7 +5,6 @@ local A = Q.auto
 -- v1.19.38: ответы автопилота по умолчанию уходят в /n (проверка). Сценарии
 -- ниже проверяют БОЕВОЙ путь (/ans), поэтому здесь режим проверки выключен;
 -- свой сценарий для /n — секция 9e.
-Q.autoTest = false
 local function check(c, m) if not c then error("ПРОВАЛ: " .. tostring(m), 2) end end
 local function texts()
     local out = {}
@@ -630,34 +629,30 @@ Q.autoDel(3)
 Q.autoEnsure()
 HPRINT("{punishments}: /getinfo → список в ответ + команда; таймаут, пусто, длинный список и ручной режим")
 
--- ===== 9e. канал проверки: ответы автопилота уходят в /n (v1.19.38) =====
--- Пока включена проверка (QR.autoTest), тексты ответов уходят в локальный /n
--- вместо /ans: игроки ничего не получают, админ видит ровно тот текст, который
--- ушёл бы. Команды вкладок и /getinfo при {punishments} остаются боевыми.
-Q.autoTest = true
+-- ===== 9e. боевой режим: служебного канала /n больше нет (v1.19.56) =====
+-- Даже если кто-то снова выставит старый флаг QR.autoTest, строки остаются
+-- боевыми: ответ игроку — настоящая /ans ID текст, команда вкладки — настоящая,
+-- запрос наказаний — один настоящий /getinfo.
 Q.autoTabs()[1].trigger = "проверка"
 Q.autoTabs()[1].answer = "Приветствую, {ник}! Проверка ответа"
 Q.autoTabs()[1].command = "sp"
 Q.autoEnsure()
 NOW = NOW + 100
 QUEUE, ANS, CHAT = {}, {}, {}
-check(Q.autoOnReport("Mixa_Grozz", 55, "проверка") == true, "репорт не принят в режиме проверки")
-check(QUEUE[1] == "/n /ans 55 Приветствую! Проверка ответа",
-    "строка ответа не ушла в /n целиком: " .. tostring(QUEUE[1]))
-check(QUEUE[2] == "/n /sp 55", "команда вкладки не ушла в /n: " .. tostring(QUEUE[2]))
+check(Q.autoOnReport("Mixa_Grozz", 55, "проверка") == true, "репорт не принят")
+check(QUEUE[1] == "/ans 55 Приветствую! Проверка ответа",
+    "ответ ушёл не боевой строкой: " .. tostring(QUEUE[1]))
+check(QUEUE[2] == "/sp 55", "команда вкладки ушла не боевой: " .. tostring(QUEUE[2]))
+check(QUEUE[3] == nil, "в очередь попало лишнее: " .. tostring(QUEUE[3]))
 for qi = 1, #QUEUE do
-    check(QUEUE[qi]:sub(1, 5) ~= "/ans ", "в режиме проверки ушёл настоящий /ans: " .. tostring(QUEUE[qi]))
+    check(QUEUE[qi]:sub(1, 4) ~= "/n /", "вернулся служебный /n: " .. tostring(QUEUE[qi]))
 end
-check(#ANS == 0, "в режиме проверки игроку всё равно ушёл ответ")
-check(A.lastCheck:find("проверка /n", 1, true) ~= nil,
-    "в состоянии нет пометки проверки: " .. tostring(A.lastCheck))
--- v1.19.50: тост — обычный, без пометки про проверку (слой /n виден в чате
--- и в строке диагностики «проверка /n: отправлено…»)
+check(A.lastCheck:find("отправлено (вкладки 1)", 1, true) ~= nil and
+    A.lastCheck:find("проверка /n", 1, true) == nil,
+    "в состоянии осталась пометка проверки: " .. tostring(A.lastCheck))
 check(TOASTS[#TOASTS] == "Автопилот: /ans 55 + /sp 55 · «проверка»",
-    "тост в режиме проверки выглядит ненормально: " .. tostring(TOASTS[#TOASTS]))
--- {punishments} в режиме проверки: сам запрос настоящий (иначе списка не
--- получить — окно перехватывается и игроку не показывается), а в чате видна
--- та же строка с «/n»
+    "тост выглядит ненормально: " .. tostring(TOASTS[#TOASTS]))
+-- {punishments}: настоящий запрос ровно один, дубля «/n /getinfo» нет
 Q.autoTabs()[2] = Q.autoNewTab()
 Q.autoTabs()[2].trigger = "чек"
 Q.autoTabs()[2].answer = "Ваши наказания: {punishments}"
@@ -667,17 +662,16 @@ NOW = NOW + 100
 QUEUE, ANS = {}, {}
 check(Q.autoOnReport("Чек", 56, "чек") == true, "репорт с {punishments} не принят")
 check(QUEUE[1] == "/getinfo 56", "настоящий запрос не ушёл: " .. tostring(QUEUE[1]))
-check(QUEUE[2] == "/n /getinfo 56",
-    "строка проверки не ушла в /n: " .. tostring(QUEUE[2]))
-check(QUEUE[3] == nil, "ответ ушёл до окна наказаний: " .. tostring(QUEUE[3]))
+check(QUEUE[2] == nil, "ушёл лишний запрос: " .. tostring(QUEUE[2]))
 check(A.pend ~= nil and A.pend.on == true, "автопилот не ждёт окно наказаний")
 QUEUE = {}
 check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игрока", "OK", "",
     "Аккаунт Чек[56]\nМут 60 минут") == true, "окно наказаний не спрятано")
 check(A.pend == nil, "ожидание окна не снято")
-check(QUEUE[1] == "/n /ans 56 Ваши наказания: Мут 60 минут",
-    "настоящий список не ушёл в /n: " .. tostring(QUEUE[1]))
--- возвращаем боевой режим, первую и вторую вкладки к прежнему виду
+check(QUEUE[1] == "/ans 56 Ваши наказания: Мут 60 минут",
+    "список ушёл не боевой строкой: " .. tostring(QUEUE[1]))
+check(QUEUE[2] == nil, "после ответа ушло лишнее: " .. tostring(QUEUE[2]))
+-- возвращаем первую и вторую вкладки к прежнему виду
 QUEUE = {}
 Q.autoTabs()[1].trigger = "Помогите"
 Q.autoTabs()[1].answer = "Приветствую, {ник}! Уже смотрю. {ид}"
@@ -686,8 +680,8 @@ Q.autoTabs()[2].trigger = "дм"
 Q.autoTabs()[2].answer = "Не пишите в личку, отвечу в репорте"
 Q.autoTabs()[2].command = "sp"
 Q.autoEnsure()
-Q.autoTest = false
-HPRINT("проверка /n: и ответы, и команды, и /getinfo уходят строками «/n …»")
+Q.autoTest = nil
+HPRINT("боевой режим: /ans, /sp и /getinfo уходят настоящими строками — служебного /n нет")
 
 -- ===== 9f. переменные можно писать в ТРИГГЕРЕ (v1.19.40) =====
 -- «дм{ID}», «спек{all}», «наказ{punishments}»: служебные {…} вычищаются при
@@ -758,7 +752,6 @@ check(QUEUE[1] == "/ans 28 Приветствую, ваши наказания: 
     "список не подставился: " .. tostring(QUEUE[1]))
 
 -- ===== 9g. {punishments} в триггере: ответ только про наказания (v1.19.41) =====
-Q.autoTest = false
 Q.autoTabs()[1].trigger = "наказ{punishments}"
 Q.autoTabs()[1].answer = "этот текст не должен использоваться"
 Q.autoTabs()[1].command = "none"
@@ -806,8 +799,7 @@ check(QUEUE[1] == "/ans 74 Приветствую, ваши активные н�
     "не тот ответ: " .. tostring(QUEUE[1]))
 check(#QUEUE == 1, "вкладка с {punishments} в триггере всё равно выполнила команду: "
     .. tostring(QUEUE[2]))
--- в проверочном режиме команда тоже не должна уйти
-Q.autoTest = true
+-- команда не уходит и после перезагрузки вкладки
 NOW = NOW + 100
 QUEUE = {}
 check(Q.autoOnReport("Команда2", 75, "наказ") == true, "репорт не принят")
@@ -817,9 +809,8 @@ check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игро�
     "Аккаунт Команда2[75]\nМут 20 минут") == true, "окно не спрятано")
 for qi = 1, #QUEUE do
     check(QUEUE[qi]:find("/sp", 1, true) == nil and QUEUE[qi]:find("/goto", 1, true) == nil,
-        "в проверке ушла команда вкладки с {punishments}: " .. tostring(QUEUE[qi]))
+        "ушла команда вкладки с {punishments}: " .. tostring(QUEUE[qi]))
 end
-Q.autoTest = false
 Q.autoTabs()[1].command = "none"
 Q.autoEnsure()
 -- вкладка, где в триггере ТОЛЬКО переменная, отвечает на любой репорт
@@ -893,7 +884,6 @@ HPRINT("{punishments} в триггере: ответ только про нак
 -- сколько мне осталось сидеть{punishments}, мои наказания{punishments}, помогите»:
 -- слово с {punishments} приносит игроку список наказаний (и команду не шлёт),
 -- а обычное слово «помогите» отвечает своим текстом и своей командой.
-Q.autoTest = false
 local saved55t, saved55a, saved55c = Q.autoTabs()[1].trigger, Q.autoTabs()[1].answer, Q.autoTabs()[1].command
 Q.autoTabs()[1].trigger = "сколько мне осталось сидеть?{punishments},"
     .. "сколько мне осталось сидеть{punishments}, мои наказания{punishments}, помогите"
@@ -987,26 +977,19 @@ Q.autoTabs()[1].command = "goto"
 Q.autoEnsure()
 HPRINT("распознавание репорта: только маркер «[К-во репорта: N]» — обычный чат мимо")
 
--- ===== 9i. ручной ответ из окна репорта под проверкой тоже уходит в /n (v1.19.41) =====
-Q.autoTest = true
+-- ===== 9i. ручной ответ из окна репорта — боевой строкой (v1.19.56) =====
 QUEUE = {}
 check(grndRepAnswer(66, "Держитесь") == true, "ручной ответ не ушёл")
-check(QUEUE[1] == "/n /ans 66 Держитесь",
-    "ручной ответ не ушёл в /n: " .. tostring(QUEUE[1]))
--- репорт от бота: ответ команда /pm — и она тоже под проверкой
+check(QUEUE[1] == "/ans 66 Держитесь",
+    "ручной ответ ушёл не боевой строкой: " .. tostring(QUEUE[1]))
+-- репорт от бота: ответ его командой /pm — тоже боевой, без /n
 GRND_REP.replyCmd, GRND_REP.replyPid = "/pm 25", "25"
 QUEUE = {}
 check(grndRepAnswer(25, "текст") == true, "ответ по команде бота не ушёл")
-check(QUEUE[1] == "/n /pm 25 текст",
-    "ответ боту не ушёл в /n: " .. tostring(QUEUE[1]))
+check(QUEUE[1] == "/pm 25 текст",
+    "ответ боту ушёл не боевой строкой: " .. tostring(QUEUE[1]))
 GRND_REP.replyCmd, GRND_REP.replyPid = nil, nil
--- боевой режим не испорчен
-Q.autoTest = false
-QUEUE = {}
-check(grndRepAnswer(66, "Держитесь") == true, "боевой ручной ответ не ушёл")
-check(QUEUE[1] == "/ans 66 Держитесь",
-    "боевой ручной ответ испорчен: " .. tostring(QUEUE[1]))
-HPRINT("ручной ответ из окна репорта: под проверкой «/n /ans ID текст»")
+HPRINT("ручной ответ из окна репорта: боевые «/ans ID текст» и «/pm ID текст»")
 
 -- ===== 9j. переменная действует ровно на одно слово (v1.19.43) =====
 -- «дм{ID}, dm»: широко ищется только «дм» (переменная на нём), а «dm» — как
@@ -1111,7 +1094,6 @@ HPRINT("{ID} на слове в триггере: ответ собираетс�
 -- В строке репорта «Автор[ID]: текст» автор — тот, кому отвечает /ans, а в
 -- тексте назван нарушитель. Ник в ответе должен быть нарушителя: раньше было
 -- «слежу за игроком <автор>[<ID нарушителя>]» — ник одного, ID другого.
-Q.autoTest = false
 NICK_BY_ID = { [234] = "Nik_Name", [26] = "Mixa_Grozz" }
 Q.autoTabs()[1].trigger = "дм{ID}"
 Q.autoTabs()[1].answer = "не используется"
@@ -1165,7 +1147,6 @@ Q.autoEnsure()
 HPRINT("{ник}/{ID}: ник — у того, на кого пожаловались (по ID из репорта или по нику в тексте), {автор} — у автора строки")
 
 -- ===== 9m. нет ни номера, ни имени — уходит мой текст (v1.19.46) =====
-Q.autoTest = false
 NICK_BY_ID = { [234] = "Nik_Name" }
 Q.autoTabs()[1].trigger = "дм{ID}"
 Q.autoTabs()[1].answer = "Уже разбираюсь, ожидайте"
@@ -1575,7 +1556,8 @@ Q.autoTabs()[1].command = "goto"
 CHAT, ANS, QUEUE, ORDER, ANSICALLS = {}, {}, {}, {}, {}
 SERV.failQueue = true
 check(Q.autoOnReport("Фолбэк", 400, "помогите") == true, "при недоступной очереди не сработало")
-check(#CHAT == 1 and CHAT[1] == "/goto 400", "команда не ушла напрямую: " .. tostring(CHAT[1]))
+check(#CHAT == 2 and CHAT[1] == "/ans 400 уже смотрю" and CHAT[2] == "/goto 400",
+    "при недоступной очереди строки не ушли напрямую: " .. table.concat(CHAT, " | "))
 SERV.failQueue = false
 HPRINT("очередь недоступна: команда уходит напрямую в чат")
 
