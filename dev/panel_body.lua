@@ -68,6 +68,21 @@ if startBtn then
         startBtn.y + startBtn.h / 2, false)
 end
 
+-- v1.19.47: панель МП отвечает только на строки с маркером «[К-во репорта: N]»
+if _G.MP and type(_G.MP.parseReport) == "function" then
+    local n1, i1 = _G.MP.parseReport("Mixa_Grozz[25]: дм")
+    if n1 ~= nil or i1 ~= nil then
+        problems = problems + 1
+        HPRINT("панель МП: строка без маркера «К-во репорта» принята за репорт")
+    end
+    local n2, i2 = _G.MP.parseReport("Mixa_Grozz[25]: дм [К-во репорта: 7]")
+    if n2 ~= "Mixa_Grozz" or tostring(i2) ~= "25" then
+        problems = problems + 1
+        HPRINT("панель МП: строка с маркером не разобрана: "
+            .. tostring(n2) .. " | " .. tostring(i2))
+    end
+end
+
 HPRINT(("кадров прогнано: %d, проблемных: %d, голых глобальных имён: %d")
     :format(frames, problems, #BARE))
 if problems == 0 and #BARE == 0 then

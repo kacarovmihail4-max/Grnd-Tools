@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.46"' in s, 'версия не 1.19.46')
+need('GRND_SCRIPT_VERSION = "1.19.47"' in s, 'версия не 1.19.47')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -398,16 +398,23 @@ need('function QR.autoBarePun(tab)' in s and 'function QR.autoTrigLabel(tab)' in
 need('A.lastReport = utf8Cut(tostring(nick) .. ": " .. text, 60)' in s and
      '"Репорт: " .. utf8Cut(dbgTxt, 44)' in s,
      'в окне автопилота нет строки «последний репорт и что с ним стало»')
-# v1.19.41: строка репорта распознаётся и без «К-во репорта», и в вариантах
-need('function QR.repCountOf(msg)' in s and 'function QR.repLaxParse(text)' in s and
-     '_G.grndRepCountOf = QR.repCountOf' in s and '_G.grndRepLaxParse = QR.repLaxParse' in s,
-     'нет разбора строки репорта без маркера «К-во репорта»')
+# v1.19.47: репорт — ТОЛЬКО строка с маркером «[К-во репорта: N]». Разбор строки
+# без маркера (послабление v1.19.41) убран: обычный чат «Ник[ID]: текст» не
+# должен ни открывать окно «Репорты», ни доходить до автопилота
+need('function QR.repCountOf(msg)' in s and '_G.grndRepCountOf = QR.repCountOf' in s and
+     'local pat = "%[[^%]]*[Рр]епорта%s*:%s*(%d*)%s*%]"' in s,
+     'нет поиска маркера «[К-во репорта: N]» (единственного признака репорта)')
+absent('grndRepLaxParse', 'вернулся разбор строки репорта БЕЗ маркера «К-во репорта»')
+absent('function QR.repLaxParse', 'вернулась функция разбора строки без маркера')
 need('local cnt = _G.grndRepCountOf(msg)' in s and
-     'msg = msg:gsub("%[[^%]]*[Рр]епорта%s*:%s*%d*%s*%]", "")' in s,
-     'маркер репорта ищется только в одном написании')
-need('local lNick, lId, lMsg = _G.grndRepLaxParse(text)' in s and
-     'pcall(_G.grndQrAutoOnReport, lNick, lId, lMsg)' in s,
-     'строка «Ник[ID]: текст» без маркера не доходит до автопилота')
+     'if not cnt then return nil end -- не репорт, а обычная реплика' in s,
+     'строка без маркера «К-во репорта» снова считается репортом')
+need('if not _G.grndRepCountOf or not _G.grndRepCountOf(msg) then return end' in s,
+     'текст жалобы копится из обычных реплик игрока (без маркера)')
+# панель МП считает репортом только строку с маркером «[К-во репорта: N]»
+need('local cnt = msg:match("%[К%-во репорта:%s*(%d*)%]")' in s and
+     'if not cnt then return nil end' in s,
+     'панель МП принимает за репорт строку без маркера «К-во репорта»')
 need('A.pend = { on = true, at = os.clock(), id = id, hit = hit,' in s,
      'нет ожидания окна наказаний в автопилоте')
 need('pcall(QR.autoPunAbsorb, lines)' in s,
