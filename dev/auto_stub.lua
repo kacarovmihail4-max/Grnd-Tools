@@ -95,6 +95,9 @@ function grndUiSwitchPaint(ctx, px, py, on, hov, id, dt)
 end
 function grndStorageRead() return nil end
 function grndToUtf(s) return tostring(s) end
+function grndLowerUtf(s) return tostring(s):lower() end
+function grndRepToAnsi(s) return tostring(s) end   -- UTF-8 → CP1251 (в стенде — как есть)
+function grndRepHudRemove() return true end
 function grndUtf8ToCp1251(s) return tostring(s) end
 -- Конвертация в CP1251: в игре она отдаёт байты CP1251, здесь просто помечаем
 -- сам вызов — по нему видно, что команда ушла в правильной кодировке.
@@ -150,7 +153,8 @@ function grndIsTyping() return SERV.typing end
 
 function isKeyDown() return false end
 function isMouseButtonDown() return false end
-GRND_REP = { open = true, author = "Тестовый", playerId = "25", question = "дм", focused = false }
+GRND_REP = { open = true, author = "Тестовый", playerId = "25", question = "дм", focused = false,
+    queue = {}, queueAt = 0 }
 GRND_UIKIT.TH = { accent = { 164, 112, 224, 255 }, accent2 = { 164, 112, 224, 255 },
        textHi = { 252, 250, 255, 255 }, text = { 234, 230, 244, 255 },
        textDim = { 198, 192, 216, 255 }, textMuted = { 172, 166, 190, 255 },

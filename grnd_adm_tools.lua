@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.36"
+GRND_SCRIPT_VERSION = "1.19.37"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -27189,6 +27189,18 @@ do
         end
     end
 
+    -- Строка ответа в куски по лимиту чата: длинный список наказаний в одно
+    -- сообщение не влезет. Короткие ответы уходят как есть, одним куском.
+    local function autoChunks(line)
+        line = tostring(line or "")
+        if #line <= 100 then return { line } end
+        if type(QR.punChunks) == "function" then
+            local ok, out = pcall(QR.punChunks, line, 100)
+            if ok and type(out) == "table" and #out > 0 then return out end
+        end
+        return { line }
+    end
+
     -- ID игрока из текста репорта: первое число («дм 234», «234 дм» → 234).
     -- Число должно быть отдельным: «234дм» и «12abc» не годятся.
     function QR.autoFindReportId(text)
@@ -27207,17 +27219,19 @@ do
     end
 
     -- Режим вкладки задаёт её текст ответа: {ID} — умный ID + слежка,
-    -- {all} — поиск триггера словом в любом месте репорта.
+    -- {all} — поиск триггера словом в любом месте репорта, {punishments} —
+    -- активные наказания игрока из окна /getinfo (v1.19.37).
     function QR.autoAnswerFlags(tab)
         local ans = tostring((tab and tab.answer) or "")
-        return ans:find("{ID}", 1, true) ~= nil, ans:find("{all}", 1, true) ~= nil
+        return ans:find("{ID}", 1, true) ~= nil, ans:find("{all}", 1, true) ~= nil,
+            ans:find("{punishments}", 1, true) ~= nil
     end
 
     -- ВСЕ вкладки, чей триггер подошёл. Как искать — решает ответ вкладки:
     --   * обычный ответ — репорт совпадает с триггером ЦЕЛИКОМ («дм» — да,
     --     «дм 234» — нет);
-    --   * ответ с {all} или {ID} — триггер ищется ЦЕЛЫМ СЛОВОМ в любом месте
-    --     репорта («234 дм», «дм 234» — да, «дмх 234» — нет).
+    --   * ответ с {all}, {ID} или {punishments} — триггер ищется ЦЕЛЫМ СЛОВОМ
+    --     в любом месте репорта («234 дм», «дм 234» — да, «дмх 234» — нет).
     -- Пробелы вокруг не мешают: «  дм  » — да. Совпасть может не одна вкладка
     -- (например, один и тот же триггер стоит в двух) — тогда сработают все, по
     -- порядку вкладок. Возвращает { {idx=, trig=}, … }.
@@ -27227,8 +27241,8 @@ do
         if low == "" then return out end
         local tabs = QR.autoTabs()
         for i = 1, #tabs do
-            local hasID, hasAll = QR.autoAnswerFlags(tabs[i])
-            local anywhere = hasID or hasAll
+            local hasID, hasAll, hasPun = QR.autoAnswerFlags(tabs[i])
+            local anywhere = hasID or hasAll or hasPun
             local list = QR.autoTriggers(tabs[i])
             for k = 1, #list do
                 local trig = list[k]
@@ -27356,6 +27370,339 @@ do
         return true
     end
 
+    -- =================================================================
+    --  АКТИВНЫЕ НАКАЗАНИЯ ИГРОКА (/getinfo ID): окно читается и прячется.
+    --
+    --  Одна механика на два случая:
+    --    * mode = "manual" — кнопка «Наказания игрока» в окне репорта:
+    --      ответ игроку — фиксированный текст, как было;
+    --    * mode = "auto" — переменная {punishments} в ответе автопилота:
+    --      список подставляется вместо переменной, а план вкладки уходит
+    --      сразу после чтения окна (и даже если окно не пришло).
+    --
+    --  Живёт тут, в модуле быстрых ответов, а не в grndMainBody: автопилот
+    --  отвечает и с закрытым окном репорта, поэтому механика обязана быть
+    --  доступна всегда (в grndMainBody она появлялась только после первой
+    --  отрисовки окна).
+    -- =================================================================
+    QR.punReq = QR.punReq or { on = false, at = 0, pid = nil, nick = "", mode = "manual" }
+
+    -- Диагностика ТОЛЬКО в консоль MoonLoader: в игре никаких уведомлений
+    -- на действия этой механики быть не должно.
+    QR.punLog = function(msg)
+        pcall(print, "[GRND] наказания: " .. tostring(msg))
+    end
+
+    -- Снять ожидание окна (таймаут, сбой).
+    QR.punCancel = function()
+        local P = QR.punReq
+        P.on, P.at, P.pid, P.nick, P.mode = false, 0, nil, "", nil
+        P.seenTitle, P.seenText = nil, nil
+    end
+
+    -- Начать ожидание окна /getinfo ID. false — уже кого-то ждём.
+    QR.punBegin = function(pid, nick, mode)
+        local P = QR.punReq
+        if P.on then return false end
+        local pidS = tostring(pid or "")
+        if pidS:match("^%d+$") == nil then return false end
+        P.on, P.at, P.pid, P.nick = true, os.clock(), pidS, tostring(nick or "")
+        P.mode = (mode == "auto") and "auto" or "manual"
+        P.seenTitle, P.seenText = nil, nil
+        return true
+    end
+
+    -- Кнопка «Наказания игрока»: начать ожидание и сразу спросить сервер.
+    -- Возвращает true, если запрос ушёл (иначе уже ждём окно другого игрока).
+    QR.punBeginManual = function(pid, nick)
+        if not QR.punBegin(pid, nick, "manual") then
+            QR.toast("Наказания: уже ждём окно другого игрока", "warn", 3)
+            return false
+        end
+        if type(sampSendChat) == "function" then
+            pcall(sampSendChat, "/getinfo " .. tostring(pid))
+        else
+            grndRepQueue("/getinfo " .. tostring(pid))
+        end
+        return true
+    end
+
+    -- Нормализация текста окна сервера: кодировка может быть CP1251
+    -- (её и отдаёт этот сервер) — иначе русские подстроки не находятся.
+    QR.punNorm = function(str)
+        local t = grndToUtf(tostring(str or ""))
+        t = t:gsub("{%x%x%x%x%x%x}", "")
+        return t
+    end
+
+    -- Поиск подстроки в тексте окна без учёта регистра (UTF-8, после
+    -- приведения кодировки). Сравнение посимвольное в нижнем регистре.
+    QR.punFind = function(str, needle)
+        local t = QR.punNorm(str)
+        if type(_G.grndLowerUtf) == "function" then
+            local ok, low = pcall(_G.grndLowerUtf, t)
+            if ok and type(low) == "string" then t = low end
+        else
+            t = t:lower()
+        end
+        return t:find(needle, 1, true) ~= nil
+    end
+
+    -- Похоже ли окно на «Активные наказания игрока».
+    -- Признак №1 — заголовок окна; признак №2 — строка «Аккаунт Ник[ID] …»,
+    -- которую отдаёт именно /getinfo.
+    QR.punLooksDialog = function(caption, text)
+        if QR.punFind(caption, "наказани") then return true end
+        if QR.punFind(caption, "наказан") then return true end
+        return QR.punFind(text, "ккаунт")
+    end
+
+    -- Разбор содержимого окна: массив строк-наказаний.
+    -- Первая значимая строка («Аккаунт Ник[ID] …») игнорируется,
+    -- пустые строки и цветовые коды выбрасываются.
+    QR.punParse = function(raw)
+        local t = grndToUtf(tostring(raw or ""))
+        t = t:gsub("{%x%x%x%x%x%x}", "")
+        local out, head = {}, false
+        for ln in (t .. "\n"):gmatch("([^\n]*)\n") do
+            ln = ln:gsub("^%s+", ""):gsub("%s+$", "")
+            if ln ~= "" then
+                if not head then
+                    head = true        -- первая значимая строка — «Аккаунт …»
+                    if not ln:find("ккаунт", 1, true) then
+                        out[#out + 1] = ln
+                    end
+                else
+                    out[#out + 1] = ln
+                end
+            end
+        end
+        return out
+    end
+
+    -- Нарезка длинного текста на части по лимиту символов: в чат нельзя
+    -- отправить слишком длинную строку, а список наказаний бывает длинным.
+    -- Режем по границам UTF-8-символов, стараясь по пробелам.
+    QR.punChunks = function(text, limit)
+        limit = tonumber(limit) or 100
+        local str = tostring(text or "")
+        str = str:gsub("%s*\n%s*", " | ")
+        str = str:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+        local out = {}
+        local function charCut(v, n)
+            local i, k = 1, 0
+            while i <= #v and k < n do
+                local b = v:byte(i)
+                local step = (b >= 240 and 4) or (b >= 224 and 3) or (b >= 192 and 2) or 1
+                i = i + step
+                k = k + 1
+            end
+            return i - 1
+        end
+        while str ~= "" do
+            local cut = charCut(str, limit)
+            if cut >= #str then
+                out[#out + 1] = str
+                break
+            end
+            local head = str:sub(1, cut)
+            local lastSp
+            for p in head:gmatch("()%s") do lastSp = p end
+            if lastSp and lastSp > #head * 0.5 then
+                out[#out + 1] = str:sub(1, lastSp - 1)
+                str = str:sub(lastSp + 1)
+            else
+                out[#out + 1] = head
+                str = str:sub(cut + 1)
+            end
+            str = str:gsub("^%s+", "")
+        end
+        return out
+    end
+
+    -- Ответ игроку (режим "manual"): /ans ID текст.
+    -- Первое сообщение уходит СРАЗУ (ответ приходит пока админ ещё смотрит
+    -- в окно репорта), но только если очередь пуста и пауза после прошлой
+    -- отправки выдержана — иначе, как обычно, через очередь: два
+    -- чат-сообщения в одном кадре сервер может проглотить.
+    QR.punSay = function(pid, text)
+        local chunks = QR.punChunks(text, 100)
+        local pidS = tostring(pid or "")
+        local pidOk = pidS:match("^%d+$") ~= nil
+        local q = GRND_REP.queue
+        local canJump = pidOk
+            and (type(sampSendChat) == "function")
+            and (type(q) ~= "table" or #q == 0)
+            and ((os.clock() or 0) - (GRND_REP.queueAt or 0) >= 0.35)
+        for i, c in ipairs(chunks) do
+            if i == 1 and canJump then
+                pcall(sampSendChat, "/ans " .. pidS .. " " .. grndRepToAnsi(c))
+                pcall(grndRepHudRemove, pidS)   -- как делает grndRepAnswer
+                -- держим общий интервал очереди: следующая команда
+                -- не должна уйти в тот же кадр
+                GRND_REP.queueAt = os.clock()
+                canJump = false
+            else
+                grndRepAnswer(pid, c)
+            end
+        end
+        return #chunks
+    end
+
+    -- Окно прочитано (raw — текст окна) или не пришло (raw = nil).
+    QR.punFinish = function(raw)
+        local P = QR.punReq
+        if not P.on then return end
+        local mode, pid, nick = P.mode, P.pid, P.nick
+        local seen = P.seenTitle and ("последний диалог: " .. tostring(P.seenTitle)
+            .. " | " .. tostring(P.seenText or ""):gsub("%s+", " ")) or "диалогов не было"
+        local who = tostring(nick or ("ID " .. tostring(pid)))
+        QR.punCancel()
+        local lines = (type(raw) == "string") and QR.punParse(raw) or nil
+        if mode == "auto" then
+            -- {punishments}: список уходит в ответ, план вкладки — сразу после
+            pcall(QR.autoPunAbsorb, lines)
+            if not lines then QR.punLog(who .. ": окно /getinfo не распознано. " .. seen) end
+            return
+        end
+        if not lines then
+            QR.punLog("окно /getinfo не распознано. " .. seen)
+        elseif #lines == 0 then
+            QR.punSay(pid, "Приветствую, активных наказаний у вас нет.")
+            QR.punLog(who .. ": активных наказаний нет")
+        else
+            QR.punSay(pid,
+                "Приветствую, ваши активные наказания >> " .. table.concat(lines, " | "))
+            QR.punLog(who .. ": строк наказаний " .. tostring(#lines))
+        end
+    end
+
+    -- Хук sampev.onShowDialog: ловим окно /getinfo и прячем его.
+    -- true = окно обработано, игроку его показывать не нужно.
+    _G.grndQrPunOnDialog = function(dialogId, style, title, b1, b2, text)
+        local P = QR.punReq
+        if not P.on then return nil end
+        local age = (os.clock() or 0) - (P.at or 0)
+        if age > 8 then return nil end
+        local body = (type(text) == "string" and text) or ""
+        if body == "" then
+            -- некоторые обёртки кладут содержимое не последним аргументом
+            for _, v in ipairs({ b1, b2 }) do
+                if type(v) == "string" and #v > #body then body = v end
+            end
+        end
+        local looks = QR.punLooksDialog(title, body)
+        -- Подстраховка: /getinfo отвечает почти сразу. Если окно пришло в
+        -- первые секунды после запроса и это НЕ окно репорта — считаем его
+        -- ответом, даже если формулировки сервера разошлись с ожиданием
+        -- (админ сам нажал кнопку или автопилот сам спросил — окно наше).
+        if not looks and age <= 3.0 and #body >= 5 then
+            local foreign = false
+            if type(_G.grndRepAcceptDialog) == "function" then
+                local okR, r = pcall(_G.grndRepAcceptDialog, dialogId, title, body)
+                if okR and r then foreign = true end
+            end
+            if not foreign and type(_G.grndStatsShouldHide) == "function" then
+                local okS, r = pcall(_G.grndStatsShouldHide, title, body)
+                if okS and r then foreign = true end
+            end
+            if not foreign then looks = true end
+        end
+        if not looks then
+            -- чужой диалог во время ожидания: запомним для диагностики
+            P.seenTitle, P.seenText = tostring(title or ""), tostring(body or ""):sub(1, 300)
+            return nil
+        end
+        pcall(QR.punFinish, body)
+        return true
+    end
+
+    -- Тик: запасной путь (если хук не сработал — окно уже на экране)
+    -- и снятие «зависшего» ожидания по таймауту.
+    QR.punPoll = function()
+        local P = QR.punReq
+        if not P.on then return end
+        local now = os.clock() or 0
+        local age = now - (P.at or 0)
+        -- автопилоту ответ нужен быстрее: игрок ждёт ответа
+        local limit = (P.mode == "auto") and 5 or 8
+        if age > limit then
+            pcall(QR.punFinish)          -- raw = nil: окно не пришло
+            return
+        end
+        -- запасной путь: реакция не позже ~0.1 с после запроса
+        if age < 0.1 then return end
+        if type(grndSessionReady) == "function" and not grndSessionReady() then return end
+        if type(sampIsDialogActive) ~= "function" then return end
+        local okA, active = pcall(sampIsDialogActive)
+        if not (okA and active) then return end
+        local caption, text = "", ""
+        if type(sampGetDialogCaption) == "function" then
+            local ok, v = pcall(sampGetDialogCaption)
+            if ok and type(v) == "string" then caption = v end
+        end
+        if type(sampGetDialogText) == "function" then
+            local ok, v = pcall(sampGetDialogText)
+            if ok and type(v) == "string" then text = v end
+        end
+        if not QR.punLooksDialog(caption, text) then return end
+        local dlgId = nil
+        if type(sampGetCurrentDialogId) == "function" then
+            local ok, v = pcall(sampGetCurrentDialogId)
+            if ok then dlgId = tonumber(v) end
+        end
+        pcall(QR.punFinish, text)
+        -- окно уже было показано игроку (хук не сработал) — закрываем
+        if dlgId then
+            if type(sampSendDialogResponse) == "function" then
+                pcall(sampSendDialogResponse, dlgId, 1, -1, "")
+            elseif type(sampCloseCurrentDialogWithButton) == "function" then
+                pcall(sampCloseCurrentDialogWithButton, 1)
+            end
+        end
+    end
+
+    -- ---------- {punishments}: наказания в ответе автопилота ----------
+
+    -- Текст вместо {punishments}: строки окна через « | », а если активных
+    -- наказаний нет — короткая фраза (своё предложение админ пишет сам).
+    QR.autoPunText = function(lines)
+        if type(lines) ~= "table" or #lines == 0 then return "нет активных наказаний" end
+        return table.concat(lines, " | ")
+    end
+
+    -- Подстановка вместо {punishments}. Список приходит из окна сервера,
+    -- поэтому заменяем через функцию: в нём могут быть «%».
+    QR.autoPunFill = function(line, txt)
+        local str = tostring(line or ""):gsub("{punishments}", function() return tostring(txt or "") end)
+        return oneLine(trim(str))
+    end
+
+    -- Окно /getinfo пришло (или не пришло): подставляем наказания в ответы
+    -- вкладок и отправляем план. Возвращает true, если ожидание было нашим.
+    QR.autoPunAbsorb = function(lines)
+        local A = QR.auto
+        local P = A and A.pend
+        if not (P and P.on) then return false end
+        A.pend = nil
+        local txt = lines and QR.autoPunText(lines) or "нет данных о наказаниях"
+        local plan = P.plan or {}
+        local wrote = false
+        for k = 1, #plan do
+            local it = plan[k]
+            if it.pun then
+                it.line = QR.autoPunFill(it.line, txt)
+                wrote = true
+            end
+        end
+        if not wrote then return false end
+        pcall(QR.autoDeliver, P.id, P.hit, P.tabs, plan)
+        if not lines then
+            QR.toast("Автопилот: наказания не получены — ответ без списка", "warn", 3.2)
+        end
+        return true
+    end
+
     -- ---------- слежка: автопилот в ней не работает ----------
 
     function QR.autoSpectating()
@@ -27430,6 +27777,17 @@ do
     function QR.autoGuard(pid, now)
         local A = QR.auto
         now = tonumber(now) or os.clock()
+        -- ждём окно /getinfo по {punishments}: второй репорт подождёт,
+        -- иначе два запроса наказаний перепутаются
+        local W = A.pend
+        if W and W.on then
+            if now - (W.at or 0) > 12 then
+                A.pend = nil                 -- окно потерялось: снимаем ожидание
+                pcall(QR.punCancel)
+            else
+                return "ждём ответ на /getinfo"
+            end
+        end
         if now - (A.lastAt or 0) < AUTO_GAP then return "слишком часто" end
         local prev = A.perPid[pid]
         if prev and now - prev < AUTO_PER_PID then return "этому игроку уже отвечали" end
@@ -27533,7 +27891,7 @@ do
         local plan = {}
         for k = 1, #hits do
             local tab = QR.autoTab(hits[k].idx)
-            local hasID, hasAll = QR.autoAnswerFlags(tab)
+            local hasID, hasAll, hasPun = QR.autoAnswerFlags(tab)
             local line = oneLine(QR.apply(tab.answer, rep))
             if hasAll then
                 -- {all} — служебный: из текста ответа убираем
@@ -27543,7 +27901,7 @@ do
             local cmd = QR.autoCmdFor(id, tab)
             if hasID and foundId then cmd = "/sp " .. foundId end
             if line ~= "" or cmd then
-                plan[#plan + 1] = { idx = hits[k].idx, line = line, cmd = cmd }
+                plan[#plan + 1] = { idx = hits[k].idx, line = line, cmd = cmd, pun = hasPun }
             end
         end
         if #plan == 0 then
@@ -27551,16 +27909,51 @@ do
             return false, "пусто"
         end
 
+        -- {punishments}: сначала спрашиваем сервер (/getinfo ID) и ждём окно
+        -- «Активные наказания игрока» — ответ уйдёт, когда список придёт.
+        local needPun = false
+        for k = 1, #plan do
+            if plan[k].pun then needPun = true end
+        end
+        if needPun then
+            if QR.punBegin(id, nick, "auto") then
+                A.pend = { on = true, at = os.clock(), id = id, hit = hit,
+                    tabs = hitTabsTxt, plan = plan }
+                A.lastCheck = "ждём окно /getinfo: «" .. hit .. "»"
+                QR.queueCmd("/getinfo " .. id)
+                QR.toast("Автопилот: читаю активные наказания игрока " .. id, "info", 2.6)
+                return true, "наказания"
+            end
+            -- окно уже смотрит кнопка «Наказания игрока»: отвечаем без списка
+            for k = 1, #plan do
+                local it = plan[k]
+                if it.pun then it.line = QR.autoPunFill(it.line, "нет данных о наказаниях") end
+            end
+            QR.toast("Автопилот: список наказаний уже запрашивается — ответ без него",
+                "warn", 3.2)
+        end
+
         -- Отправляем строго по порядку вкладок — так «/ans ID текст» каждой
         -- вкладки встаёт в очередь перед её же командой.
+        return QR.autoDeliver(id, hit, hitTabsTxt, plan)
+    end
+
+    -- Отправка готового плана: /ans каждой вкладки и её команда, по порядку
+    -- вкладок. Сюда же — предохранители (после отправки) и тост.
+    function QR.autoDeliver(id, hit, tabsTxt, plan)
+        local A = QR.auto
         local sentAns, sentCmd, cmdTxt, planTabs = 0, 0, {}, {}
         for k = 1, #plan do
             local it = plan[k]
             if it.line ~= "" and type(grndRepAnswer) == "function" then
                 -- grndRepAnswer сам переводит текст в CP1251 и ставит
-                -- «/ans ID …» в очередь репорта
-                local okA, res = pcall(grndRepAnswer, id, it.line)
-                if okA and res ~= false then sentAns = sentAns + 1 end
+                -- «/ans ID …» в очередь репорта; длинный список наказаний
+                -- уходит несколькими сообщениями (у чата есть лимит длины)
+                local chunks = autoChunks(it.line)
+                for ci = 1, #chunks do
+                    local okA, res = pcall(grndRepAnswer, id, chunks[ci])
+                    if okA and res ~= false then sentAns = sentAns + 1 end
+                end
             end
             if it.cmd then
                 if QR.queueCmd(it.cmd) then sentCmd = sentCmd + 1 end
@@ -27576,12 +27969,13 @@ do
         local planTabsTxt = table.concat(planTabs, ", ")
         local sentOk = (sentAns + sentCmd) > 0
         A.lastCheck = sentOk
-            and ("отправлено (вкладки " .. planTabsTxt .. "), триггер «" .. hit .. "»")
+            and ("отправлено (вкладки " .. planTabsTxt .. "), триггер «"
+                .. tostring(hit) .. "»" .. (tabsTxt ~= planTabsTxt and (" · план " .. tostring(tabsTxt)) or ""))
             or "не удалось отправить"
         if sentOk then
             local cmds = table.concat(cmdTxt, " + ")
             QR.toast("Автопилот: /ans " .. id .. (cmds ~= "" and (" + " .. cmds) or "")
-                .. " · «" .. hit .. "»" .. (#plan > 1 and (" · вкладок " .. tostring(#plan)) or ""),
+                .. " · «" .. tostring(hit) .. "»" .. (#plan > 1 and (" · вкладок " .. tostring(#plan)) or ""),
                 "ok", 3.6)
         else
             QR.toast("Автопилот: отправить не удалось", "warn", 3)
@@ -27896,6 +28290,7 @@ do
             "{ID} — найдёт ID в репорте («дм 234», «234 дм») и подставит его в ответ",
             "После ответа автопилот сам зайдёт в слежку за этим игроком — даже если выбрана команда /goto",
             "{all} — триггер сработает, даже если репорт состоит из нескольких слов",
+            "{punishments} — активные наказания игрока (как кнопка «Наказания игрока»)",
         }
         local hy = hintY
         for hi = 1, #varHints do
@@ -35250,22 +35645,10 @@ function grndMainBody()
         --    * список -> «Приветствую, ваши активные наказания >> …»
         --  Первая строка окна («Аккаунт Ник[ID] …») отбрасывается.
         --
-        --  Ответ уходит игроку штатной командой /ans ID текст — тем же
-        --  путём, что у кнопок «Слежка», «Телепорт» и «Следить за …».
-        --
-        --  Всё — полями GRND_REP, а не локальными переменными:
-        --  grndMainBody уже близок к лимиту Lua в 200 локальных.
+        --  Сама механика живёт в модуле быстрых ответов (QR.punBegin /
+        --  QR.punFinish): её же использует переменная {punishments} у
+        --  автопилота, который работает и с закрытым окном репорта.
         -- =================================================================
-
-        -- Ожидание окна: on — ждём ответ на /getinfo, at — время запроса,
-        -- pid/nick — кому отвечаем, seen* — последний чужой диалог (для диагностики).
-        GRND_REP.pun = GRND_REP.pun or { on = false, at = 0, pid = nil, nick = "" }
-
-        -- Диагностика ТОЛЬКО в консоль MoonLoader: в игре никаких уведомлений
-        -- (тостов) на действия этой кнопки быть не должно.
-        GRND_REP.punLog = function(msg)
-            pcall(print, "[GRND] наказания: " .. tostring(msg))
-        end
 
         -- Ширина текста ТЕМ ЖЕ масштабом, каким uiText его нарисует.
         -- Тонкость: uiText применяет масштаб только через SetWindowFontScale —
@@ -35286,236 +35669,6 @@ function grndMainBody()
                 end
             end
             return grndTextW(s) * use, use
-        end
-
-        -- Нормализация текста окна сервера: кодировка может быть CP1251
-        -- (её и отдаёт этот сервер) — иначе русские подстроки не находятся.
-        GRND_REP.punNorm = function(s)
-            local t = grndToUtf(tostring(s or ""))
-            t = t:gsub("{%x%x%x%x%x%x}", "")
-            return t
-        end
-
-        -- Поиск подстроки в тексте окна без учёта регистра (UTF-8, после
-        -- приведения кодировки). Сравнение посимвольное в нижнем регистре.
-        GRND_REP.punFind = function(s, needle)
-            local t = GRND_REP.punNorm(s)
-            if type(_G.grndLowerUtf) == "function" then
-                local ok, low = pcall(_G.grndLowerUtf, t)
-                if ok and type(low) == "string" then t = low end
-            else
-                t = t:lower()
-            end
-            return t:find(needle, 1, true) ~= nil
-        end
-
-        -- Похоже ли окно на «Активные наказания игрока».
-        -- Признак №1 — заголовок окна; признак №2 — строка «Аккаунт Ник[ID] …»,
-        -- которую отдаёт именно /getinfo (проверяем только пока ждём свой запрос).
-        GRND_REP.punLooksDialog = function(caption, text)
-            if GRND_REP.punFind(caption, "наказани") then return true end
-            if GRND_REP.punFind(caption, "наказан") then return true end
-            return GRND_REP.punFind(text, "ккаунт")
-        end
-
-        -- Разбор содержимого окна: массив строк-наказаний.
-        -- Первая значимая строка («Аккаунт Ник[ID] …») игнорируется,
-        -- пустые строки и цветовые коды выбрасываются.
-        GRND_REP.punParse = function(raw)
-            local t = grndToUtf(tostring(raw or ""))
-            t = t:gsub("{%x%x%x%x%x%x}", "")
-            local out, head = {}, false
-            for ln in (t .. "\n"):gmatch("([^\n]*)\n") do
-                ln = ln:gsub("^%s+", ""):gsub("%s+$", "")
-                if ln ~= "" then
-                    if not head then
-                        head = true        -- первая значимая строка — «Аккаунт …»
-                        if not ln:find("ккаунт", 1, true) then
-                            out[#out + 1] = ln
-                        end
-                    else
-                        out[#out + 1] = ln
-                    end
-                end
-            end
-            return out
-        end
-
-        -- Нарезка длинного текста на части по лимиту символов: в чат нельзя
-        -- отправить слишком длинную строку, а список наказаний бывает длинным.
-        -- Режем по границам UTF-8-символов, стараясь по пробелам.
-        GRND_REP.punChunks = function(text, limit)
-            limit = tonumber(limit) or 100
-            local s = tostring(text or "")
-            s = s:gsub("%s*\n%s*", " | ")
-            s = s:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
-            local out = {}
-            local function charCut(str, n)
-                local i, k = 1, 0
-                while i <= #str and k < n do
-                    local b = str:byte(i)
-                    local step = (b >= 240 and 4) or (b >= 224 and 3) or (b >= 192 and 2) or 1
-                    i = i + step
-                    k = k + 1
-                end
-                return i - 1
-            end
-            while s ~= "" do
-                local cut = charCut(s, limit)
-                if cut >= #s then
-                    out[#out + 1] = s
-                    break
-                end
-                local headStr = s:sub(1, cut)
-                local lastSp
-                for p in headStr:gmatch("()%s") do lastSp = p end
-                if lastSp and lastSp > #headStr * 0.5 then
-                    out[#out + 1] = s:sub(1, lastSp - 1)
-                    s = s:sub(lastSp + 1)
-                else
-                    out[#out + 1] = headStr
-                    s = s:sub(cut + 1)
-                end
-                s = s:gsub("^%s+", "")
-            end
-            return out
-        end
-
-        -- Отправка ответа игроку: /ans ID текст.
-        -- Первое сообщение уходит СРАЗУ (ответ приходит пока админ ещё
-        -- смотрит в окно репорта), но только если очередь пуста и пауза
-        -- после прошлой отправки выдержана — иначе, как обычно, через
-        -- очередь: два чат-сообщения в одном кадре сервер может проглотить.
-        -- Ответ дублирует grndRepAnswer (тот же текст и та же кодировка),
-        -- но без ожидания очереди для первой части.
-        GRND_REP.punSay = function(pid, text)
-            local chunks = GRND_REP.punChunks(text, 100)
-            local pidS = tostring(pid or "")
-            local pidOk = pidS:match("^%d+$") ~= nil
-            local q = GRND_REP.queue
-            local canJump = pidOk
-                and (type(sampSendChat) == "function")
-                and (type(q) ~= "table" or #q == 0)
-                and ((os.clock() or 0) - (GRND_REP.queueAt or 0) >= 0.35)
-            for i, c in ipairs(chunks) do
-                if i == 1 and canJump then
-                    pcall(sampSendChat, "/ans " .. pidS .. " " .. grndRepToAnsi(c))
-                    pcall(grndRepHudRemove, pidS)   -- как делает grndRepAnswer
-                    -- держим общий интервал очереди: следующая команда
-                    -- не должна уйти в тот же кадр
-                    GRND_REP.queueAt = os.clock()
-                    canJump = false
-                else
-                    grndRepAnswer(pid, c)
-                end
-            end
-            return #chunks
-        end
-
-        -- Окно прочитано: разбор и ответ игроку.
-        GRND_REP.punFinish = function(pid, nick, text)
-            local lines = GRND_REP.punParse(text)
-            local who = tostring(nick or ("ID " .. tostring(pid)))
-            if #lines == 0 then
-                GRND_REP.punSay(pid, "Приветствую, активных наказаний у вас нет.")
-                GRND_REP.punLog(who .. ": активных наказаний нет")
-            else
-                GRND_REP.punSay(pid,
-                    "Приветствую, ваши активные наказания >> " .. table.concat(lines, " | "))
-                GRND_REP.punLog(who .. ": строк наказаний " .. tostring(#lines))
-            end
-        end
-
-        -- Хук sampev.onShowDialog: ловим окно /getinfo и прячем его.
-        -- true = окно обработано, игроку его показывать не нужно.
-        _G.grndRepPunOnDialog = function(dialogId, style, title, b1, b2, text)
-            local P = GRND_REP.pun
-            if not P or not P.on then return nil end
-            local age = (os.clock() or 0) - (P.at or 0)
-            if age > 8 then return nil end
-            local body = (type(text) == "string" and text) or ""
-            if body == "" then
-                -- некоторые обёртки кладут содержимое не последним аргументом
-                for _, v in ipairs({ b1, b2 }) do
-                    if type(v) == "string" and #v > #body then body = v end
-                end
-            end
-            local looks = GRND_REP.punLooksDialog(title, body)
-            -- Подстраховка: /getinfo отвечает почти сразу. Если окно пришло в
-            -- первые секунды после запроса и это НЕ окно репорта — считаем его
-            -- ответом, даже если формулировки сервера разошлись с ожиданием
-            -- (админ сам нажал кнопку, так что окно — по нашему запросу).
-            if not looks and age <= 3.0 and #body >= 5 then
-                -- чужие окна не трогаем: репорт и ответ /stats сюда не относятся
-                local foreign = false
-                if type(_G.grndRepAcceptDialog) == "function" then
-                    local okR, r = pcall(_G.grndRepAcceptDialog, dialogId, title, body)
-                    if okR and r then foreign = true end
-                end
-                if not foreign and type(_G.grndStatsShouldHide) == "function" then
-                    local okS, r = pcall(_G.grndStatsShouldHide, title, body)
-                    if okS and r then foreign = true end
-                end
-                if not foreign then looks = true end
-            end
-            if not looks then
-                -- чужой диалог во время ожидания: запомним для диагностики
-                P.seenTitle, P.seenText = tostring(title or ""), tostring(body or ""):sub(1, 300)
-                return nil
-            end
-            local pid, nick = P.pid, P.nick
-            P.on, P.at, P.pid, P.nick = false, 0, nil, ""
-            pcall(GRND_REP.punFinish, pid, nick, body)
-            return true
-        end
-
-        -- Тик: запасной путь (если хук не сработал — окно уже на экране)
-        -- и снятие «зависшего» ожидания по таймауту.
-        GRND_REP.punPoll = function()
-            local P = GRND_REP.pun
-            if not P or not P.on then return end
-            local now = os.clock() or 0
-            local age = now - (P.at or 0)
-            if age > 8 then
-                local seen = P.seenTitle and ("последний диалог: " .. P.seenTitle
-                    .. " | " .. tostring(P.seenText or ""):gsub("%s+", " ")) or "диалогов не было"
-                P.on, P.at, P.pid, P.nick = false, 0, nil, ""
-                P.seenTitle, P.seenText = nil, nil
-                GRND_REP.punLog("окно /getinfo не распознано. " .. seen)
-                return
-            end
-            -- запасной путь: реакция не позже ~0.1 с после запроса
-            if age < 0.1 then return end
-            if type(grndSessionReady) == "function" and not grndSessionReady() then return end
-            if type(sampIsDialogActive) ~= "function" then return end
-            local okA, active = pcall(sampIsDialogActive)
-            if not (okA and active) then return end
-            local caption, text = "", ""
-            if type(sampGetDialogCaption) == "function" then
-                local ok, v = pcall(sampGetDialogCaption)
-                if ok and type(v) == "string" then caption = v end
-            end
-            if type(sampGetDialogText) == "function" then
-                local ok, v = pcall(sampGetDialogText)
-                if ok and type(v) == "string" then text = v end
-            end
-            if not GRND_REP.punLooksDialog(caption, text) then return end
-            local pid, nick = P.pid, P.nick
-            local dlgId = nil
-            if type(sampGetCurrentDialogId) == "function" then
-                local ok, v = pcall(sampGetCurrentDialogId)
-                if ok then dlgId = tonumber(v) end
-            end
-            P.on, P.at, P.pid, P.nick = false, 0, nil, ""
-            pcall(GRND_REP.punFinish, pid, nick, text)
-            -- окно уже было показано игроку (хук не сработал) — закрываем
-            if dlgId then
-                if type(sampSendDialogResponse) == "function" then
-                    pcall(sampSendDialogResponse, dlgId, 1, -1, "")
-                elseif type(sampCloseCurrentDialogWithButton) == "function" then
-                    pcall(sampCloseCurrentDialogWithButton, 1)
-                end
-            end
         end
 
         -- =================================================================
@@ -35877,23 +36030,11 @@ function grndMainBody()
                 end
                 if pnClick then
                     GRND_REP.lastAction = "punish"
-                    -- Запоминаем, кого спрашиваем: окно придёт асинхронно.
-                    local P = GRND_REP.pun
-                    P.on = true
-                    P.at = os.clock()
-                    P.pid = pid
-                    P.nick = author
-                    P.seenTitle, P.seenText = nil, nil
-                    -- Отправляем сразу, минуя очередь: ответ сервера придёт
-                    -- раньше, а других команд в этом кадре нет.
-                    if type(sampSendChat) == "function" then
-                        pcall(sampSendChat, "/getinfo " .. pid)
-                    else
-                        grndRepQueue("/getinfo " .. pid)
-                    end
-                    -- Окно репорта закрываем сразу (в конце этого же кадра):
-                    -- ответ игроку уйдёт после чтения окна /getinfo.
-                    pendingClose = true
+                    -- Запоминаем, кого спрашиваем: окно придёт асинхронно, а
+                    -- запрос уходит сразу, минуя очередь (других команд в
+                    -- этом кадре нет). Окно репорта закрываем в конце этого
+                    -- же кадра: ответ игроку уйдёт после чтения /getinfo.
+                    if QR.punBeginManual(pid, author) then pendingClose = true end
                 end
                 local spClick, spHover = iconBtn("##grnd_rep_spec", xSp, wSp, "Слежка", TH.accent, grndRepIconEye, hasId)
                 local tpClick, tpHover = iconBtn("##grnd_rep_tp", xTp, wTp, "Телепорт", TH.accent2, grndRepIconRun, hasId)
@@ -39750,10 +39891,11 @@ function grndMainBody()
                     grndRepSet(dialogId, title, text)
                     return false
                 end
-                -- Кнопка «Наказания игрока»: окно /getinfo ID читается
-                -- и прячется — true = игроку его показывать не нужно.
-                if type(_G.grndRepPunOnDialog) == "function" then
-                    local okPn, hidePn = pcall(_G.grndRepPunOnDialog,
+                -- «Наказания игрока» и {punishments} автопилота: окно
+                -- /getinfo ID читается и прячется — true = игроку его
+                -- показывать не нужно.
+                if type(_G.grndQrPunOnDialog) == "function" then
+                    local okPn, hidePn = pcall(_G.grndQrPunOnDialog,
                         dialogId, style, title, button1, button2, text)
                     if okPn and hidePn then return false end
                 end
@@ -40213,7 +40355,8 @@ function grndMainBody()
         pcall(grndKeysTick)        -- native chat still owns the text editing and sending
         pcall(GRND_INPUT.tick)     -- v1.15.44: session history / layout / overlay lifecycle
         pcall(grndRepPoll)         -- report: ждём dialogId=10 сколько нужно после /arep
-        if GRND_REP.punPoll then pcall(GRND_REP.punPoll) end  -- report: окно /getinfo (наказания)
+        -- report: окно /getinfo (наказания) — кнопка «Наказания игрока» и {punishments}
+        if _G.GRND_QR and type(_G.GRND_QR.punPoll) == "function" then pcall(_G.GRND_QR.punPoll) end
         pcall(grndRepQueueTick)    -- report: очередь /ans, /goto
         if _G.MP then pcall(_G.MP.tick) end  -- МОДУЛЬ 15: очередь команд МП
         pcall(grndKlTick)          -- МОДУЛЬ 11 (v1.5.1): чтение stKillInfo + гашение системного списка

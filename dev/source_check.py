@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.36"' in s, 'версия не 1.19.36')
+need('GRND_SCRIPT_VERSION = "1.19.37"' in s, 'версия не 1.19.37')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -190,6 +190,8 @@ need('"После ответа автопилот сам зайдёт в сле�
      in auto_draw_src2, 'пропала подсказка про автослежку за найденным ID')
 need('"{all} — триггер сработает, даже если репорт состоит из нескольких слов"' in auto_draw_src2,
      'пропала подсказка про {all}')
+need('"{punishments} — активные наказания игрока (как кнопка «Наказания игрока»)"'
+     in auto_draw_src2, 'пропала подсказка про {punishments}')
 absent("начинается с триггера", 'вернулась подсказка про систему «помогите»')
 # v1.19.33: вместо placeholder «напр. помогите» — подсказка про синонимы; её
 # длинная фраза переносится по словам (wrapW), чтобы помещалась целиком
@@ -236,8 +238,10 @@ absent('hintFit', 'подсказка снова подставляет имя �
 absent('AUTO_PREFIX_TRIG', 'осталась система «помогите» (AUTO_PREFIX_TRIG)')
 need('function QR.autoAnswerFlags(tab)' in s,
      'нет разбора ответа на {ID}/{all}')
-need('ans:find("{ID}", 1, true) ~= nil, ans:find("{all}", 1, true) ~= nil' in s,
+need('ans:find("{ID}", 1, true) ~= nil, ans:find("{all}", 1, true) ~= nil,' in s,
      'флаги {ID}/{all} ищутся не в тексте ответа')
+need('ans:find("{punishments}", 1, true) ~= nil' in s,
+     'флаг {punishments} не ищется в тексте ответа')
 need('function QR.autoFindReportId(text)' in s,
      'нет поиска ID в тексте репорта')
 need('local function autoWordHit(low, trig)' in s,
@@ -246,8 +250,8 @@ need('local function autoLastChar(t)' in s,
      'нет проверки границы слова слева')
 need('local hit = anywhere and autoWordHit(low, trig) or (low == trig)' in s,
      'режим сопоставления выбирается не из ответа вкладки')
-need('local hasID, hasAll = QR.autoAnswerFlags(tabs[i])' in s,
-     'вкладки не проверяются на {ID}/{all} при сопоставлении')
+need('local hasID, hasAll, hasPun = QR.autoAnswerFlags(tabs[i])' in s,
+     'вкладки не проверяются на {ID}/{all}/{punishments} при сопоставлении')
 need('out[#out + 1] = { idx = i, trig = trig }' in s,
      'совпадение триггера потерялось')
 absent('low:find(list[k], 1, true)', 'вернулся поиск триггера подстрокой')
@@ -264,6 +268,38 @@ need('line = trim((line:gsub("{all}", "", 1)))' in onrep2,
 # QR.apply: {ID} — найденный в репорте ID, иначе штатный
 need('tostring(rep.foundId or "") ~= "" and tostring(rep.foundId) or pid' in s,
      '{ID} не подставляет найденный в репорте ID')
+# v1.19.37: {punishments} — окно /getinfo читается, список уходит в ответ
+need('QR.punBegin = function(pid, nick, mode)' in s and
+     'QR.punBeginManual = function(pid, nick)' in s,
+     'нет запуска ожидания окна /getinfo')
+need('QR.punFinish = function(raw)' in s and 'QR.punPoll = function()' in s,
+     'нет чтения окна /getinfo (хук и запасной опрос)')
+need('QR.punParse = function(raw)' in s and 'QR.punChunks = function(text, limit)' in s,
+     'нет разбора и нарезки списка наказаний')
+need('_G.grndQrPunOnDialog = function(dialogId, style, title, b1, b2, text)' in s and
+     'type(_G.grndQrPunOnDialog) == "function"' in s,
+     'окно /getinfo не перехватывается (хук sampev.onShowDialog)')
+need('if _G.GRND_QR and type(_G.GRND_QR.punPoll) == "function" then pcall(_G.GRND_QR.punPoll) end' in s,
+     'запасной опрос окна /getinfo не вызывается из цикла')
+need('function QR.autoDeliver(id, hit, tabsTxt, plan)' in s,
+     'нет общей отправки плана вкладок')
+need('local function autoChunks(line)' in s and 'pcall(QR.punChunks, line, 100)' in s,
+     'длинный ответ не режется на сообщения')
+need('QR.autoPunFill(it.line, txt)' in s and '"нет активных наказаний"' in s and
+     '"нет данных о наказаниях"' in s,
+     'нет подстановки списка наказаний вместо {punishments}')
+need('if QR.punBegin(id, nick, "auto") then' in s and 'QR.queueCmd("/getinfo " .. id)' in s,
+     'автопилот не запрашивает наказания через /getinfo')
+need('A.pend = { on = true, at = os.clock(), id = id, hit = hit,' in s,
+     'нет ожидания окна наказаний в автопилоте')
+need('pcall(QR.autoPunAbsorb, lines)' in s,
+     'список наказаний не доходит до ответа автопилота')
+need('if QR.punBeginManual(pid, author) then pendingClose = true end' in s,
+     'кнопка «Наказания игрока» не использует общую механику')
+# механика переехала из grndMainBody в модуль — старых имён быть не должно
+absent('GRND_REP.punNorm', 'вернулась старая копия механики окна /getinfo')
+absent('GRND_REP.punPoll', 'старый опрос окна /getinfo остался в grndMainBody')
+absent('grndRepPunOnDialog', 'вернулся старый хук окна /getinfo')
 # v1.19.24: у полей ввода нет своей рамки — при наведении не появляется «квадратик»
 field_src = s[s.index('local function field(ctx, id, key, cap'):s.index('-- Треугольник средствами draw-list')]
 need('AddRect' not in field_src,
@@ -296,8 +332,10 @@ need('function QR.autoTriggers(tab)' in s, 'нет разбора триггер
 need('return "/" .. id .. " " .. pid' in s, 'команда после ответа не собирается')
 # срабатывание: ответ игроку, затем команда, и всё — через очередь репорта
 auto_part = s[s.index('function QR.autoOnReport(nick, pid, msg)'):s.index('function QR.autoTick()')]
-need('pcall(grndRepAnswer, id, it.line)' in auto_part, 'автопилот не отвечает игроку через /ans')
-need(auto_part.index('pcall(grndRepAnswer, id, it.line)') < auto_part.index('QR.queueCmd(it.cmd)'),
+# v1.19.37: ответ уходит кусками (длинный список наказаний не влезает в чат)
+need('pcall(grndRepAnswer, id, chunks[ci])' in auto_part,
+     'автопилот не отвечает игроку через /ans')
+need(auto_part.index('pcall(grndRepAnswer, id, chunks[ci])') < auto_part.index('QR.queueCmd(it.cmd)'),
      'команда вкладки уходит раньше её ответа игроку')
 need('if not A.on then' in auto_part, 'автопилот срабатывает при выключенном тумблере')
 need('local guard = QR.autoGuard(id, os.clock())' in auto_part, 'нет предохранителей автопилота')
