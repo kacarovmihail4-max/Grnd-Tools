@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.51"
+GRND_SCRIPT_VERSION = "1.19.52"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -27532,6 +27532,9 @@ do
     -- своей команды — за таким игроком автопилот идёт в СЛЕЖКУ (/sp),
     -- даже если у вкладки выбрано /goto. Иначе — команда вкладки.
     function QR.autoTabCmd(pid, tab, foundId)
+        -- v1.19.52: {punishments} в триггере — вкладка только показывает
+        -- игроку его наказания, команда после ответа НЕ выполняется
+        if QR.autoPunInTrigger(tab) then return nil end
         local hasID = QR.autoVarFlags(tab)
         if hasID and tostring(foundId or "") ~= "" then
             return "/sp " .. tostring(foundId)
@@ -28731,13 +28734,19 @@ do
         else
             sampleLine = oneLine(QR.apply(sel2.answer, { nick = "Ник", id = sampleId }))
         end
-        local cmdLine = QR.autoCmdFor(sampleId, sel2)
+        -- v1.19.52: в триггере {punishments} — команда не уйдёт (вкладка
+        -- только показывает наказания), и предпросмотр об этом говорит
+        local punNoCmd = QR.autoPunInTrigger(sel2)
+        local cmdLine = (not punNoCmd) and QR.autoCmdFor(sampleId, sel2) or nil
         local prev
         if sampleLine == "" then
             prev = cmdLine and ("ответ пуст — уйдёт только " .. cmdLine) or "пусто: не заполнены ответ и команда"
         else
-            prev = "/ans " .. sampleId .. " · " .. utf8Cut(sampleLine, 40)
-                .. (cmdLine and (" · затем " .. cmdLine) or " · команды нет")
+            -- при {punishments} в триггере текст ответа длинный, поэтому
+            -- хвост «команды не будет» важнее — режем пример ответа короче
+            prev = "/ans " .. sampleId .. " · " .. utf8Cut(sampleLine, punNoCmd and 24 or 40)
+                .. (punNoCmd and " · команды не будет"
+                    or (cmdLine and (" · затем " .. cmdLine) or " · команды нет"))
         end
         if not dropPreview then
             ctx.uiText(x, yy, fit(prev, iw, ctx.drawnW, 0.86), sampleLine == "" and warnC or mut, 0.86)
@@ -28755,7 +28764,8 @@ do
         -- «триггер не сработал» причину было не видно; теперь она в окне.
         local dbgTxt = tostring(A.lastReport or "")
         if dbgTxt == "" then dbgTxt = "репортов ещё не было" end
-        local dbgLine = "Репорт: " .. utf8Cut(dbgTxt, 44)
+        -- v1.19.52: без подписи «Репорт:» — строка читается сама по себе
+        local dbgLine = utf8Cut(dbgTxt, 44)
             .. (A.lastCheck and A.lastCheck ~= "" and (" → " .. tostring(A.lastCheck)) or "")
         -- Подбираем кегль блока: подсказки (с переносами) + строка диагностики
         local hintSc, hintStep, hintLines = nil, 0, nil

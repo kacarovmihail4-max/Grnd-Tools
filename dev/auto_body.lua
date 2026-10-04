@@ -84,6 +84,8 @@ check(hasOne("{all} — репорт из нескольких слов") and ha
     "нет подсказки про {all}/{punishments}: " .. textsOne())
 check(not hasOne("сам зайдёт в слежку"), "вернулась строка про автослежку в подсказках")
 check(not hasOne("Несколько слов-триггеров"), "вернулась строка про «первое слово» в подсказках")
+-- v1.19.52: у строки диагностики больше нет подписи «Репорт:»
+check(not texts():find("Репорт:", 1, true), "вернулась подпись «Репорт:» в строке диагностики")
 check(not has("помогите"), "осталась подсказка про систему «помогите»")
 -- v1.19.34: подсказка про синонимы — СРАЗУ ПОСЛЕ названия «Триггер» (над
 -- полем ввода); фраза переносится по словам и должна помещаться ЦЕЛИКОМ
@@ -712,6 +714,37 @@ NOW = NOW + 6
 Q.punPoll()
 check(QUEUE[1] == "/ans 72 Приветствую, ваши активные наказания >> нет данных о наказаниях",
     "таймаут окна: не тот ответ: " .. tostring(QUEUE[1]))
+-- v1.19.52: в триггере есть {punishments} — команда вкладки НЕ выполняется,
+-- вкладка только показывает игроку его наказания
+Q.autoTabs()[1].command = "sp"
+Q.autoEnsure()
+NOW = NOW + 100
+QUEUE = {}
+check(Q.autoOnReport("Команда", 74, "наказ") == true, "репорт не принят")
+check(QUEUE[1] == "/getinfo 74", "не запросил наказания: " .. tostring(QUEUE[1]))
+QUEUE = {}
+check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игрока", "OK", "",
+    "Аккаунт Команда[74]\nМут 10 минут") == true, "окно не спрятано")
+check(QUEUE[1] == "/ans 74 Приветствую, ваши активные наказания >> Мут 10 минут",
+    "не тот ответ: " .. tostring(QUEUE[1]))
+check(#QUEUE == 1, "вкладка с {punishments} в триггере всё равно выполнила команду: "
+    .. tostring(QUEUE[2]))
+-- в проверочном режиме команда тоже не должна уйти
+Q.autoTest = true
+NOW = NOW + 100
+QUEUE = {}
+check(Q.autoOnReport("Команда2", 75, "наказ") == true, "репорт не принят")
+check(QUEUE[1] == "/getinfo 75", "не запросил наказания: " .. tostring(QUEUE[1]))
+QUEUE = {}
+check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игрока", "OK", "",
+    "Аккаунт Команда2[75]\nМут 20 минут") == true, "окно не спрятано")
+for qi = 1, #QUEUE do
+    check(QUEUE[qi]:find("/sp", 1, true) == nil and QUEUE[qi]:find("/goto", 1, true) == nil,
+        "в проверке ушла команда вкладки с {punishments}: " .. tostring(QUEUE[qi]))
+end
+Q.autoTest = false
+Q.autoTabs()[1].command = "none"
+Q.autoEnsure()
 -- вкладка, где в триггере ТОЛЬКО переменная, отвечает на любой репорт
 Q.autoTabs()[1].trigger = "{punishments}"
 Q.autoTabs()[1].command = "none"
@@ -740,6 +773,15 @@ for i = 1, #MULTI do
 end
 check(hasAnsField == false, "поле «Ответ игроку» не спряталось при {punishments} в триггере: " .. texts())
 check(hasOne("Соберётся сам"), "нет пояснения вместо поля ответа: " .. textsOne())
+-- v1.19.52: предпросмотр честно предупреждает, что команда не уйдёт
+A.sel = 1
+Q.autoTabs()[1].command = "sp"
+Q.autoEnsure()
+drawAuto()
+check(hasOne("команды не будет"),
+    "предпросмотр не сказал, что команда не уйдёт: " .. textsOne())
+check(not hasOne("затем /sp"), "предпросмотр обещает команду при {punishments}: " .. textsOne())
+Q.autoTabs()[1].command = "none"
 -- возвращаем вкладку 1 к обычному виду
 TYPE["##grnd_qr_auto_trigger"] = "Помогите"
 Q.autoTabs()[1].answer = "Приветствую, {ник}! Уже смотрю. {ид}"
@@ -1437,7 +1479,7 @@ local function hintRows(w, h, y)
     for i = 1, #TXT do
         local t = tostring(TXT[i].str)
         if t:find("Переменные", 1, true) or t:find("{ID} — тот, на кого", 1, true)
-           or t:find("Репорт:", 1, true) then
+           or t:find(" → ", 1, true) or t:find("репортов ещё не было", 1, true) then
             rows[#rows + 1] = TXT[i]
         end
     end

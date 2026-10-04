@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.51"' in s, 'версия не 1.19.51')
+need('GRND_SCRIPT_VERSION = "1.19.52"' in s, 'версия не 1.19.52')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -403,9 +403,17 @@ need('function QR.autoBarePun(tab)' in s and 'function QR.autoTrigLabel(tab)' in
      'if QR.autoBarePun(tabs[i]) then' in s and 'function QR.autoVarsOnly(tab)' in s,
      'голая {punishments} без слова не отвечает на любой репорт')
 # диагностика «почему не сработал» прямо в окне
+# v1.19.52: у строки диагностики больше нет подписи «Репорт:»
 need('A.lastReport = utf8Cut(tostring(nick) .. ": " .. text, 60)' in s and
-     '"Репорт: " .. utf8Cut(dbgTxt, 44)' in s,
+     'local dbgLine = utf8Cut(dbgTxt, 44)' in s,
      'в окне автопилота нет строки «последний репорт и что с ним стало»')
+absent('"Репорт: " .. utf8Cut', 'вернулась подпись «Репорт:» у строки диагностики')
+# v1.19.52: {punishments} в триггере — команда после ответа не выполняется
+need('if QR.autoPunInTrigger(tab) then return nil end' in s,
+     'вкладка с {punishments} в триггере снова выполняет команду')
+need('local punNoCmd = QR.autoPunInTrigger(sel2)' in s and
+     '" · команды не будет"' in s,
+     'предпросмотр не предупреждает, что команда не уйдёт при {punishments}')
 # v1.19.47: репорт — ТОЛЬКО строка с маркером «[К-во репорта: N]». Разбор строки
 # без маркера (послабление v1.19.41) убран: обычный чат «Ник[ID]: текст» не
 # должен ни открывать окно «Репорты», ни доходить до автопилота
