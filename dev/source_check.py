@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.50"' in s, 'версия не 1.19.50')
+need('GRND_SCRIPT_VERSION = "1.19.51"' in s, 'версия не 1.19.51')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -197,7 +197,7 @@ absent('Несколько слов-триггеров в репорте — о�
 # строки не накладываются друг на друга и не вылезают за кромку
 need('local step = lineH(ctx, sc) + 3' in auto_draw_src2,
      'шаг строк подсказок без запаса — строки могут налипнуть друг на друга')
-need('if hintY + blockH <= h - 6 then' in auto_draw_src2 and 'if hintLines then' in auto_draw_src2,
+need('if hintY + blockH <= bottomY then' in auto_draw_src2 and 'if hintLines then' in auto_draw_src2,
      'подсказки рисуются, даже когда не помещаются в окно')
 absent("начинается с триггера", 'вернулась подсказка про систему «помогите»')
 # v1.19.33: вместо placeholder «напр. помогите» — подсказка про синонимы; её
@@ -443,12 +443,25 @@ need('"Приветствую, уже смотрю…", true, sel2.answer' in s,
 auto_draw_src = s[s.index('_G.grndQrAutoDraw = function(ctx)'):s.index('_G.grndQrAutoOnReport = function')]
 need('{ник}' not in auto_draw_src, 'в разделе «Автопилот» снова подсказка с {ник}')
 # v1.19.36: подсказки про {ID}/{all} живут только внизу раздела
-need(auto_draw_src.count('{ID} — тот, на кого пожаловались') == 1,
-     'подсказка про {ID} должна быть ровно одна (внизу раздела)')
-# v1.19.50: в невысоком окне поле «Ответ игроку» чуть ниже — иначе нижний блок
-# (подсказки + диагностика) не помещается
-need('local ansH = (h >= 560) and 92 or 68' in auto_draw_src,
-     'поле «Ответ игроку» не подстраивается под высоту окна')
+need(auto_draw_src.count('{ID} — тот, на кого пожаловались') == 2,
+     'подсказка про {ID} должна быть в двух вариантах (полном и коротком)')
+# v1.19.51: низ раздела — это y + h (y — абсолютная координата, h — высота),
+# иначе блок внизу «не помещался» и подсказки про переменные пропадали
+need('local bottomY = y + h - 6' in auto_draw_src,
+     'низ раздела снова считается от одной h (подсказки пропадут)')
+need('if hintY + blockH <= bottomY then' in auto_draw_src,
+     'подсказки не сверяются с настоящим низом раздела')
+# высота поля «Ответ игроку» подбирается так, чтобы низ поместился целиком
+need('local ansH = 92' in auto_draw_src and 'reserve' in auto_draw_src,
+     'высота поля «Ответ игроку» больше не считается от свободного места')
+# запасные варианты, когда места мало: без предпросмотра, без пояснения {ID}
+need('local dropPreview = false' in auto_draw_src, 'нет запаса «без строки-предпросмотра»')
+need('local hideIDNote = false' in auto_draw_src, 'нет запаса «без пояснения {ID}»')
+need('local varHintsShort = {' in auto_draw_src,
+     'нет короткой подсказки про переменные на тесное окно')
+# узкая колонка справа от селектора команды растягивала подсказку в столбик
+need('local cmdHintText = "Если триггер будет без команды' in auto_draw_src,
+     'подсказка про работу без команды снова верстается в узкую колонку')
 need('local tab = QR.autoTab(hits[k].idx)' in s, 'срабатывание не привязано к вкладке')
 need('return QR.autoCmdFor(pid, tab)' in s, 'команда берётся не из вкладки')
 need('line = QR.autoWhoStrip(oneLine(QR.apply(tab.answer, repAns)))' in s, 'ответ берётся не из вкладки')

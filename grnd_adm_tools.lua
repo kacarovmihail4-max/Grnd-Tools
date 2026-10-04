@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.50"
+GRND_SCRIPT_VERSION = "1.19.51"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -28402,6 +28402,11 @@ do
         local x, y, w, h = ctx.x, ctx.y, ctx.w, ctx.h
         if not (x and y and w and h) or w < 320 or h < 200 then return false end
 
+        -- v1.19.51: y — абсолютная координата раздела в окне, h — его высота,
+        -- поэтому низ раздела — это (y + h). Раньше в проверках снизу
+        -- использовалась одна h, из-за чего блок внизу «не помещался» и
+        -- подсказки про переменные пропадали вовсе.
+        local bottomY = y + h - 6
         local hi  = ctx.col32(TH.textHi[1], TH.textHi[2], TH.textHi[3], 255)
         local dim = ctx.col32(TH.textDim[1], TH.textDim[2], TH.textDim[3], 255)
         local mut = ctx.col32(TH.textMuted[1], TH.textMuted[2], TH.textMuted[3], 255)
@@ -28411,13 +28416,23 @@ do
         local okC   = ctx.col32(120, 220, 160, 255)
 
         -- ---------- шапка: название и состояние, справа тумблер ----------
+        -- v1.19.50: в невысоком окне шапка компактнее (состояние — в строке с
+        -- названием): место внизу нужно подсказкам про переменные
+        local compact = h < 540
         ctx.uiText(x, y + 1, "Автопилот", hi, 1.0)
 
         local on = A.on and true or false
         local paused = on and (A.paused or QR.autoPauseReason()) or nil
-        local stY = y + 30
+        local stY, stX = y + 30, x + 22
+        if compact then
+            stY = y + (paused and 4 or 3)
+            if type(ctx.drawnW) == "function" then
+                local okT, tw0 = pcall(ctx.drawnW, "Автопилот", 1.0)
+                if okT and type(tw0) == "number" and tw0 > 0 then stX = x + tw0 + 22 end
+            end
+        end
         local dotC = paused and warnC or (on and okC or ctx.col32(255, 255, 255, 70))
-        ctx.dl:AddCircleFilled(ctx.at(x + 8, stY + 12), 5, dotC)
+        ctx.dl:AddCircleFilled(ctx.at(stX - 14, stY + 12), 5, dotC)
         local stateTxt
         if paused == "слежка" then
             stateTxt = "на паузе — слежка, вернётся сам"
@@ -28428,8 +28443,14 @@ do
         else
             stateTxt = "выключен"
         end
-        ctx.uiText(x + 22, stY + 2, stateTxt, paused and warnC or (on and hi or dim), 0.95)
-        if autoSwitch(ctx, x + w - 56, stY, on, "##grnd_qr_auto_on") then
+        -- v1.19.51: в компактной шапке состояние подрезается по ширине,
+        -- чтобы не налезать на тумблер
+        local stTxt = stateTxt
+        if compact then
+            stTxt = fit(stateTxt, math.max(70, (x + w - 62) - stX), ctx.drawnW, 0.95)
+        end
+        ctx.uiText(stX, stY + 2, stTxt, paused and warnC or (on and hi or dim), 0.95)
+        if autoSwitch(ctx, x + w - 56, compact and (y + 3) or stY, on, "##grnd_qr_auto_on") then
             QR.autoSet(not on)
         end
 
@@ -28527,6 +28548,24 @@ do
         -- ---------- поля выбранной вкладки ----------
         local yy = ty + tabH + 14
         local iw = w
+        -- v1.19.50: если места мало, строка-предпросмотр не рисуется — её
+        -- высота уходит подсказкам про переменные
+        local dropPreview = false
+        -- v1.19.51: если и этого мало, убираем оранжевое пояснение про {ID}
+        -- (оно повторяет подсказку внизу раздела)
+        local hideIDNote = false
+        -- v1.19.50: внизу раздела — короткая подсказка ТОЛЬКО про переменные
+        local varHints = {
+            "Переменные — в ответе или на слове в триггере: «дм{ID}», «спек{all}»",
+            "{ID} — тот, на кого пожаловались; {all} — репорт из нескольких слов; "
+                .. "{punishments} — наказания игрока",
+        }
+        -- v1.19.51: запасной вариант одной строкой — для очень тесного окна,
+        -- когда две строки не помещаются (подсказка всё равно должна быть видна)
+        local varHintsShort = {
+            "Переменные: {ID} — тот, на кого пожаловались; {all} — репорт из "
+                .. "нескольких слов; {punishments} — наказания игрока",
+        }
         -- v1.19.26: у поля «Триггер» нет подписи про длину — короткий триггер
         -- разрешён. v1.19.34: подсказка про синонимы стоит СРАЗУ ПОСЛЕ названия
         -- «Триггер» (над полем ввода), длинная фраза переносится по словам,
@@ -28556,6 +28595,23 @@ do
 
         local selPun = QR.autoPunInTrigger(sel2)
         local selID = (not selPun) and QR.autoIDInTrigger(sel2)
+        -- высота селектора команды и подсказки к нему — нужны, чтобы заранее
+        -- посчитать, сколько места займёт низ раздела
+        local selW, selH = math.min(280, iw), 30
+        local cmdHintSc = 0.72
+        local cmdHintText = "Если триггер будет без команды, автопилот будет работать даже в слежке"
+        local cmdHintW = iw - selW - 12
+        local cmdHintX = x + selW + 12
+        -- v1.19.51: узкая колонка справа от селектора растягивает подсказку в
+        -- длинный «столбик» коротких строк и съедает низ раздела — тогда она
+        -- уходит под селектор и переносится по всей ширине
+        if cmdHintW < 120
+            or #wrapW(cmdHintText, cmdHintW, ctx.drawnW, cmdHintSc) > 2 then
+            cmdHintX, cmdHintW = x, iw
+        end
+        local cmdHintLines = wrapW(cmdHintText, cmdHintW, ctx.drawnW, cmdHintSc)
+        local cmdHintStep = lineH(ctx, cmdHintSc) + 2
+
         ctx.uiText(x, yy, "Ответ игроку", dim, 0.84)
         yy = yy + 17
         if selPun then
@@ -28569,9 +28625,45 @@ do
             end
             yy = yy + math.max(1, #note) * tHintStep + 12
         else
-            -- v1.19.50: в невысоком окне поле ответа чуть ниже — иначе
-            -- нижний блок (подсказки про переменные + диагностика) не влезает
-            local ansH = (h >= 560) and 92 or 68
+            -- v1.19.50: высота поля ответа считается от свободного места —
+            -- внизу обязательно должны поместиться подсказки про переменные и
+            -- строка диагностики (ничего не накладывается и не обрезается)
+            local ansH = 92
+            do
+                local noteH0 = 0
+                if selID then
+                    noteH0 = #wrapW(
+                        "С именем или номером игрока в репорте ответ собирается сам: "
+                            .. "«Приветствую, слежу за игроком Ник[234]». Этот текст уйдёт, "
+                            .. "когда в репорте нет ни номера, ни имени.",
+                        iw, ctx.drawnW, tHintSc) * tHintStep
+                end
+                local chH0 = math.max(selH,
+                    ((cmdHintX == x) and (selH + 6) or 0)
+                        + math.max(1, #cmdHintLines) * cmdHintStep) + 10
+                local minSc = 0.36
+                local minStep = lineH(ctx, minSc) + 3
+                local minRows = 1
+                for hi = 1, #varHints do
+                    minRows = minRows + #wrapW(varHints[hi], iw, ctx.drawnW, minSc)
+                end
+                local minBlock = (minRows - 1) * minStep + lineH(ctx, minSc)
+                local prevH0 = lineH(ctx, 0.86)
+                local reserve = 6 + noteH0 + 12 + 17 + chH0 + prevH0 + 6 + minBlock + 6
+                ansH = math.max(40, math.min(92, math.floor(bottomY - yy - reserve)))
+                if yy + ansH + reserve > bottomY then
+                    -- совсем мало места: строку-предпросмотр убираем целиком
+                    dropPreview = true
+                    reserve = reserve - prevH0
+                    ansH = math.max(40, math.min(92, math.floor(bottomY - yy - reserve)))
+                end
+                if yy + ansH + reserve > bottomY and noteH0 > 0 then
+                    -- и пояснение про {ID}: подсказка о нём и так есть внизу
+                    hideIDNote = true
+                    reserve = reserve - noteH0
+                    ansH = math.max(40, math.min(92, math.floor(bottomY - yy - reserve)))
+                end
+            end
             local akey, aid = "autoAnswer" .. A.sel, "##grnd_qr_auto_answer"
             field(ctx, aid, akey, 1024, x, yy, iw, ansH, "Приветствую, уже смотрю…", true, sel2.answer)
             local ansVal = clampText(cleanText(bufText(akey)), MAX_TEXT)
@@ -28584,20 +28676,23 @@ do
                 -- v1.19.46: {ID} на слове в триггере — для репорта с номером
                 -- или именем ответ собирается сам; этот текст уходит, когда в
                 -- репорте ни номера, ни имени нет (без ника и ID).
+                -- v1.19.51: в слишком тесном окне пояснение не рисуется —
+                -- его место отдано подсказкам про переменные
                 local note = wrapW(
                     "С именем или номером игрока в репорте ответ собирается сам: «Приветствую, слежу за игроком Ник[234]». Этот текст уйдёт, когда в репорте нет ни номера, ни имени.",
                     iw, ctx.drawnW, tHintSc)
-                for li = 1, #note do
-                    ctx.uiText(x, yy + (li - 1) * tHintStep, note[li], warnC, tHintSc)
+                if not hideIDNote then
+                    for li = 1, #note do
+                        ctx.uiText(x, yy + (li - 1) * tHintStep, note[li], warnC, tHintSc)
+                    end
+                    yy = yy + math.max(1, #note) * tHintStep
                 end
-                yy = yy + math.max(1, #note) * tHintStep
             end
             yy = yy + 12
         end
 
         ctx.uiText(x, yy, "Команда после ответа", dim, 0.84)
         yy = yy + 17
-        local selW, selH = math.min(280, iw), 30
         local selY = yy
         im.SetCursorPos(im.ImVec2(x, selY))
         local selClick = im.InvisibleButton("##grnd_qr_auto_cmd", im.ImVec2(selW, selH)) and true or false
@@ -28617,16 +28712,6 @@ do
         -- v1.19.35: оранжевая подсказка правее селектора — вкладка «без
         -- команды» отвечает даже в слежке. Если справа места мало, подсказка
         -- уходит под селектор.
-        local cmdHintSc = 0.72
-        local cmdHintW = iw - selW - 12
-        local cmdHintX = x + selW + 12
-        if cmdHintW < 120 then
-            cmdHintX, cmdHintW = x, iw
-        end
-        local cmdHintLines = wrapW(
-            "Если триггер будет без команды, автопилот будет работать даже в слежке",
-            cmdHintW, ctx.drawnW, cmdHintSc)
-        local cmdHintStep = lineH(ctx, cmdHintSc) + 2
         local cmdHintTop = (cmdHintX == x) and (selY + selH + 6) or selY
         for li = 1, #cmdHintLines do
             ctx.uiText(cmdHintX, cmdHintTop + (li - 1) * cmdHintStep,
@@ -28654,19 +28739,18 @@ do
             prev = "/ans " .. sampleId .. " · " .. utf8Cut(sampleLine, 40)
                 .. (cmdLine and (" · затем " .. cmdLine) or " · команды нет")
         end
-        ctx.uiText(x, yy, fit(prev, iw, ctx.drawnW, 0.86), sampleLine == "" and warnC or mut, 0.86)
+        if not dropPreview then
+            ctx.uiText(x, yy, fit(prev, iw, ctx.drawnW, 0.86), sampleLine == "" and warnC or mut, 0.86)
+        end
 
         -- v1.19.36: внизу — подсказки про переменные {ID} и {all}. Текст
         -- постоянный (не зависит от полей вкладки), длинные строки переносятся.
         -- v1.19.41: под ними — строка диагностики («Репорт: … → …»). Если
         -- места в окне мало, кегль всего блока уменьшается — подсказки и
         -- диагностика остаются целиком, ничего не обрезается краем.
-        local hintY = yy + lineH(ctx, 0.86) + 6
-        local varHints = {
-            "Переменные — в ответе или на слове в триггере: «дм{ID}», «спек{all}»",
-            "{ID} — тот, на кого пожаловались; {all} — репорт из нескольких слов; "
-                .. "{punishments} — наказания игрока",
-        }
+        -- v1.19.50: высота поля ответа подобрана заранее, поэтому блок
+        -- помещается; без предпросмотра подсказки начинаются сразу под ним
+        local hintY = yy + (dropPreview and 6 or (lineH(ctx, 0.86) + 6))
         -- v1.19.41: диагностика — что сделал последний репорт. Раньше при
         -- «триггер не сработал» причину было не видно; теперь она в окне.
         local dbgTxt = tostring(A.lastReport or "")
@@ -28676,23 +28760,28 @@ do
         -- Подбираем кегль блока: подсказки (с переносами) + строка диагностики
         local hintSc, hintStep, hintLines = nil, 0, nil
         local scales = { 0.72, 0.68, 0.64, 0.60, 0.56, 0.52, 0.48, 0.44, 0.40, 0.36 }
-        for si = 1, #scales do
-            local sc = scales[si]
-            -- шаг с запасом (+3): строки не должны налипать друг на друга
-            local step = lineH(ctx, sc) + 3
-            local rows, packed = 1, {}          -- 1 — строка диагностики
-            for hi = 1, #varHints do
-                local ls = wrapW(varHints[hi], iw, ctx.drawnW, sc)
-                packed[#packed + 1] = ls
-                rows = rows + #ls
+        local hintSets = { varHints, varHintsShort }
+        for ss = 1, #hintSets do
+            local src = hintSets[ss]
+            for si = 1, #scales do
+                local sc = scales[si]
+                -- шаг с запасом (+3): строки не должны налипать друг на друга
+                local step = lineH(ctx, sc) + 3
+                local rows, packed = 1, {}      -- 1 — строка диагностики
+                for hi = 1, #src do
+                    local ls = wrapW(src[hi], iw, ctx.drawnW, sc)
+                    packed[#packed + 1] = ls
+                    rows = rows + #ls
+                end
+                -- Высота блока — не «rows шагов», а шаги между строками плюс
+                -- высота последней: иначе нижняя строка упиралась в край окна.
+                local blockH = (rows - 1) * step + lineH(ctx, sc)
+                if hintY + blockH <= bottomY then
+                    hintSc, hintStep, hintLines = sc, step, packed
+                    break
+                end
             end
-            -- Высота блока — не «rows шагов», а шаги между строками плюс
-            -- высота последней: иначе нижняя строка упиралась в край окна.
-            local blockH = (rows - 1) * step + lineH(ctx, sc)
-            if hintY + blockH <= h - 6 then
-                hintSc, hintStep, hintLines = sc, step, packed
-                break
-            end
+            if hintLines then break end
         end
         -- v1.19.50: подсказки рисуем, только если блок помещается целиком —
         -- в слишком низком окне лучше не показать их вовсе, чем наложить
@@ -28710,7 +28799,7 @@ do
         else
             -- совсем мало места: оставляем только строку диагностики
             local sc = scales[#scales]
-            if hintY + lineH(ctx, sc) <= h - 2 then
+            if hintY + lineH(ctx, sc) <= bottomY + 4 then
                 ctx.uiText(x, hintY, fit(dbgLine, iw, ctx.drawnW, sc), mut, sc)
             end
         end

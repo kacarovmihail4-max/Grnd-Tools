@@ -1424,11 +1424,13 @@ local small = makeCtx()
 small.w, small.h = 200, 120
 check(_G.grndQrAutoDraw(small) == false, "раздел нарисовался в слишком маленькой области")
 check(_G.grndQrAutoDraw(nil) == false, "отрисовка упала на пустом контексте")
--- v1.19.50: подсказки внизу не должны накладываться друг на друга и вылезать
--- за нижнюю кромку; в слишком низком окне они лучше не рисуются вовсе
-local function hintRows(w, h)
+-- v1.19.51: подсказки внизу не должны накладываться друг на друга и вылезать
+-- за нижнюю кромку раздела. Низ раздела — это y + h (y — абсолютная
+-- координата, h — высота), поэтому проверяем именно по нему.
+local function hintRows(w, h, y)
     local c = makeCtx()
     c.w, c.h = w, h
+    if y then c.y = y end
     TXT = {}
     _G.grndQrAutoDraw(c)
     local rows = {}
@@ -1442,27 +1444,31 @@ local function hintRows(w, h)
     table.sort(rows, function(a, b) return (a.y or 0) < (b.y or 0) end)
     return rows
 end
--- в высоком окне подсказки должны быть видны; в низком — либо помещаться
--- целиком, либо не рисоваться вовсе; наложения и выхода за кромку нет нигде
-local shownSomewhere = false
-for _, size in ipairs({ { 700, 560 }, { 900, 650 }, { 700, 500 }, { 640, 480 },
-                        { 420, 600 }, { 700, 420 }, { 360, 480 } }) do
-    local rows = hintRows(size[1], size[2])
-    local where = size[1] .. "x" .. size[2]
-    if #rows > 0 then shownSomewhere = true end
+local function checkHintsFit(w, h, y, where)
+    local rows = hintRows(w, h, y)
+    check(#rows >= 2, where .. ": подсказка про переменные не нарисовалась")
     local prev = nil
     for i = 1, #rows do
-        local y, sc = rows[i].y or 0, rows[i].sc or 1
-        check(y + 14 * sc <= size[2], where .. ": подсказка вылезла за нижнюю кромку")
+        local ry, sc = rows[i].y or 0, rows[i].sc or 1
+        check(ry + 14 * sc <= (y or 40) + h - 2,
+            where .. ": подсказка вылезла за нижнюю кромку раздела")
         if prev then
-            check(y - prev >= 5, where .. ": строки подсказок наложились друг на друга")
+            check(ry - prev >= 5, where .. ": строки подсказок наложились друг на друга")
         end
-        prev = y
+        prev = ry
     end
 end
-check(shownSomewhere, "внизу раздела ни в одном размере не видно подсказок")
--- подсказок стало меньше: в высоком окне — две строки + диагностика
-check(#hintRows(900, 650) <= 4, "подсказок внизу всё ещё слишком много")
-HPRINT("маленькая область: раздел честно не рисуется, ошибок нет; подсказки не накладываются")
+-- обычные размеры окна: подсказки видны и ничего не перекрывают
+for _, size in ipairs({ { 700, 560 }, { 900, 650 }, { 700, 500 }, { 640, 480 },
+                        { 420, 600 }, { 700, 440 }, { 520, 440 } }) do
+    checkHintsFit(size[1], size[2], nil, size[1] .. "x" .. size[2])
+end
+-- v1.19.51: раздел в игре начинается НЕ с нуля по вертикали — подсказки
+-- должны считаться от настоящего низа (y + h), иначе они пропадали вовсе
+checkHintsFit(700, 500, 130, "700x500 при y=130")
+checkHintsFit(640, 440, 150, "640x440 при y=150")
+-- подсказок стало меньше: две строки + диагностика
+check(#hintRows(900, 650, nil) <= 4, "подсказок внизу всё ещё слишком много")
+HPRINT("маленькая область: раздел честно не рисуется; подсказки видны и не накладываются")
 
 HPRINT("ALL AUTO SCENARIOS PASSED")
