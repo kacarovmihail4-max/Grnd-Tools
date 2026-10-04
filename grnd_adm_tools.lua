@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.37"
+GRND_SCRIPT_VERSION = "1.19.38"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -27938,21 +27938,34 @@ do
         return QR.autoDeliver(id, hit, hitTabsTxt, plan)
     end
 
+    -- v1.19.38: ПРОВЕРКА — тексты ответов автопилота уходят в /n (локальный
+    -- канал: игроки ничего не получают, админ видит ровно тот текст, который
+    -- ушёл бы). Команды вкладок (/sp, /goto) и запрос /getinfo при
+    -- {punishments} остаются боевыми. Боевой режим ответов — QR.autoTest = false.
+    QR.autoTest = true
+
     -- Отправка готового плана: /ans каждой вкладки и её команда, по порядку
     -- вкладок. Сюда же — предохранители (после отправки) и тост.
     function QR.autoDeliver(id, hit, tabsTxt, plan)
         local A = QR.auto
+        local test = (QR.autoTest ~= false)
         local sentAns, sentCmd, cmdTxt, planTabs = 0, 0, {}, {}
         for k = 1, #plan do
             local it = plan[k]
-            if it.line ~= "" and type(grndRepAnswer) == "function" then
-                -- grndRepAnswer сам переводит текст в CP1251 и ставит
-                -- «/ans ID …» в очередь репорта; длинный список наказаний
-                -- уходит несколькими сообщениями (у чата есть лимит длины)
+            if it.line ~= "" then
+                -- длинный список наказаний уходит несколькими сообщениями
+                -- (у строки чата есть лимит длины)
                 local chunks = autoChunks(it.line)
                 for ci = 1, #chunks do
-                    local okA, res = pcall(grndRepAnswer, id, chunks[ci])
-                    if okA and res ~= false then sentAns = sentAns + 1 end
+                    if test then
+                        -- проверка: вместо «/ans ID текст» — локальный «/n текст»
+                        if QR.queueCmd("/n " .. chunks[ci]) then sentAns = sentAns + 1 end
+                    elseif type(grndRepAnswer) == "function" then
+                        -- grndRepAnswer сам переводит текст в CP1251 и ставит
+                        -- «/ans ID …» в очередь репорта
+                        local okA, res = pcall(grndRepAnswer, id, chunks[ci])
+                        if okA and res ~= false then sentAns = sentAns + 1 end
+                    end
                 end
             end
             if it.cmd then
@@ -27969,13 +27982,19 @@ do
         local planTabsTxt = table.concat(planTabs, ", ")
         local sentOk = (sentAns + sentCmd) > 0
         A.lastCheck = sentOk
-            and ("отправлено (вкладки " .. planTabsTxt .. "), триггер «"
-                .. tostring(hit) .. "»" .. (tabsTxt ~= planTabsTxt and (" · план " .. tostring(tabsTxt)) or ""))
+            and ((test and "проверка /n: " or "") .. "отправлено (вкладки " .. planTabsTxt
+                .. "), триггер «" .. tostring(hit) .. "»"
+                .. (tabsTxt ~= planTabsTxt and (" · план " .. tostring(tabsTxt)) or ""))
             or "не удалось отправить"
         if sentOk then
             local cmds = table.concat(cmdTxt, " + ")
-            QR.toast("Автопилот: /ans " .. id .. (cmds ~= "" and (" + " .. cmds) or "")
-                .. " · «" .. tostring(hit) .. "»" .. (#plan > 1 and (" · вкладок " .. tostring(#plan)) or ""),
+            QR.toast(test and ("Автопилот (проверка /n): игроку " .. id
+                    .. (cmds ~= "" and (" · " .. cmds) or "")
+                    .. " · «" .. tostring(hit) .. "»"
+                    .. (#plan > 1 and (" · вкладок " .. tostring(#plan)) or ""))
+                or ("Автопилот: /ans " .. id .. (cmds ~= "" and (" + " .. cmds) or "")
+                    .. " · «" .. tostring(hit) .. "»"
+                    .. (#plan > 1 and (" · вкладок " .. tostring(#plan)) or "")),
                 "ok", 3.6)
         else
             QR.toast("Автопилот: отправить не удалось", "warn", 3)

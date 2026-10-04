@@ -2,6 +2,10 @@
 -- ---- стенд: автопилот ответов на репорт (v1.19.22, вкладки) ----
 local Q = _G.GRND_QR
 local A = Q.auto
+-- v1.19.38: ответы автопилота по умолчанию уходят в /n (проверка). Сценарии
+-- ниже проверяют БОЕВОЙ путь (/ans), поэтому здесь режим проверки выключен;
+-- свой сценарий для /n — секция 9e.
+Q.autoTest = false
 local function check(c, m) if not c then error("ПРОВАЛ: " .. tostring(m), 2) end end
 local function texts()
     local out = {}
@@ -541,6 +545,59 @@ check(CHAT[1] == "/ans 40 Приветствую, ваши активные на
 Q.autoDel(3)
 Q.autoEnsure()
 HPRINT("{punishments}: /getinfo → список в ответ + команда; таймаут, пусто, длинный список и ручной режим")
+
+-- ===== 9e. канал проверки: ответы автопилота уходят в /n (v1.19.38) =====
+-- Пока включена проверка (QR.autoTest), тексты ответов уходят в локальный /n
+-- вместо /ans: игроки ничего не получают, админ видит ровно тот текст, который
+-- ушёл бы. Команды вкладок и /getinfo при {punishments} остаются боевыми.
+Q.autoTest = true
+Q.autoTabs()[1].trigger = "проверка"
+Q.autoTabs()[1].answer = "Приветствую, {ник}! Проверка ответа"
+Q.autoTabs()[1].command = "sp"
+Q.autoEnsure()
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE, ANS, CHAT = {}, {}, {}
+check(Q.autoOnReport("Mixa_Grozz", 55, "проверка") == true, "репорт не принят в режиме проверки")
+check(QUEUE[1] == "/n Приветствую, Mixa_Grozz! Проверка ответа",
+    "ответ не ушёл в /n: " .. tostring(QUEUE[1]))
+check(QUEUE[2] == "/sp 55", "команда вкладки не ушла: " .. tostring(QUEUE[2]))
+for qi = 1, #QUEUE do
+    check(QUEUE[qi]:sub(1, 5) ~= "/ans ", "в режиме проверки ушёл настоящий /ans: " .. tostring(QUEUE[qi]))
+end
+check(#ANS == 0, "в режиме проверки игроку всё равно ушёл ответ")
+check(A.lastCheck:find("проверка /n", 1, true) ~= nil,
+    "в состоянии нет пометки проверки: " .. tostring(A.lastCheck))
+check(TOASTS[#TOASTS]:find("проверка /n", 1, true) ~= nil,
+    "тост не сообщает про проверку: " .. tostring(TOASTS[#TOASTS]))
+-- {punishments} в режиме проверки: /getinfo остаётся боевым, иначе списка не будет
+Q.autoTabs()[2] = Q.autoNewTab()
+Q.autoTabs()[2].trigger = "чек"
+Q.autoTabs()[2].answer = "Ваши наказания: {punishments}"
+Q.autoTabs()[2].command = "none"
+Q.autoEnsure()
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE, ANS = {}, {}
+check(Q.autoOnReport("Чек", 56, "чек") == true, "репорт с {punishments} не принят")
+check(QUEUE[1] == "/getinfo 56", "в режиме проверки /getinfo должен уйти: " .. tostring(QUEUE[1]))
+QUEUE = {}
+check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игрока", "OK", "", "Аккаунт Чек[56]\nМут 60 минут") == true,
+    "окно наказаний не спрятано")
+check(QUEUE[1] == "/n Ваши наказания: Мут 60 минут",
+    "список наказаний не ушёл в /n: " .. tostring(QUEUE[1]))
+check(#QUEUE == 1, "в режиме проверки ушло лишнее: " .. tostring(QUEUE[2]))
+-- возвращаем боевой режим, первую и вторую вкладки к прежнему виду
+QUEUE = {}
+Q.autoTabs()[1].trigger = "Помогите"
+Q.autoTabs()[1].answer = "Приветствую, {ник}! Уже смотрю. {ид}"
+Q.autoTabs()[1].command = "goto"
+Q.autoTabs()[2].trigger = "дм"
+Q.autoTabs()[2].answer = "Не пишите в личку, отвечу в репорте"
+Q.autoTabs()[2].command = "sp"
+Q.autoEnsure()
+Q.autoTest = false
+HPRINT("проверка /n: ответы уходят в /n, команды и /getinfo — боевые")
 
 -- ===== 10. репорт без триггера / без ID =====
 NOW = NOW + 100

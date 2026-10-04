@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.37"' in s, 'версия не 1.19.37')
+need('GRND_SCRIPT_VERSION = "1.19.38"' in s, 'версия не 1.19.38')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -285,6 +285,18 @@ need('function QR.autoDeliver(id, hit, tabsTxt, plan)' in s,
      'нет общей отправки плана вкладок')
 need('local function autoChunks(line)' in s and 'pcall(QR.punChunks, line, 100)' in s,
      'длинный ответ не режется на сообщения')
+# v1.19.38: проверка — тексты ответов уходят в /n, команды и /getinfo боевые
+need('QR.autoTest = true' in s, 'нет переключателя проверки QR.autoTest')
+need('local test = (QR.autoTest ~= false)' in s, 'отправка не смотрит на режим проверки')
+need('if QR.queueCmd("/n " .. chunks[ci]) then sentAns = sentAns + 1 end' in s,
+     'в режиме проверки ответ не уходит в /n')
+need('(test and "проверка /n: " or "")' in s, 'в состоянии нет пометки проверки')
+need('"Автопилот (проверка /n): игроку "' in s, 'тост не сообщает про проверку')
+deliver = s[s.index('-- Отправка готового плана'):s.index('-- Тик из основного цикла')]
+need('if QR.queueCmd(it.cmd) then sentCmd = sentCmd + 1 end' in deliver,
+     'команда вкладки в режиме проверки перестала уходить живой')
+need('QR.queueCmd("/getinfo " .. id)' in s,
+     'в режиме проверки перестал уходить запрос /getinfo (без него нет {punishments})')
 need('QR.autoPunFill(it.line, txt)' in s and '"нет активных наказаний"' in s and
      '"нет данных о наказаниях"' in s,
      'нет подстановки списка наказаний вместо {punishments}')
