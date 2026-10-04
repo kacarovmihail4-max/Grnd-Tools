@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.39"
+GRND_SCRIPT_VERSION = "1.19.40"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -15721,6 +15721,10 @@ local function specProbeState()
     end
     return nil
 end
+-- v1.19.40: фактическую слежку (игра сама подтверждает: sampIsPlayerSpectating
+-- и родня) отдаём наружу — по ней автопилот решает, вставать ли на паузу.
+-- true — слежка идёт, false — точно нет, nil — спросить не получилось.
+_G.grndSpecProbeState = specProbeState
 local SPEC_SPECTID_FNAMES = {
     "sampGetSpectateId", "sampGetSpectatedPlayerId",
     "sampGetPlayerSpectateId", "sampGetSpectatePlayerId",
@@ -27144,12 +27148,15 @@ do
 
     -- Триггеры вкладки (в одной вкладке триггер один, но в поле можно
     -- перечислить синонимы через запятую).
+    -- v1.19.40: служебные {…} из триггера вычищаются при разборе — «дм{ID}»,
+    -- «спек{all}», «наказ{punishments}» читаются как «дм», «спек», «наказ»,
+    -- а сами переменные включают режим вкладки (см. autoVarFlags).
     function QR.autoTriggers(tab)
         tab = tab or QR.autoTab()
         local raw = tostring(tab and tab.trigger or "")
         local out = {}
         for piece in (raw .. ","):gmatch("([^,;\n]*)[,;\n]") do
-            local w = trim(autoLower(autoPlain(piece)))
+            local w = trim(autoLower(autoPlain((piece:gsub("%b{}", " ")))))
             if w ~= "" then out[#out + 1] = w end
         end
         return out
@@ -27218,13 +27225,16 @@ do
         end
     end
 
-    -- Режим вкладки задаёт её текст ответа: {ID} — умный ID + слежка,
-    -- {all} — поиск триггера словом в любом месте репорта, {punishments} —
-    -- активные наказания игрока из окна /getinfo (v1.19.37).
-    function QR.autoAnswerFlags(tab)
-        local ans = tostring((tab and tab.answer) or "")
-        return ans:find("{ID}", 1, true) ~= nil, ans:find("{all}", 1, true) ~= nil,
-            ans:find("{punishments}", 1, true) ~= nil
+    -- Переменные вкладки — их можно писать И В ТРИГГЕРЕ, И В ОТВЕТЕ:
+    --   {ID}          — ID из репорта («дм 234»), иначе штатный ID, + слежка за ним;
+    --   {all}         — триггер ищется словом в ЛЮБОМ месте репорта;
+    --   {punishments} — активные наказания игрока из окна /getinfo.
+    -- Хотя бы одна переменная — вкладка не требует полного совпадения репорта.
+    function QR.autoVarFlags(tab)
+        local low = autoLower(tostring((tab and tab.trigger) or "")) .. " "
+            .. autoLower(tostring((tab and tab.answer) or ""))
+        return low:find("{id}", 1, true) ~= nil, low:find("{all}", 1, true) ~= nil,
+            low:find("{punishments}", 1, true) ~= nil
     end
 
     -- ВСЕ вкладки, чей триггер подошёл. Как искать — решает ответ вкладки:
@@ -27241,7 +27251,7 @@ do
         if low == "" then return out end
         local tabs = QR.autoTabs()
         for i = 1, #tabs do
-            local hasID, hasAll, hasPun = QR.autoAnswerFlags(tabs[i])
+            local hasID, hasAll, hasPun = QR.autoVarFlags(tabs[i])
             local anywhere = hasID or hasAll or hasPun
             local list = QR.autoTriggers(tabs[i])
             for k = 1, #list do
@@ -27282,6 +27292,17 @@ do
         local id = QR.autoCmdId(tab and tab.command)
         if id == "none" then return nil end
         return "/" .. id .. " " .. pid
+    end
+
+    -- Итоговая команда вкладки после ответа: найденный в репорте ID важнее
+    -- своей команды — за таким игроком автопилот идёт в СЛЕЖКУ (/sp),
+    -- даже если у вкладки выбрано /goto. Иначе — команда вкладки.
+    function QR.autoTabCmd(pid, tab, foundId)
+        local hasID = QR.autoVarFlags(tab)
+        if hasID and tostring(foundId or "") ~= "" then
+            return "/sp " .. tostring(foundId)
+        end
+        return QR.autoCmdFor(pid, tab)
     end
 
     function QR.autoNormalize()
@@ -27705,9 +27726,19 @@ do
 
     -- ---------- слежка: автопилот в ней не работает ----------
 
+    -- Идёт ли сейчас наблюдение. Спрашиваем ИГРУ (тот же опрос, которым
+    -- гасится протухший трекинг слежки), а не только свои отметки: если игра
+    -- говорит «не в слежке» — паузы нет, и наоборот.
     function QR.autoSpectating()
+        local P = _G.grndSpecProbeState
+        if type(P) == "function" then
+            local ok, st = pcall(P)
+            if ok and st == true then return true end
+            if ok and st == false then return false end
+        end
+        -- игра ответить не смогла — смотрим свои отметки
         local S = _G.GRND_SPEC
-        if type(S) == "table" and S.active then return true end
+        if type(S) == "table" and S.active and S.id then return true end
         local N = _G.grndSpecNative
         if type(N) == "table" and N.camOn then return true end
         if type(grndCamSpectating) == "function" then
@@ -27848,10 +27879,7 @@ do
                 local keep = {}
                 for k = 1, #hits do
                     local tab = QR.autoTab(hits[k].idx)
-                    local hasID = QR.autoAnswerFlags(tab)
-                    local cmd = QR.autoCmdFor(id, tab)
-                    if hasID and foundId then cmd = "/sp " .. foundId end
-                    if not cmd then
+                    if not QR.autoTabCmd(id, tab, foundId) then
                         keep[#keep + 1] = hits[k]
                     end
                 end
@@ -27891,15 +27919,14 @@ do
         local plan = {}
         for k = 1, #hits do
             local tab = QR.autoTab(hits[k].idx)
-            local hasID, hasAll, hasPun = QR.autoAnswerFlags(tab)
+            local hasID, hasAll, hasPun = QR.autoVarFlags(tab)
             local line = oneLine(QR.apply(tab.answer, rep))
             if hasAll then
                 -- {all} — служебный: из текста ответа убираем
                 line = trim((line:gsub("{all}", "", 1)))
                 line = trim((line:gsub("%s+", " ")))
             end
-            local cmd = QR.autoCmdFor(id, tab)
-            if hasID and foundId then cmd = "/sp " .. foundId end
+            local cmd = QR.autoTabCmd(id, tab, foundId)
             if line ~= "" or cmd then
                 plan[#plan + 1] = { idx = hits[k].idx, line = line, cmd = cmd, pun = hasPun }
             end
@@ -27916,20 +27943,17 @@ do
             if plan[k].pun then needPun = true end
         end
         if needPun then
-            if QR.autoTest ~= false then
-                -- проверка: и запрос наказаний — тоже строка «/n /getinfo ID».
-                -- Настоящий запрос не уходит, значит и окна не будет: список
-                -- не ждём, отвечаем сразу (иначе админ ждал бы 5 с впустую).
-                QR.queueCmd("/n /getinfo " .. id)
-                for k = 1, #plan do
-                    local it = plan[k]
-                    if it.pun then it.line = QR.autoPunFill(it.line, "нет данных о наказаниях") end
-                end
-            elseif QR.punBegin(id, nick, "auto") then
+            if QR.punBegin(id, nick, "auto") then
                 A.pend = { on = true, at = os.clock(), id = id, hit = hit,
                     tabs = hitTabsTxt, plan = plan }
                 A.lastCheck = "ждём окно /getinfo: «" .. hit .. "»"
+                -- запрос наказаний всегда настоящий (окно перехватывается и
+                -- игроку не показывается) — иначе списка не получить
                 QR.queueCmd("/getinfo " .. id)
+                if QR.autoTest ~= false then
+                    -- проверка: та же строка видна в чате как «/n /getinfo ID»
+                    QR.queueCmd("/n /getinfo " .. id)
+                end
                 QR.toast("Автопилот: читаю активные наказания игрока " .. id, "info", 2.6)
                 return true, "наказания"
             end
@@ -28319,6 +28343,7 @@ do
         local hintY = yy + lineH(ctx, 0.86) + 6
         local hintStep = lineH(ctx, hintSc) + 2
         local varHints = {
+            "Переменные {ID}, {all}, {punishments} пишутся в ответе — или прямо в триггере («дм{ID}»)",
             "{ID} — найдёт ID в репорте («дм 234», «234 дм») и подставит его в ответ",
             "После ответа автопилот сам зайдёт в слежку за этим игроком — даже если выбрана команда /goto",
             "{all} — триггер сработает, даже если репорт состоит из нескольких слов",

@@ -29,6 +29,7 @@ end
 -- v1.19.32: строки подсказки внизу раздела (в них фраза «репорт целиком» —
 -- это законно; у поля «Триггер» такой подписи быть не должно)
 local HINT_LINES = {
+    "Переменные {ID}, {all}, {punishments} пишутся в ответе — или прямо в триггере («дм{ID}»)",
     "{ID} — найдёт ID в репорте («дм 234», «234 дм») и подставит его в ответ",
     "После ответа автопилот сам зайдёт в слежку за этим игроком — даже если выбрана команда /goto",
     "{all} — триггер сработает, даже если репорт состоит из нескольких слов",
@@ -182,10 +183,11 @@ local hint1 = HINT_LINES[1]
 local hint2 = HINT_LINES[2]
 local hint3 = HINT_LINES[3]
 local hint4 = HINT_LINES[4]
+local hint5 = HINT_LINES[5]
 check(hasOne(hint1), "подсказка про {ID} изменилась при введённом триггере: " .. textsOne())
 check(hasOne(hint2), "вторая строка подсказки пропала: " .. textsOne())
 check(hasOne(hint3), "третья строка ({all}) пропала")
-check(hasOne(hint4), "четвёртая строка ({punishments}) пропала: " .. textsOne())
+check(hasOne(hint4) and hasOne(hint5), "строки про {ID}/{punishments} пропали: " .. textsOne())
 HPRINT("вкладка 1: триггер «Помогите», ответ с {ник}/{ид}, подпись = триггер, подсказки про {ID}/{all}")
 
 -- короткий триггер разрешён: без предупреждений и работает
@@ -209,12 +211,12 @@ drawAuto()
 check(hasOne(hint1), "подсказка срезалась при длинном триггере: " .. textsOne())
 check(hasOne(hint2), "вторая строка подсказки срезалась при длинном триггере")
 check(hasOne(hint3), "третья строка подсказки срезалась при длинном триггере")
-check(hasOne(hint4), "четвёртая строка подсказки срезалась при длинном триггере")
+check(hasOne(hint4) and hasOne(hint5), "подсказки срезались при длинном триггере")
 TYPE["##grnd_qr_auto_trigger"] = "Помогите"
 drawAuto()
 -- и после удаления поля триггера тоже на месте
 drawAuto()
-check(hasOne(hint1) and hasOne(hint2) and hasOne(hint3) and hasOne(hint4),
+check(hasOne(hint1) and hasOne(hint2) and hasOne(hint3) and hasOne(hint4) and hasOne(hint5),
     "подсказка пропала после сброса триггера")
 HPRINT("короткий триггер: ставится и срабатывает, предупреждений нет; подсказка постоянная")
 
@@ -570,7 +572,9 @@ check(A.lastCheck:find("проверка /n", 1, true) ~= nil,
     "в состоянии нет пометки проверки: " .. tostring(A.lastCheck))
 check(TOASTS[#TOASTS]:find("проверка /n", 1, true) ~= nil,
     "тост не сообщает про проверку: " .. tostring(TOASTS[#TOASTS]))
--- {punishments} в режиме проверки: /getinfo остаётся боевым, иначе списка не будет
+-- {punishments} в режиме проверки: сам запрос настоящий (иначе списка не
+-- получить — окно перехватывается и игроку не показывается), а в чате видна
+-- та же строка с «/n»
 Q.autoTabs()[2] = Q.autoNewTab()
 Q.autoTabs()[2].trigger = "чек"
 Q.autoTabs()[2].answer = "Ваши наказания: {punishments}"
@@ -580,12 +584,17 @@ NOW = NOW + 100
 A.perPid, A.rate = {}, {}
 QUEUE, ANS = {}, {}
 check(Q.autoOnReport("Чек", 56, "чек") == true, "репорт с {punishments} не принят")
-check(QUEUE[1] == "/n /getinfo 56",
-    "запрос наказаний не ушёл в /n: " .. tostring(QUEUE[1]))
-check(QUEUE[2] == "/n Ваши наказания: нет данных о наказаниях",
-    "ответ с {punishments} в проверке не тот: " .. tostring(QUEUE[2]))
-check(A.pend == nil, "в проверке автопилот зачем-то ждёт окно наказаний")
-check(#QUEUE == 2, "в режиме проверки ушло лишнее: " .. tostring(QUEUE[3]))
+check(QUEUE[1] == "/getinfo 56", "настоящий запрос не ушёл: " .. tostring(QUEUE[1]))
+check(QUEUE[2] == "/n /getinfo 56",
+    "строка проверки не ушла в /n: " .. tostring(QUEUE[2]))
+check(QUEUE[3] == nil, "ответ ушёл до окна наказаний: " .. tostring(QUEUE[3]))
+check(A.pend ~= nil and A.pend.on == true, "автопилот не ждёт окно наказаний")
+QUEUE = {}
+check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игрока", "OK", "",
+    "Аккаунт Чек[56]\nМут 60 минут") == true, "окно наказаний не спрятано")
+check(A.pend == nil, "ожидание окна не снято")
+check(QUEUE[1] == "/n Ваши наказания: Мут 60 минут",
+    "настоящий список не ушёл в /n: " .. tostring(QUEUE[1]))
 -- возвращаем боевой режим, первую и вторую вкладки к прежнему виду
 QUEUE = {}
 Q.autoTabs()[1].trigger = "Помогите"
@@ -597,6 +606,106 @@ Q.autoTabs()[2].command = "sp"
 Q.autoEnsure()
 Q.autoTest = false
 HPRINT("проверка /n: и ответы, и команды, и /getinfo уходят строками «/n …»")
+
+-- ===== 9f. переменные можно писать в ТРИГГЕРЕ (v1.19.40) =====
+-- «дм{ID}», «спек{all}», «наказ{punishments}»: служебные {…} вычищаются при
+-- разборе (в репорте такого слова нет), а переменная включает режим вкладки.
+Q.autoTabs()[1].trigger = "дм{ID}"
+Q.autoTabs()[1].answer = "Приветствую, слежу за игроком {ник}[{ID}]"
+Q.autoTabs()[1].command = "goto"
+Q.autoEnsure()
+check(#Q.autoTriggers(Q.autoTabs()[1]) == 1 and Q.autoTriggers(Q.autoTabs()[1])[1] == "дм",
+    "переменная в триггере не вычищена: " .. table.concat(Q.autoTriggers(Q.autoTabs()[1]), "|"))
+local hID, hAll, hPun = Q.autoVarFlags(Q.autoTabs()[1])
+check(hID == true and hAll == false and hPun == false,
+    "переменная в триггере не включила режим {ID}")
+for _, rep in ipairs({ "дм 234", "234 дм" }) do
+    NOW = NOW + 100
+    A.perPid, A.rate = {}, {}
+    QUEUE = {}
+    check(Q.autoOnReport("Mixa_Grozz", 25, rep) == true, "«" .. rep .. "» не сработал на «дм{ID}»")
+    check(QUEUE[1] == "/ans 25 Приветствую, слежу за игроком Mixa_Grozz[234]"
+        and QUEUE[2] == "/sp 234",
+        "«" .. rep .. "»: не то отправлено: " .. tostring(QUEUE[1]) .. " | " .. tostring(QUEUE[2]))
+end
+-- репорт БЕЗ ID: переменная есть — вкладка всё равно срабатывает
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+check(Q.autoOnReport("Без_ид", 26, "дм") == true, "репорт без ID не сработал")
+check(QUEUE[1] == "/ans 26 Приветствую, слежу за игроком Без_ид[26]"
+    and QUEUE[2] == "/goto 26",
+    "без ID должен подставляться штатный ID и своя команда: "
+        .. tostring(QUEUE[1]) .. " | " .. tostring(QUEUE[2]))
+-- {all} в триггере: слово ищется в любом месте репорта
+Q.autoTabs()[1].trigger = "спек{all}"
+Q.autoTabs()[1].answer = "Уже разбираюсь"
+Q.autoTabs()[1].command = "none"
+Q.autoEnsure()
+check(#Q.autoTriggers(Q.autoTabs()[1]) == 1 and Q.autoTriggers(Q.autoTabs()[1])[1] == "спек",
+    "«спек{all}» не разобран")
+for _, rep in ipairs({ "спек 77", "четверо спек", "СПЕК!" }) do
+    NOW = NOW + 100
+    A.perPid, A.rate = {}, {}
+    QUEUE = {}
+    check(Q.autoOnReport("Третий", 27, rep) == true, "«" .. rep .. "» не сработал на «спек{all}»")
+    check(QUEUE[1] == "/ans 27 Уже разбираюсь", "«" .. rep .. "»: не тот ответ: " .. tostring(QUEUE[1]))
+end
+check(#Q.autoMatchAll("спектр") == 0, "«спектр» не должно совпадать")
+-- {punishments} в триггере: список всё равно запрашивается и подставляется в ответ
+Q.autoTabs()[1].trigger = "наказ{punishments}"
+Q.autoTabs()[1].answer = "Приветствую, ваши наказания: {punishments}"
+Q.autoTabs()[1].command = "none"
+Q.autoEnsure()
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+check(Q.autoOnReport("Жалобщик", 28, "мои наказ плиз") == true, "«наказ{punishments}» не сработал")
+check(QUEUE[1] == "/getinfo 28", "запрос наказаний не ушёл: " .. tostring(QUEUE[1]))
+QUEUE = {}
+check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игрока", "OK", "",
+    "Аккаунт Жалобщик[28]\nМут 60 минут") == true, "окно наказаний не спрятано")
+check(QUEUE[1] == "/ans 28 Приветствую, ваши наказания: Мут 60 минут",
+    "список не подставился: " .. tostring(QUEUE[1]))
+
+-- ===== 12c. слежка определяется ПО ФАКТУ (v1.19.40) =====
+-- вкладка с командой: именно её слежка и должна останавливать
+Q.autoTabs()[1].trigger = "факт"
+Q.autoTabs()[1].answer = "Приветствую"
+Q.autoTabs()[1].command = "sp"
+Q.autoEnsure()
+A.on = true
+-- отметки слежки протухли (active = true), но игра говорит: слежки нет
+GRND_SPEC.active, GRND_SPEC.id = true, 77
+SERV.spec = false
+grndSpecProbeState = function() return false end
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE, ANS = {}, {}
+local okStale, whyStale = Q.autoOnReport("Свежий", 60, "факт")
+check(okStale == true, "старая отметка слежки держит автопилот на паузе: " .. tostring(whyStale))
+check(#QUEUE == 2 and QUEUE[1] == "/ans 60 Приветствую" and QUEUE[2] == "/sp 60",
+    "ответ не ушёл: " .. tostring(QUEUE[1]) .. " | " .. tostring(QUEUE[2]))
+-- игра подтверждает слежку — пауза, даже если свои отметки пусты
+GRND_SPEC.active, GRND_SPEC.id = false, nil
+SERV.spec = false
+grndSpecProbeState = function() return true end
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+local okFact, whyFact = Q.autoOnReport("Наблюдаемый", 61, "факт")
+check(okFact == false and whyFact == "слежка",
+    "факт слежки не поставил на паузу: " .. tostring(whyFact))
+check(#QUEUE == 0, "в слежке что-то ушло: " .. tostring(QUEUE[1]))
+grndSpecProbeState = nil
+GRND_SPEC.active, GRND_SPEC.id = false, nil
+HPRINT("факт слежки: игра решает, а не старые отметки")
+
+-- возвращаем первую вкладку к прежнему виду
+Q.autoTabs()[1].trigger = "Помогите"
+Q.autoTabs()[1].answer = "Приветствую, {ник}! Уже смотрю. {ид}"
+Q.autoTabs()[1].command = "goto"
+Q.autoEnsure()
 
 -- ===== 10. репорт без триггера / без ID =====
 NOW = NOW + 100

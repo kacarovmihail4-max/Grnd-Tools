@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.39"' in s, 'версия не 1.19.39')
+need('GRND_SCRIPT_VERSION = "1.19.40"' in s, 'версия не 1.19.40')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -192,6 +192,8 @@ need('"{all} — триггер сработает, даже если репор
      'пропала подсказка про {all}')
 need('"{punishments} — активные наказания игрока (как кнопка «Наказания игрока»)"'
      in auto_draw_src2, 'пропала подсказка про {punishments}')
+need('"Переменные {ID}, {all}, {punishments} пишутся в ответе — или прямо в триггере («дм{ID}»)"'
+     in auto_draw_src2, 'нет подсказки, что переменные можно писать в триггере')
 absent("начинается с триггера", 'вернулась подсказка про систему «помогите»')
 # v1.19.33: вместо placeholder «напр. помогите» — подсказка про синонимы; её
 # длинная фраза переносится по словам (wrapW), чтобы помещалась целиком
@@ -208,9 +210,7 @@ need('return not autoMouseOver(im, x, y, w, h)' in s,
 # v1.19.35: вкладка «без команды» отвечает даже в слежке; мероприятие — пауза
 need('if pause == "слежка" then' in s,
      'нет исключения для слежки (вкладки без команды)')
-need('local cmd = QR.autoCmdFor(id, tab)' in s and
-     'if hasID and foundId then cmd = "/sp " .. foundId end' in s and
-     'if not cmd then' in s,
+need('if not QR.autoTabCmd(id, tab, foundId) then' in s,
      'исключение в слежке не проверяет итоговую команду вкладки (свою или автослежку по {ID})')
 need('local cmdHintLines = wrapW(' in s and
      '"Если триггер будет без команды, автопилот будет работать даже в слежке"' in s,
@@ -234,14 +234,26 @@ need('wrapW(' in trig_src, 'подсказка рисуется не сразу 
 need('local tHintLines = wrapW(' in s, 'подсказка у поля «Триггер» не переносится')
 absent('"напр. помогите"', 'вернулся прежний placeholder «напр. помогите» у поля «Триггер»')
 absent('hintFit', 'подсказка снова подставляет имя триггера вместо слова «помогите»')
+# v1.19.40: факт слежки спрашиваем у игры (sampIsPlayerSpectating и родня):
+# «игра говорит, что не в слежке» — паузы нет; иначе — пауза
+need('_G.grndSpecProbeState = specProbeState' in s,
+     'фактическая проверка слежки не отдана наружу')
+need('local P = _G.grndSpecProbeState' in s and 'if ok and st == false then return false end' in s,
+     'автопилот не считает факт слежки от игры')
 # v1.19.36: {ID}/{all} — триггер словом в любом месте; обычный ответ — целиком
 absent('AUTO_PREFIX_TRIG', 'осталась система «помогите» (AUTO_PREFIX_TRIG)')
-need('function QR.autoAnswerFlags(tab)' in s,
-     'нет разбора ответа на {ID}/{all}')
-need('ans:find("{ID}", 1, true) ~= nil, ans:find("{all}", 1, true) ~= nil,' in s,
-     'флаги {ID}/{all} ищутся не в тексте ответа')
-need('ans:find("{punishments}", 1, true) ~= nil' in s,
-     'флаг {punishments} не ищется в тексте ответа')
+# v1.19.40: переменные читаются и из триггера, и из ответа; сами {…} из
+# триггера вычищаются — «дм{ID}», «спек{all}», «наказ{punishments}»
+need('function QR.autoVarFlags(tab)' in s and
+     'local low = autoLower(tostring((tab and tab.trigger) or "")) .. " "' in s and
+     'low:find("{id}", 1, true) ~= nil, low:find("{all}", 1, true) ~= nil,' in s and
+     'low:find("{punishments}", 1, true) ~= nil' in s,
+     'переменные вкладки читаются не из триггера и ответа')
+need('(piece:gsub("%b{}", " "))' in s,
+     'служебные {…} не вычищаются из триггера («дм{ID}» не сработает)')
+need('function QR.autoTabCmd(pid, tab, foundId)' in s and
+     'return "/sp " .. tostring(foundId)' in s,
+     'нет общей «итоговой команды» вкладки (умный {ID} + своя команда)')
 need('function QR.autoFindReportId(text)' in s,
      'нет поиска ID в тексте репорта')
 need('local function autoWordHit(low, trig)' in s,
@@ -250,8 +262,11 @@ need('local function autoLastChar(t)' in s,
      'нет проверки границы слова слева')
 need('local hit = anywhere and autoWordHit(low, trig) or (low == trig)' in s,
      'режим сопоставления выбирается не из ответа вкладки')
-need('local hasID, hasAll, hasPun = QR.autoAnswerFlags(tabs[i])' in s,
+need('local hasID, hasAll, hasPun = QR.autoVarFlags(tabs[i])' in s,
      'вкладки не проверяются на {ID}/{all}/{punishments} при сопоставлении')
+need('local cmd = QR.autoTabCmd(id, tab, foundId)' in s and
+     'if not QR.autoTabCmd(id, tab, foundId) then' in s,
+     'итоговая команда вкладки не используется в плане и в паузе')
 need('out[#out + 1] = { idx = i, trig = trig }' in s,
      'совпадение триггера потерялось')
 absent('low:find(list[k], 1, true)', 'вернулся поиск триггера подстрокой')
@@ -261,7 +276,8 @@ need('local low = trim(autoLower(autoPlain(text)))' in s,
 onrep2 = s[s.index('function QR.autoOnReport(nick, pid, msg)'):]
 need('local foundId = QR.autoFindReportId(text)' in onrep2,
      'autoOnReport не ищет ID в тексте репорта')
-need('if hasID and foundId then cmd = "/sp " .. foundId end' in onrep2,
+need('local cmd = QR.autoTabCmd(id, tab, foundId)' in onrep2 and
+     'return "/sp " .. tostring(foundId)' in s,
      'нет автослежки за найденным ID (даже вместо /goto)')
 need('line = trim((line:gsub("{all}", "", 1)))' in onrep2,
      'служебное {all} не убирается из текста ответа')
@@ -300,6 +316,9 @@ need('if QR.queueCmd(sent) then sentCmd = sentCmd + 1 end' in deliver,
      'команда вкладки в проверке не уходит')
 need('QR.queueCmd("/n /getinfo " .. id)' in s,
      'запрос /getinfo в проверке не уходит строкой «/n /getinfo ID»')
+# v1.19.40: сам запрос остаётся настоящим — иначе {punishments} нечего показать
+need('QR.queueCmd("/getinfo " .. id)' in s and 'local txt = lines and QR.autoPunText(lines)' in s,
+     'запрос наказаний перестал быть настоящим — список не получить')
 need('if QR.autoTest ~= false then' in s,
      'ветка проверки не проверяет QR.autoTest (в autOnReport нет локальной test)')
 need('QR.autoPunFill(it.line, txt)' in s and '"нет активных наказаний"' in s and
@@ -330,7 +349,7 @@ need('{ник}' not in auto_draw_src, 'в разделе «Автопилот» 
 need(auto_draw_src.count('{ID} — найдёт ID в репорте') == 1,
      'подсказка про {ID} должна быть ровно одна (внизу раздела)')
 need('local tab = QR.autoTab(hits[k].idx)' in s, 'срабатывание не привязано к вкладке')
-need('local cmd = QR.autoCmdFor(id, tab)' in s, 'команда берётся не из вкладки')
+need('return QR.autoCmdFor(pid, tab)' in s, 'команда берётся не из вкладки')
 need('local line = oneLine(QR.apply(tab.answer, rep))' in s, 'ответ берётся не из вкладки')
 need('planTabsTxt' in s, 'в подсказке нет списка сработавших вкладок')
 # конфиг: вкладки как t<N>_trigger / t<N>_answer / t<N>_command
