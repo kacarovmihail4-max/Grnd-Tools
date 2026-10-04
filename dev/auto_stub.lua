@@ -5,6 +5,17 @@ HPRINT = print
 function print(...) end
 CHAT, ANS, TOASTS, TXT, BTNS = {}, {}, {}, {}, {}
 INPUTS = {}        -- позиции полей ввода ImGui (id + x/y) для проверок вёрстки
+INVIS = {}         -- позиции InvisibleButton (id + x/y): селектор команд, вкладки и т.п.
+-- v1.19.35: «сырой» клик мыши, как в игре (grndClickAlive + GRND_MOUSE).
+-- Нужен, чтобы проверить поведение списка команд при кликах по селектору.
+GRND_UIFRAME = 0
+-- по умолчанию «сырого» клика нет (в старых сценариях мышь «в пустоте»);
+-- сценарий с миганием селектора «взводит» клик сам (frame = GRND_UIFRAME)
+GRND_MOUSE = { x = -500, y = -500, frame = -9999 }
+function grndClickAlive()
+    return (GRND_MOUSE.frame or -9999) - GRND_UIFRAME <= 0
+       and (GRND_MOUSE.frame or -9999) >= GRND_UIFRAME - 1
+end
 ORDER = {}          -- порядок вызовов: ans (ответ игроку) / chat (команда)
 ANSICALLS = {}      -- что уходило через grndAnsiText (UTF-8 → CP1251)
 QUEUE = {}          -- очередь репорта: и ответ, и команда
@@ -171,6 +182,7 @@ local function makeCtx()
 function im.SetCursorPos(p) if type(p) == "table" then POS.cx, POS.cy = p.x, p.y end end
     function im.InvisibleButton(id, size)
         BTNS[#BTNS + 1] = tostring(id)
+        INVIS[#INVIS + 1] = { id = tostring(id), x = POS.cx or 0, y = POS.cy or 0 }
         return CLICK[tostring(id)] and true or false
     end
     function im.IsItemHovered() return false end

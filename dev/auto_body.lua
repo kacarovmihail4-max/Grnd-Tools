@@ -9,8 +9,16 @@ local function texts()
     return table.concat(out, " | ")
 end
 local function has(word) return texts():find(word, 1, true) ~= nil end
+-- v1.19.35: строки подсказок могут переноситься по словам — ищем фразу в тексте,
+-- склеенном пробелами (для «однострочных» подсказок это ничего не меняет)
+local function textsOne()
+    local out = {}
+    for i = 1, #TXT do out[#out + 1] = tostring(TXT[i].str) end
+    return table.concat(out, " ")
+end
+local function hasOne(word) return textsOne():find(word, 1, true) ~= nil end
 local function drawAuto()
-    TXT, BTNS = {}, {}
+    TXT, BTNS, INVIS = {}, {}, {}
     local ok = _G.grndQrAutoDraw(CTX)
     check(ok == true, "раздел «Автопилот» не нарисовался")
 end
@@ -216,6 +224,50 @@ drawAuto()
 check(has("/ans 25"), "в предпросмотре нет ответа: " .. texts())
 check(has("затем /goto 25"), "в предпросмотре нет команды")
 HPRINT("селектор: /goto, предпросмотр «/ans 25 … затем /goto 25» одной строкой")
+
+-- ===== 5b. селектор команд не «мигает» при повторном клике (v1.19.35) =====
+-- Раньше: нажатие закрывало список (клик «мимо» списка), а отпускание тут же
+-- открывало его снова — список уходил и появлялся обратно.
+CLICK = {}
+GRND_MOUSE.x, GRND_MOUSE.y, GRND_MOUSE.frame = -500, -500, -9999
+A.listOpen = false
+drawAuto()
+check(A.listOpen == false, "перед проверкой список команд должен быть закрыт")
+-- 1) открываем список: кадр отпускания кнопки по селектору
+CLICK = { ["##grnd_qr_auto_cmd"] = true }
+drawAuto()
+CLICK = {}
+check(A.listOpen == true, "первый клик не открыл список команд")
+-- 2) кадр НАЖАТИЯ второго клика: мышь над селектором, кнопка ещё не отпущена.
+--    Список закрывать нельзя, иначе он «мигнёт».
+local selRect = nil
+for i = 1, #INVIS do
+    if INVIS[i].id == "##grnd_qr_auto_cmd" then selRect = INVIS[i] end
+end
+check(selRect ~= nil, "селектор не найден среди кнопок")
+GRND_UIFRAME = GRND_UIFRAME + 1
+GRND_MOUSE.x, GRND_MOUSE.y = selRect.x + 12, selRect.y + 12
+GRND_MOUSE.frame = GRND_UIFRAME
+drawAuto()
+check(A.listOpen == true, "нажатие на селектор закрыло список — будет «мигание»")
+-- 3) кадр отпускания: список закрывается и больше не открывается
+CLICK = { ["##grnd_qr_auto_cmd"] = true }
+GRND_MOUSE.frame = -9999
+drawAuto()
+CLICK = {}
+check(A.listOpen == false, "повторный клик по селектору не закрыл список")
+-- 4) клик мимо списка по-прежнему закрывает его
+CLICK = { ["##grnd_qr_auto_cmd"] = true }
+drawAuto()
+CLICK = {}
+check(A.listOpen == true, "список не открылся снова")
+GRND_UIFRAME = GRND_UIFRAME + 1
+GRND_MOUSE.x, GRND_MOUSE.y = 5000, 5000
+GRND_MOUSE.frame = GRND_UIFRAME
+drawAuto()
+check(A.listOpen == false, "клик мимо списка не закрыл его")
+GRND_MOUSE.x, GRND_MOUSE.y, GRND_MOUSE.frame = -500, -500, -9999
+HPRINT("селектор: первый клик открывает, второй закрывает — без «мигания»; клик мимо закрывает")
 
 -- ===== 6. добавление вкладок =====
 CLICK = { ["##grnd_qr_auto_add"] = true }
@@ -483,6 +535,31 @@ check(TOASTS[#TOASTS] == "Автопилот на паузе: слежка", "н
 drawAuto()
 check(has("на паузе — слежка, вернётся сам"), "на вкладке нет состояния паузы: " .. texts())
 check(has("включён") == false or has("на паузе"), "состояние показано неверно")
+-- v1.19.35: вкладка «без команды» отвечает даже в слежке —
+-- /ans наблюдению не мешает, а телепорт сломал бы слежку
+local savedCmd1 = Q.autoTabs()[1].command
+Q.autoTabs()[1].command = "none"
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE, ANSICALLS = {}, {}
+local okNoCmd, whyNoCmd = Q.autoOnReport("Без команды", 205, "помогите")
+check(okNoCmd == true, "вкладка без команды в слежке не сработала: " .. tostring(whyNoCmd))
+check(#QUEUE == 1, "в слежке ушло не одно сообщение: " .. tostring(#QUEUE))
+check(QUEUE[1] == "/ans 205 Приветствую, Без команды! Уже смотрю. 205",
+    "в слежке игроку ушло не то: " .. tostring(QUEUE[1]))
+-- а вкладка с командой в слежке по-прежнему молчит
+Q.autoTabs()[1].command = savedCmd1
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+local okCmdSpec, whyCmdSpec = Q.autoOnReport("С командой", 206, "помогите")
+check(okCmdSpec == false and whyCmdSpec == "слежка",
+    "вкладка с командой в слежке всё же сработала: " .. tostring(whyCmdSpec))
+check(#QUEUE == 0, "в слежке ушла команда")
+-- и в подсказке внизу раздела об этом сказано оранжевым
+drawAuto()
+check(hasOne("Если триггер будет без команды, автопилот будет работать даже в слежке"),
+    "нет оранжевой подсказки про «без команды»: " .. texts())
 -- тумблер по-прежнему включён: повторное нажатие его выключает, и это видно
 CLICK = { ["##grnd_qr_auto_on"] = true }
 drawAuto()
@@ -516,6 +593,17 @@ check(A.on == true and A.paused == "мероприятие",
 check(#QUEUE == 0, "на мероприятии ответ всё равно ушёл")
 drawAuto()
 check(has("на паузе — идёт мероприятие, вернётся сам"), "на вкладке нет паузы мероприятия")
+-- на мероприятии пауза полная: даже вкладка «без команды» молчит
+local savedCmd2 = Q.autoTabs()[1].command
+Q.autoTabs()[1].command = "none"
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+local okEvNo, whyEvNo = Q.autoOnReport("МП без команды", 207, "помогите")
+check(okEvNo == false and whyEvNo == "мероприятие",
+    "на мероприятии вкладка без команды всё же сработала: " .. tostring(whyEvNo))
+check(#QUEUE == 0, "на мероприятии ответ всё равно ушёл")
+Q.autoTabs()[1].command = savedCmd2
 GRND_MP.active = false
 NOW = NOW + 5
 Q.autoTick()

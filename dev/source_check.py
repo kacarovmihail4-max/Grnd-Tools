@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.34"' in s, 'версия не 1.19.34')
+need('GRND_SCRIPT_VERSION = "1.19.35"' in s, 'версия не 1.19.35')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -194,6 +194,31 @@ need('Только для «помогите»: остальным тригге�
 # длинная фраза переносится по словам (wrapW), чтобы помещалась целиком
 need('local function wrapW(s, maxW, measure, scale)' in s,
      'нет переноса длинной подсказки по словам')
+# v1.19.35: клик по селектору не считается «кликом мимо» — иначе список
+# команд «мигал» (закрывался на нажатии и открывался на отпускании)
+need('local function autoMouseOver(im, x, y, w, h)' in s,
+     'нет проверки «мышь над прямоугольником»')
+need('and not autoMouseOver(im, x, selY, selW, selH) then' in s,
+     'клик по селектору снова закрывает список (мигание)')
+need('return not autoMouseOver(im, x, y, w, h)' in s,
+     'клик «мимо» списка перестал закрывать его')
+# v1.19.35: вкладка «без команды» отвечает даже в слежке; мероприятие — пауза
+need('if pause == "слежка" then' in s,
+     'нет исключения для слежки (вкладки без команды)')
+need('if QR.autoCmdId(tab and tab.command) == "none" then' in s,
+     'исключение в слежке не проверяет команду вкладки')
+need('local cmdHintLines = wrapW(' in s and
+     '"Если триггер будет без команды, автопилот будет работать даже в слежке"' in s,
+     'нет оранжевой подсказки про «без команды» у селектора')
+need('ctx.uiText(cmdHintX, cmdHintTop + (li - 1) * cmdHintStep,' in s and
+     'cmdHintLines[li], warnC, cmdHintSc)' in s,
+     'подсказка про «без команды» рисуется не оранжевым (warnC)')
+# пауза решается ПОСЛЕ поиска триггера — иначе вкладку без команды не отличить
+onrep = s[s.index('function QR.autoOnReport(nick, pid, msg)'):]
+pause_idx = onrep.index('local pause = QR.autoPauseTick()')
+hits_idx = onrep.index('local hits = QR.autoMatchAll(text)')
+need(pause_idx < hits_idx, 'порядок «пауза → триггер» сломан')
+need('A.lastCheck = "пауза: " .. pause' in s, 'нет пометки паузы в подсказке')
 need('"Можно ввести триггер и похожие слова к триггеру (через запятую), "' in s,
      'пропала подсказка про похожие слова у поля «Триггер»')
 need('"на которые скрипт тоже так будет реагировать"' in s,

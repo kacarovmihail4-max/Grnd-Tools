@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.34"
+GRND_SCRIPT_VERSION = "1.19.35"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24350,7 +24350,7 @@ end)()
 -- перехват репорта — MP.onServerMessage(text) в хуке чата
 
 -- =====================================================================
---  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.34)
+--  МОДУЛЬ «БЫСТРЫЕ ОТВЕТЫ», ШАБЛОНЫ НАКАЗАНИЙ И АВТОПИЛОТ (v1.19.35)
 -- =====================================================================
 --  Что делает модуль:
 --    * хранит набор шаблонов ответа (название + текст) в config.json
@@ -26952,7 +26952,7 @@ do
 end
 
 -- =====================================================================
---  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.34) — «Репорт» → «Автопилот»
+--  АВТОПИЛОТ ОТВЕТОВ НА РЕПОРТ (v1.19.35) — «Репорт» → «Автопилот»
 -- =====================================================================
 --  Вкладки (до 15): в каждой — ОДИН триггер, свой текст ответа и своя команда
 --  после ответа. Пришёл репорт — ищем триггер по всем вкладкам; совпадение
@@ -27413,12 +27413,11 @@ do
             A.lastCheck = "выключен"
             return false, "выключен"
         end
-        -- слежка / мероприятие: молчим, но настройку не трогаем — пауза
+        -- слежка / мероприятие: молчим, но настройку не трогаем — пауза.
+        -- v1.19.35: решение принимается после поиска триггера: вкладка «без
+        -- команды» отвечает даже в слежке — /ans наблюдению не мешает,
+        -- а телепорт (/sp или /goto) слежку бы сломал.
         local pause = QR.autoPauseTick()
-        if pause then
-            A.lastCheck = "пауза: " .. pause
-            return false, pause
-        end
         local id = pid:match("^%d+$")
         if not id then
             A.lastCheck = "в репорте нет ID игрока"
@@ -27430,8 +27429,33 @@ do
         end
         local hits = QR.autoMatchAll(text)
         if #hits == 0 then
+            if pause then
+                A.lastCheck = "пауза: " .. pause
+                return false, pause
+            end
             A.lastCheck = "триггер не найден в «" .. utf8Cut(text, 40) .. "»"
             return false, "нет триггера"
+        end
+        if pause then
+            -- слежка: отвечают только вкладки «без команды»; мероприятие —
+            -- полная пауза (ответы админам-МП там не нужны)
+            if pause == "слежка" then
+                local keep = {}
+                for k = 1, #hits do
+                    local tab = QR.autoTab(hits[k].idx)
+                    if QR.autoCmdId(tab and tab.command) == "none" then
+                        keep[#keep + 1] = hits[k]
+                    end
+                end
+                if #keep == 0 then
+                    A.lastCheck = "пауза: слежка"
+                    return false, "слежка"
+                end
+                hits = keep
+            else
+                A.lastCheck = "пауза: " .. pause
+                return false, pause
+            end
         end
         local hit = hits[1].trig
         local hitTabs = {}
@@ -27528,12 +27552,8 @@ do
 
     -- ---------- отрисовка вкладки ----------
 
-    -- Клик «мимо» списка команд — закрыть список (координаты локальные).
-    local function autoOutsideClick(im, x, y, w, h)
-        local alive = _G and _G.grndClickAlive
-        if type(alive) ~= "function" then return false end
-        local ok, hit = pcall(alive)
-        if not (ok and hit) then return false end
+    -- «Сырая» мышь над прямоугольником в локальных координатах окна.
+    local function autoMouseOver(im, x, y, w, h)
         local M = _G and _G.GRND_MOUSE
         if type(M) ~= "table" then return false end
         local mx, my = tonumber(M.x) or -1, tonumber(M.y) or -1
@@ -27544,8 +27564,16 @@ do
         end
         local px, py = (wp and wp.x or 0), (wp and wp.y or 0)
         local sx, sy = px + x, py + y
-        if mx >= sx and mx <= sx + w and my >= sy and my <= sy + h then return false end
-        return true
+        return mx >= sx and mx <= sx + w and my >= sy and my <= sy + h
+    end
+
+    -- Клик «мимо» списка команд — закрыть список (координаты локальные).
+    local function autoOutsideClick(im, x, y, w, h)
+        local alive = _G and _G.grndClickAlive
+        if type(alive) ~= "function" then return false end
+        local ok, hit = pcall(alive)
+        if not (ok and hit) then return false end
+        return not autoMouseOver(im, x, y, w, h)
     end
 
     -- Тумблер: родная «пилюля» скрипта (grndUiSwitchPaint), а если её нет
@@ -27767,7 +27795,25 @@ do
         tri(ctx.dl, ctx.at, x + selW - 14, selY + selH / 2, 4, "down",
             (selHov or A.listOpen) and acC or mut)
         if selClick then A.listOpen = not A.listOpen end
-        yy = selY + selH + 10
+        -- v1.19.35: оранжевая подсказка правее селектора — вкладка «без
+        -- команды» отвечает даже в слежке. Если справа места мало, подсказка
+        -- уходит под селектор.
+        local cmdHintSc = 0.72
+        local cmdHintW = iw - selW - 12
+        local cmdHintX = x + selW + 12
+        if cmdHintW < 120 then
+            cmdHintX, cmdHintW = x, iw
+        end
+        local cmdHintLines = wrapW(
+            "Если триггер будет без команды, автопилот будет работать даже в слежке",
+            cmdHintW, ctx.drawnW, cmdHintSc)
+        local cmdHintStep = lineH(ctx, cmdHintSc) + 2
+        local cmdHintTop = (cmdHintX == x) and (selY + selH + 6) or selY
+        for li = 1, #cmdHintLines do
+            ctx.uiText(cmdHintX, cmdHintTop + (li - 1) * cmdHintStep,
+                cmdHintLines[li], warnC, cmdHintSc)
+        end
+        yy = math.max(selY + selH, cmdHintTop + math.max(1, #cmdHintLines) * cmdHintStep) + 10
 
         -- одна строка-предпросмотр вместо отдельной карточки
         local repId = ""
@@ -27841,7 +27887,11 @@ do
                     pcall(QR.autoSave)
                 end
             end
-            if autoOutsideClick(im, ddX, ddY, ddW, viewH) then
+            -- v1.19.35: клик по самому селектору закрывает список через
+            -- selClick; если считать его «кликом мимо», список на нажатии
+            -- закрывался, а на отпускании открывался заново («мигал»).
+            if autoOutsideClick(im, ddX, ddY, ddW, viewH)
+                and not autoMouseOver(im, x, selY, selW, selH) then
                 A.listOpen = false
             end
         end
@@ -27902,7 +27952,7 @@ function grndMainBody()
     for k, _ in pairs(libs) do okList[#okList + 1] = k end
     -- версия сборки в консоль: по ней видно, что MoonLoader читает НОВЫЙ файл
     do
-        local sv = "1.19.34"
+        local sv = "1.19.35"
         pcall(function() sv = tostring(thisScript().version or sv) end)
         print("{00FFAA}[GRND]{FFFFFF} GRND TOOLS v" .. sv .. ": кнопка репорта, слежка, формы, «Размер окна»")
     end
