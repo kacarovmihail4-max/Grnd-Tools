@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.54"' in s, 'версия не 1.19.54')
+need('GRND_SCRIPT_VERSION = "1.19.55"' in s, 'версия не 1.19.55')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -217,7 +217,7 @@ need('return not autoMouseOver(im, x, y, w, h)' in s,
 # v1.19.35: вкладка «без команды» отвечает даже в слежке; мероприятие — пауза
 need('if pause == "слежка" then' in s,
      'нет исключения для слежки (вкладки без команды)')
-need('if not QR.autoTabCmd(id, tab, foundId) then' in s,
+need('local wouldCmd = (not hits[k].pun) and QR.autoTabCmd(id, tab, foundId)' in s,
      'исключение в слежке не проверяет итоговую команду вкладки (свою или автослежку по {ID})')
 need('local cmdHintLines = wrapW(' in s and
      '"«Без команды»: вкладка ответит даже в слежке"' in s,
@@ -302,24 +302,26 @@ need('["{автор}"] = author, ["{reporter}"] = author' in s and
 need('QR.AUTO_GREET = "Приветствую, слежу за игроком {ник}[{ID}]"' in s and
      'function QR.autoIDInTrigger(tab)' in s and 'function QR.autoGreet(rep)' in s,
      'нет автоответа для вкладки с {ID} на слове в триггере')
-need('local idAuto = (not punOnly) and QR.autoIDInTrigger(tab)' in s and
+need('local idAuto = (not punOnly) and (hits[k].idv and true or false)' in s and
      'line = QR.autoGreet(rep)' in s,
-     'план не собирает ответ сам при {ID} в триггере')
+     'план не собирает ответ сам при {ID} на слове триггера')
 # v1.19.46–53: у вкладки с {ID} поле ответа ВИДНО — оно уходит, когда в репорте
 # нет ни номера, ни имени; при {punishments} поле тоже НЕ пропадает, только
 # помечается, что текст не используется
-need('local selID = (not selPun) and QR.autoIDInTrigger(sel2)' in s and
-     '"Ответ собирается сам: «Приветствую, слежу за игроком Ник[234]» — "' in s,
+need('local selID = QR.autoIDInTrigger(sel2)' in s and
+     '"Ответ собирается сам: «Приветствую, слежу за игроком Ник[234]» — "' in s and
+     'elseif selID then' in s,
      'поле «Ответ игроку» у вкладки с {ID} пропало или нет пояснения, когда уходит свой текст')
 
 # v1.19.43: широкий поиск — только у слова, НА КОТОРОМ написана переменная
 need('if it.wide then' in s and 'pos = autoWordAt(low, it.word)' in s,
      'режим сопоставления не привязан к слову с переменной')
-need('local cmd = QR.autoTabCmd(id, tab, foundId)' in s and
-     'if not QR.autoTabCmd(id, tab, foundId) then' in s,
+need('if not punOnly then cmd = QR.autoTabCmd(id, tab, foundId) end' in s and
+     'local wouldCmd = (not hits[k].pun) and QR.autoTabCmd(id, tab, foundId)' in s,
      'итоговая команда вкладки не используется в плане и в паузе')
-need('out[#out + 1] = { idx = found[k].idx, trig = found[k].trig }' in s,
-     'совпадение триггера потерялось')
+need('out[#out + 1] = { idx = found[k].idx, trig = found[k].trig,' in s and
+     'pun = found[k].pun, idv = found[k].idv }' in s,
+     'совпадение триггера потерялось (или потерялись пометки переменных)')
 absent('low:find(list[k], 1, true)', 'вернулся поиск триггера подстрокой')
 need('local low = trim(autoLower(autoPlain(text)))' in s,
      'текст репорта не нормализуется (пробелы/регистр) перед сравнением')
@@ -327,7 +329,7 @@ need('local low = trim(autoLower(autoPlain(text)))' in s,
 onrep2 = s[s.index('function QR.autoOnReport(nick, pid, msg)'):]
 need('local foundId = QR.autoFindReportId(text)' in onrep2,
      'autoOnReport не ищет ID в тексте репорта')
-need('local cmd = QR.autoTabCmd(id, tab, foundId)' in onrep2 and
+need('cmd = QR.autoTabCmd(id, tab, foundId)' in onrep2 and
      'return "/sp " .. tostring(foundId)' in s,
      'нет автослежки за найденным ID (даже вместо /goto)')
 need('line = trim((line:gsub("{all}", "", 1)))' in onrep2,
@@ -393,7 +395,7 @@ need('if QR.punBegin(id, nick, "auto") then' in s and 'QR.queueCmd("/getinfo " .
 need('function QR.autoPunInTrigger(tab)' in s and
      'QR.autoPunWrap = function(txt)' in s,
      'нет режима «{punishments} в триггере — ответ про наказания»')
-need('local punOnly = QR.autoPunInTrigger(tab)' in s and 'line = "{punishments}"' in s,
+need('local punOnly = hits[k].pun and true or false' in s and 'line = "{punishments}"' in s,
      'план не переключается на автоответ про наказания')
 need('if trim(str) == "{punishments}" then return QR.autoPunWrap(txt) end' in s,
      'маркер автоответа не разворачивается в текст кнопки «Наказания игрока»')
@@ -403,7 +405,7 @@ need('local selPun = QR.autoPunInTrigger(sel2)' in s and
      '"Этот текст не используется: в триггере {punishments} — игрок получит "' in s and
      'local ansNoteLines = ansNote and wrapW(ansNote, iw, ctx.drawnW, tHintSc) or nil' in s,
      'поле «Ответ игроку» снова прячется при {punishments} (или нет пояснения)')
-need('local ansCap = selPun and 64 or 92' in s,
+need('local ansCap = punHard and 64 or 92' in s,
      'у вкладки с {punishments} поле ответа снова занимает всю высоту')
 # вкладка без слов (только переменные) отвечает на любой репорт
 need('function QR.autoBarePun(tab)' in s and 'function QR.autoTrigLabel(tab)' in s and
@@ -415,12 +417,32 @@ need('function QR.autoBarePun(tab)' in s and 'function QR.autoTrigLabel(tab)' in
 need('A.lastReport = utf8Cut(tostring(nick) .. ": " .. text, 60)' in s,
      'автопилот не запоминает последний репорт (диагностика и тосты)')
 absent('dbgLine', 'вернулась строка диагностики «последний репорт → что стало»')
-# v1.19.52: {punishments} в триггере — команда после ответа не выполняется
-need('if QR.autoPunInTrigger(tab) then return nil end' in s,
-     'вкладка с {punishments} в триггере снова выполняет команду')
-need('local punNoCmd = QR.autoPunInTrigger(sel2)' in s and
-     '" · команды не будет"' in s,
+# v1.19.52–55: команда не выполняется, когда сработало слово с {punishments}
+need('if not punOnly then cmd = QR.autoTabCmd(id, tab, foundId) end' in s,
+     'слово с {punishments} снова выполняет команду')
+need('local punNoCmd = punHard' in s and '" · команды не будет"' in s,
      'предпросмотр не предупреждает, что команда не уйдёт при {punishments}')
+# v1.19.55: переменные действуют на СВОЁ слово — «…{punishments}, помогите»
+# должен отвечать своим текстом и командой
+need('local pun = lowPiece:find("{punishments}", 1, true) ~= nil' in s and
+     'local idv = lowPiece:find("{id}", 1, true) ~= nil' in s,
+     'у слов триггера снова нет собственных пометок переменных')
+need('local punOnly = hits[k].pun and true or false' in s,
+     'решение о наказаниях принимается по всей строке триггеров, а не по слову')
+need('local idAuto = (not punOnly) and (hits[k].idv and true or false)' in s,
+     'решение об авто-ответе {ID} принимается по всей строке, а не по слову')
+need('function QR.autoPlainWords(tab)' in s and 'local selFree = QR.autoPlainWords(sel2) > 0' in s,
+     'в подсказках не учитываются слова без переменных')
+need('local ansHasPun = autoLower(tostring(tab.answer or "")):find("{punishments}", 1, true) ~= nil' in s,
+     '{punishments} в ОТВЕТЕ снова определяется по триггеру')
+need('"Слова с {punishments} отвечают списком наказаний (без команды); "' in s,
+     'нет пояснения для смешанного триггера')
+# v1.19.55: надписи «включён/выключен» в шапке раздела больше нет —
+# состояние показывает тумблер, текст остаётся только для паузы
+absent('stateTxt = "включён"', 'вернулась надпись «включён» в шапке автопилота')
+absent('stateTxt = "выключен"', 'вернулась надпись «выключен» в шапке автопилота')
+need('local tabsTop = y + 30' in s and 'if stateTxt then' in s and 'tabsTop = y + 62' in s,
+     'вкладки не поднимаются на место убранной строки состояния')
 # v1.19.47: репорт — ТОЛЬКО строка с маркером «[К-во репорта: N]». Разбор строки
 # без маркера (послабление v1.19.41) убран: обычный чат «Ник[ID]: текст» не
 # должен ни открывать окно «Репорты», ни доходить до автопилота
@@ -494,7 +516,7 @@ need('local bottomY = y + h - 6' in auto_draw_src,
 need('if hintY + blockH <= bottomY then' in auto_draw_src,
      'подсказки не сверяются с настоящим низом раздела')
 # высота поля «Ответ игроку» подбирается так, чтобы низ поместился целиком
-need('local ansCap = selPun and 64 or 92' in auto_draw_src and
+need('local ansCap = punHard and 64 or 92' in auto_draw_src and
      'reserve' in auto_draw_src and 'local ansNoteLines' in auto_draw_src,
      'высота поля «Ответ игроку» больше не считается от свободного места')
 # запасные варианты, когда места мало: без предпросмотра, без пояснения

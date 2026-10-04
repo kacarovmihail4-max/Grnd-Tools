@@ -75,7 +75,19 @@ check(has("Триггер"), "нет поля «Триггер»")
 check(has("Ответ игроку"), "нет поля «Ответ игроку»")
 check(has("Команда после ответа"), "нет селектора команды")
 check(has("Вкладка 1"), "нет самой вкладки")
-check(has("выключен"), "нет строки состояния")
+-- v1.19.55: надписи «включён/выключен» в шапке больше нет — состояние видно по
+-- тумблеру; текст остаётся только для паузы (проверяется в разделе 12)
+check(not has("включён"), "в шапке снова надпись «включён»: " .. texts())
+check(not has("выключен"), "в шапке снова надпись «выключен»: " .. texts())
+-- вкладки поднялись на место убранной строки: полоса вкладок идёт сразу под
+-- заголовком (в самом верху раздела)
+local tabTop = nil
+for i = 1, #TXT do
+    if tostring(TXT[i].str) == "Вкладка 1" then tabTop = TXT[i].y end
+end
+check(tabTop ~= nil, "не найдена подпись вкладки")
+check(tabTop - CTX.y <= 46, "вкладки не поднялись на место строки состояния: "
+    .. string.format("%.1f", tabTop - CTX.y))
 -- v1.19.50: внизу раздела — короткая подсказка ТОЛЬКО про переменные, без
 -- лишних строк (автослежка и «первое слово» из подсказок убраны)
 check(hasOne("Переменные — в ответе или на слове триггера"),
@@ -875,6 +887,60 @@ check(Q.autoTabs()[2].trigger == "дм", "вкладка 2 не вернулас
 A.sel = 1
 drawAuto()
 HPRINT("{punishments} в триггере: ответ только про наказания, поле ответа скрыто, вкладка без слов отвечает на всё")
+
+-- ===== 9g2. переменные действуют на СВОЁ слово (v1.19.55) =====
+-- Строка триггеров «сколько мне осталось сидеть?{punishments},
+-- сколько мне осталось сидеть{punishments}, мои наказания{punishments}, помогите»:
+-- слово с {punishments} приносит игроку список наказаний (и команду не шлёт),
+-- а обычное слово «помогите» отвечает своим текстом и своей командой.
+Q.autoTest = false
+local saved55t, saved55a, saved55c = Q.autoTabs()[1].trigger, Q.autoTabs()[1].answer, Q.autoTabs()[1].command
+Q.autoTabs()[1].trigger = "сколько мне осталось сидеть?{punishments},"
+    .. "сколько мне осталось сидеть{punishments}, мои наказания{punishments}, помогите"
+Q.autoTabs()[1].answer = "Уже разбираюсь"
+Q.autoTabs()[1].command = "sp"
+Q.autoEnsure()
+local t55 = Q.autoTrigList(Q.autoTabs()[1])
+check(#t55 == 4, "в строке триггеров разобралось не 4 слова: " .. tostring(#t55))
+check(t55[3].word == "мои наказания" and t55[3].pun == true,
+    "у слова с {punishments} нет пометки: " .. tostring(t55[3] and t55[3].word))
+check(t55[4].word == "помогите" and not t55[4].pun and not t55[4].idv,
+    "обычное слово получило пометку переменной")
+check(Q.autoPlainWords(Q.autoTabs()[1]) == 1, "обычных слов должно быть одно, а не "
+    .. tostring(Q.autoPlainWords(Q.autoTabs()[1])))
+NOW = NOW + 100
+QUEUE, ANS = {}, {}
+check(Q.autoOnReport("Жалобщик", 80, "помогите") == true, "«помогите» не сработало")
+check(#QUEUE == 2 and QUEUE[1] == "/ans 80 Уже разбираюсь" and QUEUE[2] == "/sp 80",
+    "«помогите» ушло не своим текстом с командой: " .. table.concat(QUEUE, " | "))
+check(A.lastCheck:find("вкладки 1", 1, true) ~= nil, "нет пометки вкладки: " .. tostring(A.lastCheck))
+-- слово с {punishments} в той же вкладке: список наказаний, команды нет
+NOW = NOW + 100
+QUEUE = {}
+check(Q.autoOnReport("Жалобщик", 81, "мои наказания") == true, "слово с {punishments} не сработало")
+check(#QUEUE == 1 and QUEUE[1] == "/getinfo 81", "не запросил наказания: " .. table.concat(QUEUE, " | "))
+QUEUE = {}
+check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игрока", "OK", "",
+    "Аккаунт Жалобщик[81]\nМут 5 минут") == true, "окно не спрятано")
+check(QUEUE[1] == "/ans 81 Приветствую, ваши активные наказания >> Мут 5 минут",
+    "не тот ответ: " .. table.concat(QUEUE, " | "))
+check(#QUEUE == 1, "слово с {punishments} выполнило команду: " .. table.concat(QUEUE, " | "))
+-- и подсказка под полем ответа объясняет, что текст всё-таки используется
+TYPE["##grnd_qr_auto_trigger"] = Q.autoTabs()[1].trigger
+TYPE["##grnd_qr_auto_answer"] = "Уже разбираюсь"
+Q.autoTabs()[1].command = "sp"
+Q.autoEnsure()
+drawAuto()
+check(hasOne("Слова с {punishments} отвечают списком наказаний (без команды)"),
+    "нет пояснения для смешанного триггера: " .. textsOne())
+check(hasOne("затем /sp"), "предпросмотр не показал команду для обычных слов: " .. textsOne())
+-- возвращаем вкладку 1 к обычному виду
+Q.autoTabs()[1].trigger, Q.autoTabs()[1].answer, Q.autoTabs()[1].command = saved55t, saved55a, saved55c
+TYPE["##grnd_qr_auto_trigger"] = saved55t
+TYPE["##grnd_qr_auto_answer"] = saved55a
+Q.autoEnsure()
+drawAuto()
+HPRINT("переменные на своём слове: «помогите» — свой текст и команда, «{punishments}» — список без команды")
 
 -- ===== 9h. распознавание строки репорта (v1.19.41, ужесточено в v1.19.47) =====
 -- Репорт — ТОЛЬКО строка с маркером «[К-во репорта: N]» (написание терпим:

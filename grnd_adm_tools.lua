@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.54"
+GRND_SCRIPT_VERSION = "1.19.55"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -27200,10 +27200,29 @@ do
         local out = {}
         for piece in (raw .. ","):gmatch("([^,;\n]*)[,;\n]") do
             local wide = piece:find("%b{}") ~= nil
+            local lowPiece = autoLower(piece)
+            -- v1.19.55: переменные действуют на СВОЁ слово: у слова с
+            -- {punishments} ответ собирается списком наказаний (и команда не
+            -- уходит), у слова с {ID} — авто-приветствие; остальные слова
+            -- вкладки работают как обычно — свой текст и своя команда
+            local pun = lowPiece:find("{punishments}", 1, true) ~= nil
+            local idv = lowPiece:find("{id}", 1, true) ~= nil
             local w = trim(autoLower(autoPlain((piece:gsub("%b{}", " ")))))
-            if w ~= "" then out[#out + 1] = { word = w, wide = wide } end
+            if w ~= "" then
+                out[#out + 1] = { word = w, wide = wide, pun = pun, idv = idv }
+            end
         end
         return out
+    end
+
+    -- v1.19.55: сколько слов в триггере БЕЗ переменных — им нужен текст из
+    -- «Ответ игроку» (и команда). Слова с {punishments}/{ID} отвечают сами.
+    function QR.autoPlainWords(tab)
+        local list, n = QR.autoTrigList(tab), 0
+        for i = 1, #list do
+            if not list[i].pun and not list[i].idv then n = n + 1 end
+        end
+        return n
     end
 
     -- Только слова (для счётчиков и проверок).
@@ -27381,18 +27400,23 @@ do
                     pos = 1          -- репорт совпал целиком: это начало строки
                 end
                 if pos and (not mine or pos < mine.pos) then
-                    mine = { pos = pos, word = it.word }
+                    -- v1.19.55: запоминаем и переменные этого слова — по ним
+                    -- решается, что уйдёт игроку (список наказаний, авто-ответ
+                    -- или свой текст с командой)
+                    mine = { pos = pos, word = it.word, pun = it.pun, idv = it.idv }
                 end
             end
             if mine then
-                found[#found + 1] = { idx = i, trig = mine.word, pos = mine.pos }
+                found[#found + 1] = { idx = i, trig = mine.word, pos = mine.pos,
+                    pun = mine.pun, idv = mine.idv }
                 if not best or mine.pos < best then best = mine.pos end
             end
         end
         if #found > 0 then
             for k = 1, #found do
                 if found[k].pos == best then
-                    out[#out + 1] = { idx = found[k].idx, trig = found[k].trig }
+                    out[#out + 1] = { idx = found[k].idx, trig = found[k].trig,
+                        pun = found[k].pun, idv = found[k].idv }
                 elseif not dropped[found[k].trig] then
                     dropped[found[k].trig] = true
                 end
@@ -27404,7 +27428,8 @@ do
         -- слов не нашлось: работает вкладка с голой {punishments}
         for i = 1, #tabs do
             if QR.autoBarePun(tabs[i]) then
-                out[#out + 1] = { idx = i, trig = QR.autoTrigLabel(tabs[i]) }
+                -- вкладка-наказания без слов: ответ собирается списком
+                out[#out + 1] = { idx = i, trig = QR.autoTrigLabel(tabs[i]), pun = true }
             end
         end
         return out, ""
@@ -27535,9 +27560,9 @@ do
     -- своей команды — за таким игроком автопилот идёт в СЛЕЖКУ (/sp),
     -- даже если у вкладки выбрано /goto. Иначе — команда вкладки.
     function QR.autoTabCmd(pid, tab, foundId)
-        -- v1.19.52: {punishments} в триггере — вкладка только показывает
-        -- игроку его наказания, команда после ответа НЕ выполняется
-        if QR.autoPunInTrigger(tab) then return nil end
+        -- v1.19.52–55: команда не выполняется, когда сработало слово с
+        -- {punishments} — это решает отправитель (он знает, какое слово
+        -- подошло); здесь команда собирается как обычно
         local hasID = QR.autoVarFlags(tab)
         if hasID and tostring(foundId or "") ~= "" then
             return "/sp " .. tostring(foundId)
@@ -28133,7 +28158,10 @@ do
                 local keep = {}
                 for k = 1, #hits do
                     local tab = QR.autoTab(hits[k].idx)
-                    if not QR.autoTabCmd(id, tab, foundId) then
+                    -- слово с {punishments} команды не шлёт — наблюдению оно
+                    -- не мешает и отвечать может
+                    local wouldCmd = (not hits[k].pun) and QR.autoTabCmd(id, tab, foundId)
+                    if not wouldCmd then
                         keep[#keep + 1] = hits[k]
                     end
                 end
@@ -28182,14 +28210,20 @@ do
         local plan = {}
         for k = 1, #hits do
             local tab = QR.autoTab(hits[k].idx)
-            local hasAll, hasPun = select(2, QR.autoVarFlags(tab))
+            local hasAll = select(2, QR.autoVarFlags(tab))
+            -- {punishments} в ОТВЕТЕ — в текст подставляется список наказаний;
+            -- в триггере {punishments} живёт на своём слове (см. punOnly выше)
+            local ansHasPun = autoLower(tostring(tab.answer or "")):find("{punishments}", 1, true) ~= nil
             -- v1.19.41: {punishments} в ТРИГГЕРЕ — поле ответа не нужно,
             -- отвечаем ровно как кнопка «Наказания игрока». Текст соберётся,
             -- когда окно /getinfo придёт (маркер ниже).
-            local punOnly = QR.autoPunInTrigger(tab)
+            -- v1.19.55: переменные считаем по ПОДОШЕДШЕМУ слову, а не по всей
+            -- строке триггеров: «…{punishments}, помогите» — слово «помогите»
+            -- отвечает своим текстом и выполняет свою команду
+            local punOnly = hits[k].pun and true or false
             -- v1.19.44: {ID} на слове в ТРИГГЕРЕ — ответ собирается сам:
             -- «Приветствую, слежу за игроком Ник[ID]», что бы ни было в поле
-            local idAuto = (not punOnly) and QR.autoIDInTrigger(tab)
+            local idAuto = (not punOnly) and (hits[k].idv and true or false)
             local line, pun
             if punOnly then
                 line = "{punishments}"
@@ -28211,9 +28245,11 @@ do
                     line = trim((line:gsub("{all}", "", 1)))
                     line = trim((line:gsub("%s+", " ")))
                 end
-                pun = hasPun
+                pun = ansHasPun
             end
-            local cmd = QR.autoTabCmd(id, tab, foundId)
+            -- слово с {punishments} команду не выполняет (v1.19.52)
+            local cmd = nil
+            if not punOnly then cmd = QR.autoTabCmd(id, tab, foundId) end
             if line ~= "" or cmd then
                 plan[#plan + 1] = { idx = hits[k].idx, line = line, cmd = cmd, pun = pun }
             end
@@ -28429,34 +28465,25 @@ do
 
         local on = A.on and true or false
         local paused = on and (A.paused or QR.autoPauseReason()) or nil
-        local stY, stX = y + 30, x + 22
-        if compact then
-            stY = y + (paused and 4 or 3)
-            if type(ctx.drawnW) == "function" then
-                local okT, tw0 = pcall(ctx.drawnW, "Автопилот", 1.0)
-                if okT and type(tw0) == "number" and tw0 > 0 then stX = x + tw0 + 22 end
-            end
-        end
-        local dotC = paused and warnC or (on and okC or ctx.col32(255, 255, 255, 70))
-        ctx.dl:AddCircleFilled(ctx.at(stX - 14, stY + 12), 5, dotC)
+        -- v1.19.55: надписи «включён/выключен» больше нет — состояние видно по
+        -- тумблеру; текст показываем только когда автопилот НА ПАУЗЕ
         local stateTxt
         if paused == "слежка" then
             stateTxt = "на паузе — слежка, вернётся сам"
         elseif paused == "мероприятие" then
             stateTxt = "на паузе — идёт мероприятие, вернётся сам"
-        elseif on then
-            stateTxt = "включён"
-        else
-            stateTxt = "выключен"
+        elseif paused then
+            stateTxt = "на паузе — " .. tostring(paused)
         end
-        -- v1.19.51: в компактной шапке состояние подрезается по ширине,
-        -- чтобы не налезать на тумблер
-        local stTxt = stateTxt
-        if compact then
-            stTxt = fit(stateTxt, math.max(70, (x + w - 62) - stX), ctx.drawnW, 0.95)
+        -- без строки состояния полоса вкладок поднимается на её место
+        local tabsTop = y + 30
+        if stateTxt then
+            ctx.dl:AddCircleFilled(ctx.at(x + 8, y + 42), 5, warnC)
+            ctx.uiText(x + 22, y + 32,
+                fit(stateTxt, math.max(70, w - 84), ctx.drawnW, 0.95), warnC, 0.95)
+            tabsTop = y + 62
         end
-        ctx.uiText(stX, stY + 2, stTxt, paused and warnC or (on and hi or dim), 0.95)
-        if autoSwitch(ctx, x + w - 56, compact and (y + 3) or stY, on, "##grnd_qr_auto_on") then
+        if autoSwitch(ctx, x + w - 56, y + 3, on, "##grnd_qr_auto_on") then
             QR.autoSet(not on)
         end
 
@@ -28483,7 +28510,7 @@ do
         local tabW = math.floor((w - tgap * (#tabs - 1)) / #tabs)
         if tabW > 190 then tabW = 190 end
         if tabW < 96 then tabW = 96 end
-        local tx, ty = x, stY + 32
+        local tx, ty = x, tabsTop
         local pendingDel = nil
         for i = 1, #tabs do
             if tx + tabW > x + w + 0.5 then tx, ty = x, ty + tabH + tgap end
@@ -28622,8 +28649,14 @@ do
         end
         yy = yy + 40
 
+        -- v1.19.55: переменные действуют на своё слово, поэтому в подсказках
+        -- смотрим и на слова без переменных («остальные слова»)
         local selPun = QR.autoPunInTrigger(sel2)
-        local selID = (not selPun) and QR.autoIDInTrigger(sel2)
+        local selID = QR.autoIDInTrigger(sel2)
+        local selFree = QR.autoPlainWords(sel2) > 0
+        -- текст из «Ответ игроку» вообще не используется только когда все
+        -- слова с {punishments} (и нет слов с {ID})
+        local punHard = selPun and not selFree and not selID
         -- высота селектора команды и подсказки к нему — нужны, чтобы заранее
         -- посчитать, сколько места займёт низ раздела
         local selW, selH = math.min(280, iw), 30
@@ -28648,13 +28681,21 @@ do
         -- v1.19.53: пояснение под полем. Поле «Ответ игроку» видно ВСЕГДА —
         -- даже когда его текст не пригодится ({punishments} в триггере или {ID})
         local ansNote, ansNoteCol
-        if selPun then
+        if punHard then
             ansNote = "Этот текст не используется: в триггере {punishments} — игрок получит "
                 .. "список своих наказаний, а команда не выполнится."
             ansNoteCol = warnC
-        elseif selID then
+        elseif selPun then
+            ansNote = "Слова с {punishments} отвечают списком наказаний (без команды); "
+                .. "остальные слова — этот текст и команда."
+            ansNoteCol = warnC
+        elseif selID and not selFree then
             ansNote = "Ответ собирается сам: «Приветствую, слежу за игроком Ник[234]» — "
                 .. "этот текст уйдёт, только если в репорте нет ни номера, ни имени."
+            ansNoteCol = warnC
+        elseif selID then
+            ansNote = "Слова с {ID} отвечают авто-приветствием и /sp; "
+                .. "остальные слова — этот текст и команда."
             ansNoteCol = warnC
         end
         local ansNoteLines = ansNote and wrapW(ansNote, iw, ctx.drawnW, tHintSc) or nil
@@ -28663,7 +28704,7 @@ do
         yy = yy + 17
         -- у вкладки с {punishments} поле всё равно не используется, поэтому
         -- ему хватает половины высоты — место уходит пояснению и подсказкам
-        local ansCap = selPun and 64 or 92
+        local ansCap = punHard and 64 or 92
         local ansH = ansCap
         do
             local noteH0 = ansNoteLines and (#ansNoteLines * tHintStep) or 0
@@ -28745,16 +28786,17 @@ do
         if type(_G.GRND_REP) == "table" then repId = tostring(_G.GRND_REP.playerId or "") end
         local sampleId = repId:match("^%d+$") or "25"
         local sampleLine
-        if selPun then
+        if punHard then
             sampleLine = QR.autoPunWrap("Мут 60 минут")
-        elseif selID then
+        elseif selID and not selFree then
             sampleLine = QR.autoGreet({ nick = "Ник", id = sampleId })
         else
             sampleLine = oneLine(QR.apply(sel2.answer, { nick = "Ник", id = sampleId }))
         end
-        -- v1.19.52: в триггере {punishments} — команда не уйдёт (вкладка
-        -- только показывает наказания), и предпросмотр об этом говорит
-        local punNoCmd = QR.autoPunInTrigger(sel2)
+        -- v1.19.52–55: команда не уйдёт, когда ВСЕ слова триггера с
+        -- {punishments} (тогда вкладка только показывает наказания) —
+        -- предпросмотр об этом говорит
+        local punNoCmd = punHard
         local cmdLine = (not punNoCmd) and QR.autoCmdFor(sampleId, sel2) or nil
         local prev
         if sampleLine == "" then
