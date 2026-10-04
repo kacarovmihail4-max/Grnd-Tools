@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.57"
+GRND_SCRIPT_VERSION = "1.19.58"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -11476,8 +11476,9 @@ function grndStatsPopup(id, nick)
     local wasShown = (RC.show == true)              -- было ли окно уже на экране
     if id and not specOn then RC.id = id end        -- в слежке цель не подменяем
     RC.show = true                                  -- открыть окно скрипта
-    RC.infoOpen = true                              -- развернуть «Сведения игрока»
-    if not specOn then RC.paramsOpen = false end    -- вне слежки сразу к статистике
+    -- v1.19.58: карточка показывает единый список — сворачиваемых разделов
+    -- («Параметры игрока» / «Сведения игрока») больше нет
+    RC.infoOpen, RC.paramsOpen = true, true
     -- ник: если не передали — спросим у игры (SAMPFUNCS), в CP1251 -> UTF-8
     if (not nick or nick == "") and id
         and type(sampGetPlayerNickname) == "function" then
@@ -35574,7 +35575,7 @@ function grndMainBody()
 
                             local rcX = cardX + 20
                             local rcW = cardW - 40
-                            -- ---------- строка-тумблер «Панель действий» ----------
+                            -- ---------- строка-тумблер «Кнопки наказаний» ----------
                             local rowY = cardY + 16
                             local rowH = 50
                             roundRect(dl, at(rcX, rowY), at(rcX + rcW, rowY + rowH),
@@ -35586,9 +35587,9 @@ function grndMainBody()
                             local barOn = (PUN and PUN.barOn ~= false)
                             dl:AddCircleFilled(at(rcX + 20, rowY + 25), 4.5,
                                 barOn and c32(TH.accent) or col32(255, 255, 255, 55))
-                            uiText(rcX + 34, rowY + 8, "Панель действий в слежке", c4(TH.textHi), 1.05)
+                            uiText(rcX + 34, rowY + 8, "Кнопки наказаний в карточке", c4(TH.textHi), 1.05)
                             uiText(rcX + 34, rowY + 27,
-                                "Страницы — стрелками или Q/E · курсор — ПКМ · команды подключим позже",
+                                "JAIL · BAN · MUTE и остальные — столбиком под сведениями · курсор — ПКМ",
                                 c4(TH.textMuted), 0.88)
                             local tgX = rcX + rcW - 46 - 12
                             local tgY = rowY + (rowH - 24) / 2
@@ -38918,13 +38919,27 @@ function grndMainBody()
             -- v1.11.9: компактное окно + перетаскивание за шапку
             local W = math.floor(math.max(300, math.min(360, resX * 0.24)))
             local pad = 14
-            local paramRowH, infoRowH = 26, 22
-            local paramsOpen = (RC.paramsOpen ~= false)
-            local infoOpen = (RC.infoOpen ~= false)
-            local paramsRows = 6
-            local infoRows = 16   -- 15 строк + строка «данные /stats: время»
-            local contentH = 66 + 26 + (paramsOpen and paramsRows * paramRowH or 0)
-                + 8 + 26 + (infoOpen and infoRows * infoRowH or 0) + 10
+            -- v1.19.58: карточка рекона — единый компактный список без
+            -- сворачиваемых разделов (образец заказчика): Пинг, Здоровье,
+            -- Броня, Скорость, Имя, Номер аккаунта, Уровень. «Оружие»,
+            -- «Патроны» и «AFK» в карточку не выводятся. Кнопки наказаний
+            -- живут ВНУТРИ карточки, столбиком под строками.
+            -- карточка сама загружает настройки наказаний (раньше это делала
+            -- отдельная панель): оттуда приходит и тумблер «кнопки в карточке»
+            if GRND_PUN and not GRND_PUN.loaded then pcall(GRND_PUN.load) end
+            local ROW_H = 26           -- высота строки сведений
+            local ROWS_N = 7           -- сколько строк в списке
+            local PUN_BH = 30          -- высота кнопки наказания
+            local PUN_BG = 6           -- зазор между кнопками
+            local PUN_PAD = 10         -- отступ блока кнопок
+            local punItems = (GRND_PUN and GRND_PUN.barOn ~= false)
+                and GRND_PUN.list or nil
+            local punCnt = (type(punItems) == "table") and #punItems or 0
+            -- низ карточки: последняя кнопка + отступ 12 px (промежуток
+            -- PUN_BG есть только МЕЖДУ кнопками, поэтому он тут вычтен)
+            local contentH = 84 + ROWS_N * ROW_H
+                + (punCnt > 0 and (PUN_PAD - 2 + punCnt * PUN_BH
+                    + (punCnt - 1) * PUN_BG + 12) or 10)
             local H = math.min(math.max(420, resY - 42), contentH)
             local px = resX - W - 24
             local py = math.max(22, math.floor((resY - H) / 2))
@@ -38991,11 +39006,6 @@ function grndMainBody()
                 if v > hi then return hi end
                 return v
             end
-            local function emptyWeapon(v)
-                local s = tostring(v or "")
-                return s == "" or s == "Пусто" or s == "Пустое"
-                    or s:lower() == "none" or s:lower() == "empty" or s == "0"
-            end
 
             local nick = reconUtf(RC.nick or "Игрок")
             if nick == "" then nick = "Игрок" end
@@ -39013,23 +39023,18 @@ function grndMainBody()
             local armNum = grndParamNum(id, "arm", numberValue("arm", getPlayerArmor(id)))
             local hpText = hpNum and tostring(math.floor(hpNum + 0.5)) or "—"
             local armText = armNum and tostring(math.floor(armNum + 0.5)) or "—"
-            -- v1.11.82: оружие показываем по данным САМОЙ ИГРЫ (что реально
-            -- в руках), а серверную строку берём только как подсказку:
-            -- на сервере игрока она приходит нечитаемой («Hbyc|0»)
-            local weapon = grndWeaponLabel(
-                grndParamStr(id, "weap", textValue("weap", "")), id)
             -- v1.11.83: серверная скорость сглаживается окном ПО КАДРАМ
             -- (прошлая версия считала окно по os.clock — в игре это
             -- процессорное время, окно растянулось и показывало 0), а если
             -- сервер молчит или показывает 0, скорость берём у игры (км/ч)
             local speed = grndSpeedDisplay(id, textValue("speed", ""))
-            local afk = textValue("afk", "0")
-            local skin = getPlayerSkin(id)
-            local veh = getPlayerVehicle(id)
-            local vehicleText = (veh and veh ~= 0) and ("ID " .. tostring(veh)) or "Нет"
-            local isValid = playerIsValid(id)
-            local gameStatus = isValid and "В игре" or "—"
-            local today = textValue("today", "—")
+            -- «Уровень» — только число уровня: если отдельного поля нет,
+            -- берём его из «Уровень (EXP)» («18 (12345)» → «18»)
+            local lvlRaw = textValue("rc_level", "")
+            if lvlRaw == "" then
+                lvlRaw = tostring(textValue("rc_level_exp", "—")):gsub("%s*%b()", "")
+            end
+            if lvlRaw == "" then lvlRaw = "—" end
 
             im.SetNextWindowPos(im.ImVec2(px, py), COND_ALWAYS)
             im.SetNextWindowSize(im.ImVec2(W, H), COND_ALWAYS)
@@ -39125,34 +39130,14 @@ function grndMainBody()
                 dl:AddRectFilled(at(12, 71), at(W - 12, 72), col32(255, 255, 255, 16))
 
                 local y = 84
-                local function section(title, open, key)
-                    local sh = 30
-                    im.SetCursorPos(im.ImVec2(pad, y))
-                    local clicked = im.InvisibleButton("##grnd_recon_section_" .. key,
-                        im.ImVec2(W - pad * 2, sh))
-                    local hovered = im.IsItemHovered and im.IsItemHovered() or false
-                    if hovered then fill(pad, y, W - pad * 2, sh,
-                        col32(TH.accent[1], TH.accent[2], TH.accent[3], 18), 6) end
-                    local cx, cy = pad + 5, y + 15
-                    if open then
-                        dl:AddLine(at(cx - 3, cy - 2), at(cx, cy + 2), c32(TH.accent), 1.5)
-                        dl:AddLine(at(cx, cy + 2), at(cx + 4, cy - 4), c32(TH.accent), 1.5)
-                    else
-                        dl:AddLine(at(cx - 2, cy - 4), at(cx + 3, cy), c32(TH.accent), 1.5)
-                        dl:AddLine(at(cx + 3, cy), at(cx - 2, cy + 4), c32(TH.accent), 1.5)
-                    end
-                    put(pad + 15, y + 6, title, c4(TH.textHi), 0.88)
-                    y = y + sh
-                    return clicked
-                end
                 local function row(name, value, color, numeric, maxValue, height)
-                    height = height or paramRowH
+                    height = height or ROW_H
                     local bg = (math.floor(y / height) % 2 == 0)
                         and col32(255, 255, 255, 6) or col32(255, 255, 255, 2)
                     fill(11, y - 2, W - 22, height, bg, 4)
-                    label(pad, y + 3, name, height <= 24 and 0.74 or 0.78)
+                    label(pad, y + 3, name, 0.78)
                     local s = shortValue(value, 26)
-                    local scale = height <= 24 and 0.78 or 0.84
+                    local scale = 0.84
                     local tw = drawnW(s, scale)
                     put(W - pad - tw, y + 2, s, color or c4(TH.text), scale)
                     if maxValue then
@@ -39173,60 +39158,46 @@ function grndMainBody()
                     y = y + height
                 end
 
-                if section("Параметры игрока", paramsOpen, "params") then
-                    RC.paramsOpen = not paramsOpen
-                    paramsOpen = RC.paramsOpen
-                end
-                if paramsOpen then
-                    -- v1.11.80: шкала от 100 (было 200 у ХП — при 100 XP
-                    -- полоска заполнялась только наполовину)
-                    row("Здоровье", hpText, c4(TH.accent), hpNum, grndParamScale(hpNum), paramRowH)
-                    row("Броня", armText, c4(TH.accent2), armNum, grndParamScale(armNum), paramRowH)
-                    row("Оружие", weapon, c4(TH.textHi), nil, nil, paramRowH)
-                    row("Пинг", ping, c4(TH.text), nil, nil, paramRowH)
-                    row("Скорость", speed, c4(TH.text), nil, nil, paramRowH)
-                    row("AFK", afk, c4(TH.text), nil, nil, paramRowH)
-                end
+                -- v1.19.58: единый список без сворачиваемых разделов. Порядок
+                -- строк — как в образце заказчика; «Оружие»/«Патроны» и «AFK»
+                -- в карточку не выводятся.
+                row("Пинг", ping, c4(TH.text), nil, nil, ROW_H)
+                row("Здоровье", hpText, c4(TH.accent), hpNum, grndParamScale(hpNum), ROW_H)
+                row("Броня", armText, c4(TH.accent2), armNum, grndParamScale(armNum), ROW_H)
+                row("Скорость", speed, c4(TH.text), nil, nil, ROW_H)
+                row("Имя", nick, c4(TH.textHi), nil, nil, ROW_H)
+                row("Номер аккаунта", textValue("rc_account", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("Уровень", lvlRaw, c4(TH.text), nil, nil, ROW_H)
 
-                y = y + 8
-                if section("Сведения игрока", infoOpen, "info") then
-                    RC.infoOpen = not infoOpen
-                    infoOpen = RC.infoOpen
-                end
-                if infoOpen then
-                    -- v1.11.77: у каждого игрока — свои данные (кэш по ID)
-                    if type(RC.statsCache) == "table" then
-                        local mine = RC.statsCache[tonumber(id) or 0]
-                        if type(mine) == "table" then
-                            RC.live = grndStatsCopy(mine)
+                -- v1.19.58: кнопки наказаний переехали ВНУТРЬ карточки — они
+                -- стоят столбиком сразу под строками (как в образце заказчика).
+                -- Тумблер GRND_PUN.barOn по-прежнему прячет/показывает их.
+                if punCnt > 0 then
+                    y = y + PUN_PAD - 2
+                    for i = 1, punCnt do
+                        local itm = punItems[i]
+                        local btnLabel = tostring((itm and itm.id) or "")
+                        local bw2, bh2 = W - pad * 2, PUN_BH
+                        im.SetCursorPos(im.ImVec2(pad, y))
+                        local clicked = im.InvisibleButton("##rcb_p_" .. btnLabel,
+                            im.ImVec2(bw2, bh2))
+                        local hov = (im.IsItemHovered and im.IsItemHovered()) or false
+                        local act = (im.IsItemActive and im.IsItemActive()) or false
+                        fill(pad, y, bw2, bh2,
+                            act and col32(TH.accent[1], TH.accent[2], TH.accent[3], 55)
+                                or (hov and col32(TH.accent[1], TH.accent[2], TH.accent[3], 30)
+                                    or col32(255, 255, 255, 9)), 8)
+                        frame(pad + 0.5, y + 0.5, bw2 - 1, bh2 - 1,
+                            (hov or act)
+                                and col32(TH.accent[1], TH.accent[2], TH.accent[3], 120)
+                                or col32(255, 255, 255, 20), 8)
+                        put(pad + (bw2 - drawnW(btnLabel, 0.9)) / 2, y + (bh2 - 14) / 2,
+                            btnLabel, hov and c4(TH.textHi) or c4(TH.text), 0.9)
+                        if clicked and notify and notify.add then
+                            pcall(notify.add, "Наказание " .. btnLabel
+                                .. ": команда подключится позже", "info", 2.2)
                         end
-                    end
-                    -- v1.11.2: секция получает данные из /stats: тестовый
-                    -- модуль grnd_stats_test.lua разбирает ОКНО ответа и
-                    -- кладёт поля в GRND_RC.live (ключи rc_*). textValue()
-                    -- их подставит; пока ответа нет — как раньше «—».
-                    row("Аккаунт", textValue("rc_account", "—"), c4(TH.text), nil, nil, infoRowH)
-                    row("Уровень (EXP)", textValue("rc_level_exp", "—"), c4(TH.text), nil, nil, infoRowH)
-                    row("Номер телефона", textValue("rc_phone", "—"), c4(TH.text), nil, nil, infoRowH)
-                    row("Варнов", textValue("rc_varnov", "—"), c4(TH.text), nil, nil, infoRowH)
-                    row("Пол", textValue("rc_gender", "—"), c4(TH.text), nil, nil, infoRowH)
-                    row("Женат на", textValue("rc_married", "—"), c4(TH.text), nil, nil, infoRowH)
-                    row("Орг. (ранг)", textValue("rc_org", "—"), c4(TH.text), nil, nil, infoRowH)
-                    row("Работа/Должность", textValue("rc_job", "—"), c4(TH.text), nil, nil, infoRowH)
-                    row("Бизнес", textValue("rc_business", "—"), c4(TH.text), nil, nil, infoRowH)
-                    -- v1.11.60: настоящий статус из /stats; пока ответа
-                    -- нет — как раньше («В игре»/«—»)
-                    row("Игровой статус", textValue("rc_status", gameStatus), c4(TH.text), nil, nil, infoRowH)
-                    row("Дом", textValue("rc_house", "—"), c4(TH.text), nil, nil, infoRowH)
-                    row("Квартира", textValue("rc_flat", "—"), c4(TH.text), nil, nil, infoRowH)
-                    row("VIP статус", textValue("rc_vip", "—"), c4(TH.text), nil, nil, infoRowH)
-                    row("За сегодня", today, c4(TH.text), nil, nil, infoRowH)
-                    row("Семья", textValue("rc_family", "—"), c4(TH.text), nil, nil, infoRowH)
-                    -- время последнего получения статистики (виден «свежесть»
-                    -- данных; появляется только после первого ответа /stats)
-                    if RC.live and RC.live.rc_stats_at then
-                        label(pad, y + 1, "данные /stats: " .. tostring(RC.live.rc_stats_at), 0.66)
-                        y = y + 14
+                        y = y + bh2 + PUN_BG
                     end
                 end
             end
@@ -39239,123 +39210,9 @@ function grndMainBody()
             --  игроком вынесены в интерактивную круглую кнопку.
             -- =====================================================
             do
-                -- v1.11.72: локальная копия drawnWb удалена — используется
-                -- общая (см. вынос выше), чтобы drawFormPopup и панель
-                -- «Действия» видели ту же функцию, а не nil.
-
-                local PUN = GRND_PUN
-                if PUN then
-                    if not PUN.loaded then pcall(PUN.load) end
-                    local barOn = (PUN.barOn ~= false)
-                    if barOn and RC.windowPos then
-                        local BW2, BH2, BG2, BP2 = 208, 30, 6, 10
-                        local HEAD2 = 34
-                        local items = PUN.list
-                        local cnt = #items
-                        local HB = HEAD2 + cnt * (BH2 + BG2) + BP2
-
-                        -- Позиция панели «Наказания»: по умолчанию слева от карточки, либо перетащенная
-                        local defBx = math.max(8, RC.windowPos.x - BW2 - 10)
-                        local defBy = math.max(8, math.min(RC.windowPos.y, math.max(8, resY - HB - 8)))
-                        local bx = RC.punishPosX or defBx
-                        local by = RC.punishPosY or defBy
-                        bx = math.max(4, math.min(resX - BW2 - 4, bx))
-                        by = math.max(4, math.min(resY - HB - 4, by))
-
-                        -- Перетаскивание за шапку панели «Наказания»
-                        local punHeadRect = { x = bx, y = by, w = BW2, h = HEAD2 }
-                        if RC.cursor and GRND_MOUSE.down then
-                            if not RC.punDragging and grndMouseInside(punHeadRect) then
-                                RC.punDragging = true
-                                RC.punDragDX = GRND_MOUSE.x - bx
-                                RC.punDragDY = GRND_MOUSE.y - by
-                            end
-                        end
-                        if RC.punDragging then
-                            if not (GRND_MOUSE and GRND_MOUSE.down) then
-                                RC.punDragging = false
-                            else
-                                RC.punishPosX = math.max(4, math.min(resX - BW2 - 4, GRND_MOUSE.x - (RC.punDragDX or 0)))
-                                RC.punishPosY = math.max(4, math.min(resY - HB - 4, GRND_MOUSE.y - (RC.punDragDY or 0)))
-                                bx = RC.punishPosX
-                                by = RC.punishPosY
-                            end
-                        end
-
-                        im.SetNextWindowPos(im.ImVec2(bx, by), COND_ALWAYS)
-                        im.SetNextWindowSize(im.ImVec2(BW2, HB), COND_ALWAYS)
-                        local st2, cl2 = 0, 0
-                        if grndPushStyleV2(im.StyleVar and im.StyleVar.WindowPadding, 0, 0) then st2 = st2 + 1 end
-                        if grndPushStyleF(im.StyleVar and im.StyleVar.WindowRounding, 12) then st2 = st2 + 1 end
-                        if grndPushCol(im.Col and im.Col.WindowBg, rgba(0, 0, 0, 0)) then cl2 = cl2 + 1 end
-                        if grndPushCol(im.Col and im.Col.Border, rgba(0, 0, 0, 0)) then cl2 = cl2 + 1 end
-                        local flags2 = wf("NoTitleBar", "NoResize", "NoMove", "NoScrollbar",
-                            "NoCollapse", "NoFocusOnAppearing", "NoBringToFrontOnFocus")
-                        -- без курсора (или поверх меню) панель не перехватывает клики
-                        if (not RC.cursor) or (menu and menu.open) then
-                            flags2 = flags2 + wflag("NoInputs")
-                        end
-                        if grndBegin("##grnd_recon_bar", flags2) then
-                            local bpos = im.GetWindowPos()
-                            local bdl = im.GetWindowDrawList()
-                            local function bat(x2, y2) return im.ImVec2(bpos.x + x2, bpos.y + y2) end
-                            local function bfill(x2, y2, w2, h2, c, r)
-                                roundRect(bdl, bat(x2, y2), bat(x2 + w2, y2 + h2), c, r or 0)
-                            end
-                            local function bframe(x2, y2, w2, h2, c, r)
-                                if bdl.AddRect then
-                                    pcall(bdl.AddRect, bdl, bat(x2, y2), bat(x2 + w2, y2 + h2),
-                                        c, r or 0, 0, 1.0)
-                                end
-                            end
-                            -- каркас как у карточки рекона
-                            bfill(5, 6, BW2 - 5, HB - 5, col32(0, 0, 0, 85), 13)
-                            bfill(0, 0, BW2, HB, col32(10, 15, 20, 247), 13)
-                            bframe(0.5, 0.5, BW2 - 1, HB - 1, col32(255, 255, 255, 25), 13)
-                            -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
-                            -- шапка: только «Наказания»
-                            uiText(BP2 + 2, 11, "Наказания", c4(TH.textHi), 0.95)
-                            bdl:AddRectFilled(bat(BP2, HEAD2 - 5), bat(BW2 - BP2, HEAD2 - 4),
-                                col32(255, 255, 255, 16))
-
-                            -- кнопка бара (единый стиль: стекло + акцент)
-                            local function barBtn(x2, y2, w2, h2, label, tag)
-                                im.SetCursorPos(im.ImVec2(x2, y2))
-                                local clicked = im.InvisibleButton("##rcb_" .. tag,
-                                    im.ImVec2(w2, h2))
-                                local hov = (im.IsItemHovered and im.IsItemHovered()) or false
-                                local act = (im.IsItemActive and im.IsItemActive()) or false
-                                bfill(x2, y2, w2, h2,
-                                    act and col32(TH.accent[1], TH.accent[2], TH.accent[3], 55)
-                                        or (hov and col32(TH.accent[1], TH.accent[2], TH.accent[3], 30)
-                                            or col32(255, 255, 255, 9)), 8)
-                                bframe(x2 + 0.5, y2 + 0.5, w2 - 1, h2 - 1,
-                                    (hov or act)
-                                        and col32(TH.accent[1], TH.accent[2], TH.accent[3], 120)
-                                        or col32(255, 255, 255, 20), 8)
-                                uiText(x2 + (w2 - drawnWb(label, 0.9)) / 2, y2 + (h2 - 14) / 2,
-                                    label, hov and c4(TH.textHi) or c4(TH.text), 0.9)
-                                return clicked
-                            end
-
-                            -- кнопки наказаний
-                            local iy2 = HEAD2 + 2
-                            for i = 1, cnt do
-                                local itm = items[i]
-                                local label = itm.id
-                                local tag = "p_" .. itm.id
-                                local byy = iy2 + (i - 1) * (BH2 + BG2)
-                                if barBtn(BP2, byy, BW2 - BP2 * 2, BH2, label, tag) then
-                                    pcall(notify.add, "Наказание " .. itm.id
-                                        .. ": команда подключится позже", "info", 2.2)
-                                end
-                            end
-                        end
-                        if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
-                        grndPopCol(cl2)
-                        grndPopStyle(st2)
-                    end
-                end
+                -- v1.19.58: отдельной панели наказаний слева от карточки
+                -- больше нет — кнопки переехали внутрь самой карточки
+                -- (см. блок кнопок сразу под строками сведений).
 
                 -- =====================================================
                 --  ИНТЕРАКТИВНОЕ ВЗАИМОДЕЙСТВИЕ С ИГРОКАМИ (РЕКОН):

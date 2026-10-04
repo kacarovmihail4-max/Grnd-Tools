@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.57"' in s, 'версия не 1.19.57')
+need('GRND_SCRIPT_VERSION = "1.19.58"' in s, 'версия не 1.19.58')
 
 # v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
 # 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
@@ -107,6 +107,51 @@ need('function klScanCandidates(limit, maxBytes, timeLimit)' in s and
      'klScanCandidates, 1024, 524288, 0.04' in s and
      'KL.scanStat = "перебор прерван по времени — продолжаю позже"' in s,
      'авто-перебор памяти килл-листа снова читает мегабайты в одном тике')
+
+# v1.19.58: карточка рекона — единый компактный список (образец заказчика):
+# Пинг, Здоровье, Броня, Скорость, Имя, Номер аккаунта, Уровень.
+# Сворачиваемых разделов «Параметры игрока»/«Сведения игрока» больше нет.
+need('local ROWS_N = 7' in s and 'local contentH = 84 + ROWS_N * ROW_H' in s,
+     'карточка рекона снова считает высоту по сворачиваемым разделам')
+need('row("Пинг", ping, c4(TH.text), nil, nil, ROW_H)' in s and
+     'row("Здоровье", hpText, c4(TH.accent), hpNum, grndParamScale(hpNum), ROW_H)' in s and
+     'row("Броня", armText, c4(TH.accent2), armNum, grndParamScale(armNum), ROW_H)' in s and
+     'row("Скорость", speed, c4(TH.text), nil, nil, ROW_H)' in s and
+     'row("Имя", nick, c4(TH.textHi), nil, nil, ROW_H)' in s and
+     'textValue("rc_account", "—"), c4(TH.text), nil, nil, ROW_H)' in s and
+     'row("Уровень", lvlRaw, c4(TH.text), nil, nil, ROW_H)' in s,
+     'в карточке нет единого списка строк из образца (Пинг…Уровень)')
+absent('row("AFK"', '«AFK» вернулся в карточку рекона')
+absent('row("Оружие"', '«Оружие» вернулось в карточку рекона')
+absent('row("Патроны"', '«Патроны» вернулись в карточку рекона')
+absent('local function section(title, open, key)',
+       'в карточке снова сворачиваемые разделы')
+absent('"##grnd_recon_section_"', 'вернулись заголовки-кнопки сворачиваемых разделов')
+# «Уровень» — только число: отдельное поле rc_level, иначе из «Уровень (EXP)»
+need('local lvlRaw = textValue("rc_level", "")' in s and
+     'gsub("%s*%b()", "")' in s,
+     '«Уровень» снова показывает «18 (12345)» вместо числа')
+# кнопки наказаний — ВНУТРИ карточки, столбиком под строками
+need('local punCnt = (type(punItems) == "table") and #punItems or 0' in s and
+     'local punItems = (GRND_PUN and GRND_PUN.barOn ~= false)' in s,
+     'карточка не собирает список кнопок наказаний')
+need('"" ##rcb_p_""' in s if False else 'im.InvisibleButton("##rcb_p_" .. btnLabel' in s,
+     'кнопки наказаний не рисуются внутри карточки')
+need('if GRND_PUN and not GRND_PUN.loaded then pcall(GRND_PUN.load) end' in s,
+     'карточка не подгружает настройки наказаний (кнопки исчезнут)')
+absent('"##grnd_recon_bar"', 'вернулось отдельное окно панели наказаний')
+# тумблер в меню говорит про карточку, а не про потерянную панель
+need('"Кнопки наказаний в карточке"' in s and
+     'JAIL · BAN · MUTE и остальные — столбиком под сведениями · курсор — ПКМ' in s,
+     'описание тумблера наказаний не соответствует карточке')
+# геометрия: строк ровно семь, кнопки наказаний — ВНУТРИ окна карточки
+card_start = s.index('if grndBegin("##grnd_recon_card", flags) then')
+card_end = s.index('if endDepth > 0 then endDepth = endDepth - 1', card_start)
+card = s[card_start:card_end]
+need(card.count(', ROW_H)') == 7,
+     'в карточке не семь строк единого списка (найдено %d)' % card.count(', ROW_H)'))
+need('##rcb_p_' in card,
+     'кнопки наказаний рисуются вне окна карточки (обрежутся его краем)')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
