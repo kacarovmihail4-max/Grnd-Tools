@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.61"' in s, 'версия не 1.19.61')
+need('GRND_SCRIPT_VERSION = "1.19.62"' in s, 'версия не 1.19.62')
 
 # v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
 # 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
@@ -134,11 +134,12 @@ need('im.InvisibleButton("##grnd_recon_copy"' in s and
      'рядом с ником нет значка «копировать»')
 # место 3D-модели пустое: ни аватара, ни кругов
 absent('string.upper(nick:match', 'в карточку вернулся аватар-буква (место 3D-модели)')
-need('local MODEL_H = ROWS_A * ROW_H' in s and 'local leftTop = TOP_Y + (openState and MODEL_H or 0) + 4' in s,
-     'в карточке нет пустого места под 3D-модель')
+need('local leftTop = TOP_Y + 2' in s,
+     'панель наказаний снова сдвинута вниз (должна быть прижата к шапке)')
+absent('local MODEL_H', 'в карточке снова резервируется место под 3D-модель')
 need('AddCircleFilled' not in card, 'в карточке что-то рисуется в зоне 3D-модели (круг)')
 # две группы строк и полупрозрачная линия между ними
-need('local ROWS_A = 4' in s and 'local ROWS_B = 3' in s and 'local DIV_H = 13' in s,
+need('local ROWS_A = 4' in s and 'local ROWS_B = 15' in s and 'local DIV_H = 13' in s,
      'блоки «характеристика» и «статистика» не разделены')
 need('local function divider()' in s and
      'fill(RX, dy, W - pad - RX - 12, 1, col32(255, 255, 255, 38), 0)' in s,
@@ -149,10 +150,25 @@ for _row in ('row("Пинг", ping, c4(TH.text), nil, nil, ROW_H)',
              'row("Здоровье", hpText, c4(TH.accent), hpNum, grndParamScale(hpNum), ROW_H)',
              'row("Броня", armText, c4(TH.accent2), armNum, grndParamScale(armNum), ROW_H)',
              'row("Скорость", speed, c4(TH.text), nil, nil, ROW_H)',
-             'row("Имя:", nick, c4(TH.textHi), nil, nil, ROW_H)',
              'row("Номер аккаунта:", textValue("rc_account", "—"), c4(TH.text), nil, nil, ROW_H)',
              'row("Уровень:", lvlRaw, c4(TH.text), nil, nil, ROW_H)'):
     need(_row in s, 'в карточке нет строки образца: ' + _row)
+# v1.19.62: статистика — ВСЕ поля ответа /stats, «Имя» из неё убрано
+absent('row("Имя:"', '«Имя» вернулось в статистику (ник и так есть в шапке)')
+for _row in ('row("Номер телефона", textValue("rc_phone", "—")',
+             'row("Варнов", textValue("rc_varnov", "—")',
+             'row("Пол", textValue("rc_gender", "—")',
+             'row("Женат на", textValue("rc_married", "—")',
+             'row("Орг. (ранг)", textValue("rc_org", "—")',
+             'row("Работа/Должность", textValue("rc_job", "—")',
+             'row("Бизнес", textValue("rc_business", "—")',
+             'row("Игровой статус", textValue("rc_status", "—")',
+             'row("Дом", textValue("rc_house", "—")',
+             'row("Квартира", textValue("rc_flat", "—")',
+             'row("VIP статус", textValue("rc_vip", "—")',
+             'row("За сегодня", textValue("today", "—")',
+             'row("Семья", textValue("rc_family", "—")'):
+    need(_row in s, 'в статистике нет поля /stats: ' + _row)
 absent('row("AFK"', '«AFK» вернулся в карточку рекона')
 absent('row("Оружие"', '«Оружие» вернулось в карточку рекона')
 absent('row("Патроны"', '«Патроны» вернулись в карточку рекона')

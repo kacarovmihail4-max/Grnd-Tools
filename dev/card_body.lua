@@ -31,7 +31,7 @@ render()
 local rows = drawnRows()
 local btns = drawnPunButtons()
 local vals = textVals()
-check(#rows == 7, "нарисованы все семь строк (нарисовано " .. tostring(#rows) .. ")")
+check(#rows == 19, "нарисованы все 19 строк: 4 характеристики + 15 статистики (нарисовано " .. tostring(#rows) .. ")")
 check(#btns == 4, "кнопок наказаний ровно четыре (нарисовано " .. tostring(#btns) .. ")")
 check(#btns == 4 and btns[1].id == "##rcb_p_JAIL" and btns[2].id == "##rcb_p_BAN"
     and btns[3].id == "##rcb_p_KICK" and btns[4].id == "##rcb_p_MUTE",
@@ -60,11 +60,17 @@ check(copiedToast, "клик по значку копирует ник (тост
 
 -- место 3D-модели пустое: ни кругов, ни текста слева вверху
 check(#CIRCLES == 0, "в карточке не рисуется аватар (место 3D-модели пустое)")
-local leftTopText = false
+-- ник в шапке — единственный текст слева ПОД шапкой; всё остальное в левой
+-- колонке — подписи кнопок наказаний
+local PUN_IDS = { JAIL = true, BAN = true, KICK = true, MUTE = true }
+local alienText = nil
 for _, d in ipairs(DRAWN) do
-    if d.kind == 'text' and d.x < 160 and d.y > 34 and d.y < 120 then leftTopText = true end
+    if d.kind == 'text' and d.x < 160 and d.y > 40 and not PUN_IDS[d.name] then
+        alienText = d.name
+    end
 end
-check(not leftTopText, "в зоне 3D-модели ничего не нарисовано")
+check(alienText == nil,
+    "в левой колонке нет ничего, кроме кнопок наказаний (найдено: " .. tostring(alienText) .. ")")
 
 -- две группы: характеристика, полупрозрачная линия, статистика
 local lines = drawnLines()
@@ -73,7 +79,7 @@ local ySpeed = nil
 local yName = nil
 for _, r in ipairs(rows) do
     if r.name == "Скорость" then ySpeed = r.y end
-    if r.name == "Имя:" then yName = r.y end
+    if r.name == "Номер аккаунта:" then yName = r.y end
 end
 local line = lines[1]
 -- заливки записаны в ЭКРАННЫХ координатах (карточка зовёт at()), а текст — в
@@ -81,15 +87,20 @@ local line = lines[1]
 local lineY = line and (line.y - ((RC.windowPos and RC.windowPos.y) or 0)) or nil
 check(line ~= nil and ySpeed ~= nil and yName ~= nil
     and lineY > ySpeed and lineY < yName,
-    "линия стоит между «Скорость» и «Имя:» (характеристика | статистика)")
+    "линия стоит между «Скорость» и «Номер аккаунта:» (характеристика | статистика)")
 check(line ~= nil and line.a > 0 and line.a < 255, "линия полупрозрачная (альфа " .. tostring(line and line.a) .. ")")
 check(line ~= nil and line.w > 100, "линия во всю ширину колонки строк")
 
 -- порядок строк — как в образце
 local order = {}
 for i, r in ipairs(rows) do order[i] = r.name end
-check(table.concat(order, ",") == "Пинг,Здоровье,Броня,Скорость,Имя:,Номер аккаунта:,Уровень:",
-    "порядок строк: " .. table.concat(order, ","))
+local want = "Пинг,Здоровье,Броня,Скорость,Номер аккаунта:,Уровень:,Номер телефона,Варнов,"
+    .. "Пол,Женат на,Орг. (ранг),Работа/Должность,Бизнес,Игровой статус,Дом,Квартира,"
+    .. "VIP статус,За сегодня,Семья"
+check(table.concat(order, ",") == want, "порядок строк: " .. table.concat(order, ","))
+check(vals["Имя:"] == nil, "«Имя:» убрано из статистики (ник есть в шапке)")
+check(vals["Номер телефона"] ~= nil and vals["Варнов"] ~= nil and vals["Семья"] ~= nil,
+    "статистика показывается полностью, а не до «Уровня»")
 
 -- значения как в образце
 check(vals["100.0"] ~= nil, "здоровье показано как «100.0»")
@@ -103,6 +114,14 @@ check(vals["AFK"] == nil and vals["Оружие"] == nil and vals["Патрон�
 -- кнопки стоят в левой колонке, строки — в правой
 check(#btns > 0 and btns[1].x + btns[1].w <= 160,
     "кнопки наказаний в ЛЕВОЙ колонке (x=" .. tostring(#btns > 0 and btns[1].x or -1) .. ")")
+check(#btns == 4 and btns[1].y <= 60,
+    "панель наказаний прижата к шапке (верхняя кнопка y=" .. tostring(#btns > 0 and btns[1].y or -1) .. ")")
+check(#btns == 4 and btns[4].y + btns[4].h < 220,
+    "панель наказаний не «уезжает» вниз (низ панели " .. tostring(#btns == 4 and (btns[4].y + btns[4].h) or -1) .. ")")
+local rowsTop = rows[1] and rows[1].y or 0
+local btnTop = #btns > 0 and btns[1].y or 0
+check(math.abs(rowsTop - btnTop) <= 6,
+    "первая строка и первая кнопка начинаются на одном уровне (" .. tostring(rowsTop) .. " ~ " .. tostring(btnTop) .. ")")
 check(rows[1] ~= nil and rows[1].x > 160, "строки в правой колонке (x=" .. tostring(rows[1] and rows[1].x) .. ")")
 
 -- 2) низкий экран: весь блок (характеристика + статистика) прокручивается
@@ -114,10 +133,10 @@ check((RC.scroll or 0) == 0, "старт прокрутки — верх спи�
 check(RC.scrollRect ~= nil and RC.scrollRect.h > 0, "область колеса мыши задана")
 rows = drawnRows()
 check(rows[1] ~= nil and rows[1].name == "Пинг", "наверху списка видна первая строка")
-RC.scroll = 300
+RC.scroll = 1000   -- просим больше максимума: карточка сама ограничит
 render()
 rows = drawnRows()
-check(rows[#rows] ~= nil and rows[#rows].name == "Уровень:", "внизу списка видна последняя строка «Уровень:»")
+check(rows[#rows] ~= nil and rows[#rows].name == "Семья", "внизу списка видна последняя строка «Семья»")
 local bad = 0
 for _, r in ipairs(rows) do
     if r.y < 34 then bad = bad + 1 end
@@ -125,7 +144,7 @@ end
 check(bad == 0, "ни одна строка не нарисована обрывком над окном прокрутки (" .. tostring(bad) .. ")")
 btns = drawnPunButtons()
 check(#btns == 4, "кнопки наказаний не уезжают вместе со списком (их " .. tostring(#btns) .. ")")
-check(RC.scroll <= math.max(0, RC.windowSize.h), "прокрутка ограничена содержимым")
+check((RC.scroll or 0) <= 469 + 1, "прокрутка не превышает высоту содержимого (" .. tostring(RC.scroll) .. ")")
 
 -- 3) стрелка внизу сворачивает весь блок информации и статистики
 resX, resY = 1920, 1080
@@ -133,7 +152,7 @@ RC.scroll = nil
 RC.statsOpen = nil
 render()
 local hExpanded = RC.windowSize.h
-check(#drawnRows() == 7, "до сворачивания строки на месте")
+check(#drawnRows() == 19, "до сворачивания строки на месте")
 clickAndRender("##grnd_recon_top")
 check(RC.statsOpen == false, "клик по стрелке свернул блок")
 check(#drawnRows() == 0, "свёрнутый блок информации и статистики не рисуется")
@@ -147,7 +166,7 @@ check(drawnButton("##grnd_recon_copy") ~= nil, "значок копирован�
 -- разворачиваем обратно
 clickAndRender("##grnd_recon_top")
 check(RC.statsOpen ~= false, "повторный клик развернул блок обратно")
-check(#drawnRows() == 7, "после разворота строки вернулись")
+check(#drawnRows() == 19, "после разворота строки вернулись")
 check((RC.scroll or 0) == 0, "после разворота список начинается сверху")
 
 -- 4) клик по кнопке внутри карточки даёт тост
@@ -164,16 +183,21 @@ check(toasted, "клик по BAN внутри карточки даёт тос�
 GRND_PUN.barOn = false
 render()
 check(#drawnPunButtons() == 0, "выключенный тумблер убирает кнопки из карточки")
-check(#drawnRows() == 7, "строки при этом остаются на месте")
+check(#drawnRows() == 19, "строки при этом остаются на месте")
 GRND_PUN.barOn = true
 
 -- 6) без данных от сервера строки не ломаются
 RC.live = {}
 render()
-check(#drawnRows() == 7, "без серверных данных строки всё равно рисуются")
+check(#drawnRows() == 19, "без серверных данных строки всё равно рисуются")
 check(textVals()["—"] ~= nil, "пустые значения показаны как «—», а не пустотой")
 RC.live = { hp = "100", arm = "80", ping = "30", speed = "45",
-            rc_account = "12345", rc_level = "18" }
+            rc_account = "12345", rc_level = "18",
+            rc_phone = "555-12-34", rc_varnov = "2", rc_gender = "Мужской",
+            rc_married = "нет", rc_org = "Полиция (3)", rc_job = "Инструктор",
+            rc_business = "Автомойка", rc_status = "В игре", rc_house = "Дом 3",
+            rc_flat = "Кв. 12", rc_vip = "Золото", today = "1 ч 20 мин",
+            rc_family = "Ивановы" }
 
 if FAILS == 0 then
     return 'ALL CARD SCENARIOS PASSED'

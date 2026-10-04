@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.61"
+GRND_SCRIPT_VERSION = "1.19.62"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -38967,8 +38967,9 @@ function grndMainBody()
             --     не может, поэтому там НИЧЕГО нет (просьба заказчика);
             --   • справа — один прокручиваемый список: сначала характеристика
             --     игрока (Пинг, Здоровье, Броня, Скорость), затем
-            --     полупрозрачная линия и статистика (Имя, Номер аккаунта,
-            --     Уровень). «Оружие», «Патроны» и «AFK» не выводятся;
+            --     полупрозрачная линия и ПОЛНАЯ статистика из /stats
+            --     («Имя» в неё не входит — ник есть в шапке).
+            --     «Оружие», «Патроны» и «AFK» не выводятся;
             --   • стрелка внизу сворачивает и разворачивает весь блок
             --     информации и статистики.
             local W = math.floor(math.max(400, math.min(460, resX * 0.28)))
@@ -38980,9 +38981,9 @@ function grndMainBody()
             local RW = W - pad - 12 - RX      -- ширина колонки строк
             local ROW_H = 24            -- высота строки сведений
             local ROWS_A = 4            -- характеристика игрока
-            local ROWS_B = 3            -- статистика
+            -- статистика: все поля ответа /stats (без «Имя» — ник есть в шапке)
+            local ROWS_B = 15
             local DIV_H = 13            -- полупрозрачная линия между блоками
-            local MODEL_H = ROWS_A * ROW_H    -- пустое место «3D-модели»
             local PUN_BH = 30           -- высота кнопки наказания
             local PUN_BG = 6            -- зазор между кнопками
             local PUN_TOP = 4           -- сколько кнопок в карточке
@@ -39001,7 +39002,9 @@ function grndMainBody()
             local rowsH = ROWS_A * ROW_H + DIV_H + ROWS_B * ROW_H
             -- состояние «свёрнуто» живёт в RC: стрелка внизу его меняет
             local openState = (RC.statsOpen ~= false)
-            local leftTop = TOP_Y + (openState and MODEL_H or 0) + 4
+            -- v1.19.62: панель наказаний прижата к шапке (была ниже — под
+            -- пустым местом 3D-модели, из-за чего кнопки «уезжали» вниз)
+            local leftTop = TOP_Y + 2
             local leftBottom = leftTop + punH
             local contentH = math.max(openState and (TOP_Y + rowsH) or 0,
                 leftBottom) + BOT + 6
@@ -39307,9 +39310,23 @@ function grndMainBody()
                 row("Броня", armText, c4(TH.accent2), armNum, grndParamScale(armNum), ROW_H)
                 row("Скорость", speed, c4(TH.text), nil, nil, ROW_H)
                 divider()
-                row("Имя:", nick, c4(TH.textHi), nil, nil, ROW_H)
+                -- v1.19.62: статистика — все поля ответа /stats, а не три
+                -- строки. «Имя» из статистики убрано (ник есть в шапке).
                 row("Номер аккаунта:", textValue("rc_account", "—"), c4(TH.text), nil, nil, ROW_H)
                 row("Уровень:", lvlRaw, c4(TH.text), nil, nil, ROW_H)
+                row("Номер телефона", textValue("rc_phone", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("Варнов", textValue("rc_varnov", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("Пол", textValue("rc_gender", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("Женат на", textValue("rc_married", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("Орг. (ранг)", textValue("rc_org", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("Работа/Должность", textValue("rc_job", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("Бизнес", textValue("rc_business", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("Игровой статус", textValue("rc_status", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("Дом", textValue("rc_house", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("Квартира", textValue("rc_flat", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("VIP статус", textValue("rc_vip", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("За сегодня", textValue("today", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("Семья", textValue("rc_family", "—"), c4(TH.text), nil, nil, ROW_H)
 
                 -- v1.19.59: полоса прокрутки у правого края (появляется
                 -- только когда список длиннее окна). Ведём и мышью, а

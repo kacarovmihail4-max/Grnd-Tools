@@ -124,7 +124,12 @@ id = 77
 RC = {
     show = true, cursor = true, id = 77, nick = "Test_Player",
     live = { hp = "100", arm = "80", ping = "30", speed = "45",
-             rc_account = "12345", rc_level = "18" },
+             rc_account = "12345", rc_level = "18",
+             rc_phone = "555-12-34", rc_varnov = "2", rc_gender = "Мужской",
+             rc_married = "нет", rc_org = "Полиция (3)", rc_job = "Инструктор",
+             rc_business = "Автомойка", rc_status = "В игре", rc_house = "Дом 3",
+             rc_flat = "Кв. 12", rc_vip = "Золото", today = "1 ч 20 мин",
+             rc_family = "Ивановы" },
 }
 GRND_PUN = {
     loaded = true, barOn = true,
@@ -136,7 +141,12 @@ function GRND_PUN.load() end
 -- ---- удобные разборы кадра ----
 local ROW_LABELS = {
     ["Пинг"] = true, ["Здоровье"] = true, ["Броня"] = true, ["Скорость"] = true,
-    ["Имя:"] = true, ["Номер аккаунта:"] = true, ["Уровень:"] = true,
+    ["Номер аккаунта:"] = true, ["Уровень:"] = true,
+    ["Номер телефона"] = true, ["Варнов"] = true, ["Пол"] = true,
+    ["Женат на"] = true, ["Орг. (ранг)"] = true, ["Работа/Должность"] = true,
+    ["Бизнес"] = true, ["Игровой статус"] = true, ["Дом"] = true,
+    ["Квартира"] = true, ["VIP статус"] = true, ["За сегодня"] = true,
+    ["Семья"] = true,
 }
 function drawnRows()
     local out = {}
