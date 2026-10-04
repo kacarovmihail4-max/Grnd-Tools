@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.43"
+GRND_SCRIPT_VERSION = "1.19.44"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -26994,6 +26994,8 @@ end
 --    * слово триггера ищется по правилу САМОГО слова: написали переменную на
 --      слове («дм{ID}») — слово ищется в любом месте репорта, обычное слово —
 --      только точное совпадение; переменная действует ровно на одно слово;
+--    * {ID} на слове в триггере — ответ собирается САМ («Приветствую, слежу
+--      за игроком Ник[ID]»), поле «Ответ игроку» у такой вкладки не нужно;
 --
 --  Конфиг — общий config.json, секция reportAuto (домен grnd_repauto в
 --  GRND_CONFIG.sources): on / sel / t1_trigger / t1_answer / t1_command / …
@@ -27354,7 +27356,8 @@ do
         for i = 1, #tabs do
             local tab = tabs[i]
             local hasWord = #QR.autoTriggers(tab) > 0
-            local hasAns = trim(tostring(tab.answer or "")) ~= "" or QR.autoPunInTrigger(tab)
+            local hasAns = trim(tostring(tab.answer or "")) ~= ""
+                or QR.autoPunInTrigger(tab) or QR.autoIDInTrigger(tab)
             if (hasWord or QR.autoBarePun(tab)) and hasAns then ready = ready + 1 end
         end
         return ready, #tabs
@@ -27391,6 +27394,22 @@ do
     function QR.autoPunInTrigger(tab)
         local raw = autoLower(tostring((tab and tab.trigger) or ""))
         return raw:find("{punishments}", 1, true) ~= nil
+    end
+
+    -- v1.19.44: {ID} на слове в ТРИГГЕРЕ — ответ тоже собирается САМ, что бы
+    -- ни лежало в поле «Ответ игроку»: админ пишет только «дм{ID}», а игрок
+    -- получает «Приветствую, слежу за игроком Ник[ID]» (ID из репорта, если он
+    -- там был, иначе штатный) и следом /sp с этим ID.
+    QR.AUTO_GREET = "Приветствую, слежу за игроком {ник}[{ID}]"
+
+    function QR.autoIDInTrigger(tab)
+        local raw = autoLower(tostring((tab and tab.trigger) or ""))
+        return raw:find("{id}", 1, true) ~= nil
+    end
+
+    -- Готовый текст приветствия для отчёта ({nick=, id=, foundId=}).
+    function QR.autoGreet(rep)
+        return oneLine(QR.apply(QR.AUTO_GREET, rep))
     end
 
     -- Как назвать такую вкладку в тостах и подсказке.
@@ -28062,14 +28081,22 @@ do
         local plan = {}
         for k = 1, #hits do
             local tab = QR.autoTab(hits[k].idx)
-            local hasID, hasAll, hasPun = QR.autoVarFlags(tab)
+            local hasAll, hasPun = select(2, QR.autoVarFlags(tab))
             -- v1.19.41: {punishments} в ТРИГГЕРЕ — поле ответа не нужно,
             -- отвечаем ровно как кнопка «Наказания игрока». Текст соберётся,
             -- когда окно /getinfo придёт (маркер ниже).
             local punOnly = QR.autoPunInTrigger(tab)
-            local line
+            -- v1.19.44: {ID} на слове в ТРИГГЕРЕ — ответ собирается сам:
+            -- «Приветствую, слежу за игроком Ник[ID]», что бы ни было в поле
+            local idAuto = (not punOnly) and QR.autoIDInTrigger(tab)
+            local line, pun
             if punOnly then
                 line = "{punishments}"
+                pun = true
+            elseif idAuto then
+                line = QR.autoGreet(rep)
+                -- поле ответа не используется — и его {punishments} тоже
+                pun = false
             else
                 line = oneLine(QR.apply(tab.answer, rep))
                 if hasAll then
@@ -28077,11 +28104,11 @@ do
                     line = trim((line:gsub("{all}", "", 1)))
                     line = trim((line:gsub("%s+", " ")))
                 end
+                pun = hasPun
             end
             local cmd = QR.autoTabCmd(id, tab, foundId)
             if line ~= "" or cmd then
-                plan[#plan + 1] = { idx = hits[k].idx, line = line, cmd = cmd,
-                    pun = (hasPun or punOnly) }
+                plan[#plan + 1] = { idx = hits[k].idx, line = line, cmd = cmd, pun = pun }
             end
         end
         if #plan == 0 then
@@ -28428,18 +28455,22 @@ do
         yy = yy + 40
 
         local selPun = QR.autoPunInTrigger(sel2)
+        local selID = (not selPun) and QR.autoIDInTrigger(sel2)
         ctx.uiText(x, yy, "Ответ игроку", dim, 0.84)
         yy = yy + 17
-        if selPun then
+        if selPun or selID then
             -- v1.19.41: {punishments} в триггере — поле ответа не нужно:
-            -- ответ собирается сам, как у кнопки «Наказания игрока»
-            local punNote = wrapW(
-                "Соберётся сам: «Приветствую, ваши активные наказания >> …» через /getinfo — как кнопка «Наказания игрока»",
-                iw, ctx.drawnW, tHintSc)
-            for li = 1, #punNote do
-                ctx.uiText(x, yy + (li - 1) * tHintStep, punNote[li], acC, tHintSc)
+            -- ответ собирается сам, как у кнопки «Наказания игрока».
+            -- v1.19.44: {ID} на слове в триггере — тоже: «Приветствую, слежу
+            -- за игроком Ник[ID]», что бы ни было в поле ответа.
+            local noteTxt = selPun
+                and "Соберётся сам: «Приветствую, ваши активные наказания >> …» через /getinfo — как кнопка «Наказания игрока»"
+                or "Соберётся сам: «Приветствую, слежу за игроком Ник[234]» — поле ответа не нужно"
+            local note = wrapW(noteTxt, iw, ctx.drawnW, tHintSc)
+            for li = 1, #note do
+                ctx.uiText(x, yy + (li - 1) * tHintStep, note[li], acC, tHintSc)
             end
-            yy = yy + math.max(1, #punNote) * tHintStep + 12
+            yy = yy + math.max(1, #note) * tHintStep + 12
         else
             local ansH = 92
             local akey, aid = "autoAnswer" .. A.sel, "##grnd_qr_auto_answer"
@@ -28495,8 +28526,14 @@ do
         local repId = ""
         if type(_G.GRND_REP) == "table" then repId = tostring(_G.GRND_REP.playerId or "") end
         local sampleId = repId:match("^%d+$") or "25"
-        local sampleLine = selPun and QR.autoPunWrap("Мут 60 минут")
-            or oneLine(QR.apply(sel2.answer, { nick = "Ник", id = sampleId }))
+        local sampleLine
+        if selPun then
+            sampleLine = QR.autoPunWrap("Мут 60 минут")
+        elseif selID then
+            sampleLine = QR.autoGreet({ nick = "Ник", id = sampleId })
+        else
+            sampleLine = oneLine(QR.apply(sel2.answer, { nick = "Ник", id = sampleId }))
+        end
         local cmdLine = QR.autoCmdFor(sampleId, sel2)
         local prev
         if sampleLine == "" then
@@ -28515,7 +28552,7 @@ do
         local hintY = yy + lineH(ctx, 0.86) + 6
         local varHints = {
             "Переменные {ID}, {all}, {punishments} пишутся в ответе или на слове в триггере («дм{ID}») — тогда слово ищется в любом месте репорта",
-            "{ID} — найдёт ID в репорте («дм 234», «234 дм») и подставит его в ответ",
+            "{ID} — найдёт ID в репорте («дм 234», «234 дм») и подставит его в ответ; на слове в триггере («дм{ID}») ответ собирается сам: «Приветствую, слежу за игроком Ник[ID]»",
             "После ответа автопилот сам зайдёт в слежку за этим игроком — даже если выбрана команда /goto",
             "{all} — на слове в триггере («спек{all}»): сработает, даже если репорт из нескольких слов",
             "{punishments} — активные наказания игрока (как кнопка «Наказания игрока»)",
@@ -28528,7 +28565,7 @@ do
             .. (A.lastCheck and A.lastCheck ~= "" and (" → " .. tostring(A.lastCheck)) or "")
         -- Подбираем кегль блока: подсказки (с переносами) + строка диагностики
         local hintSc, hintStep, hintLines = 0.72, 0, nil
-        local scales = { 0.72, 0.68, 0.64, 0.60, 0.56, 0.52 }
+        local scales = { 0.72, 0.68, 0.64, 0.60, 0.56, 0.52, 0.48 }
         for si = 1, #scales do
             local sc = scales[si]
             local step = lineH(ctx, sc) + 2
@@ -28538,7 +28575,10 @@ do
                 packed[#packed + 1] = ls
                 rows = rows + #ls
             end
-            if si == #scales or hintY + rows * step <= h - 4 then
+            -- Высота блока — не «rows шагов», а шаги между строками плюс
+            -- высота последней: иначе нижняя строка упиралась в край окна.
+            local blockH = (rows - 1) * step + lineH(ctx, sc)
+            if si == #scales or hintY + blockH <= h - 6 then
                 hintSc, hintStep, hintLines = sc, step, packed
                 break
             end

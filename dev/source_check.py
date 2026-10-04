@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.43"' in s, 'версия не 1.19.43')
+need('GRND_SCRIPT_VERSION = "1.19.44"' in s, 'версия не 1.19.44')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -184,7 +184,7 @@ need('на паузе — слежка, вернётся сам' in auto_draw_sr
 need('на паузе — идёт мероприятие, вернётся сам' in auto_draw_src2,
      'пропало состояние паузы на мероприятии')
 # v1.19.36: внизу раздела — подсказки про переменные {ID} и {all}
-need('"{ID} — найдёт ID в репорте («дм 234», «234 дм») и подставит его в ответ"' in auto_draw_src2,
+need('"{ID} — найдёт ID в репорте («дм 234», «234 дм») и подставит его в ответ; на слове в триггере («дм{ID}») ответ собирается сам: «Приветствую, слежу за игроком Ник[ID]»"' in auto_draw_src2,
      'пропала подсказка про {ID}')
 need('"После ответа автопилот сам зайдёт в слежку за этим игроком — даже если выбрана команда /goto"'
      in auto_draw_src2, 'пропала подсказка про автослежку за найденным ID')
@@ -260,6 +260,18 @@ need('local function autoWordHit(low, trig)' in s,
      'нет поиска триггера целым словом в любом месте репорта')
 need('local function autoLastChar(t)' in s,
      'нет проверки границы слова слева')
+# v1.19.44: {ID} на слове в триггере — ответ собирается САМ, поле ответа не нужно
+need('QR.AUTO_GREET = "Приветствую, слежу за игроком {ник}[{ID}]"' in s and
+     'function QR.autoIDInTrigger(tab)' in s and 'function QR.autoGreet(rep)' in s,
+     'нет автоответа для вкладки с {ID} на слове в триггере')
+need('local idAuto = (not punOnly) and QR.autoIDInTrigger(tab)' in s and
+     'line = QR.autoGreet(rep)' in s,
+     'план не собирает ответ сам при {ID} в триггере')
+need('local selID = (not selPun) and QR.autoIDInTrigger(sel2)' in s and
+     'if selPun or selID then' in s and
+     '«Приветствую, слежу за игроком Ник[234]» — поле ответа не нужно' in s,
+     'поле «Ответ игроку» не прячется при {ID} в триггере')
+
 # v1.19.43: широкий поиск — только у слова, НА КОТОРОМ написана переменная
 need('local hit = it.wide and autoWordHit(low, it.word) or (low == it.word)' in s,
      'режим сопоставления не привязан к слову с переменной')
