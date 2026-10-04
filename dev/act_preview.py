@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Превью полосы действий (v1.19.70) без игры.
+"""Превью полосы действий («Действия» над игроком) без игры.
 
 Значки НЕ переписываются в питоне: из скрипта выделяются настоящие функции
 таблицы ACT_ICONS, исполняются в lupa с «записывающей» обвязкой H — и на
@@ -7,7 +7,7 @@
 
   python3 act_preview.py ../grnd_adm_tools.lua /tmp/act_panel.png
 """
-import io, os, sys
+import io, os, re, sys
 
 from PIL import Image, ImageDraw, ImageFont
 import lupa
@@ -60,14 +60,17 @@ def record(key):
 
 # --- раскладка: та же функция, что в скрипте --------------------------------
 resx = 1920
+# предел ширины берём из самого скрипта, чтобы превью не расходилось с игрой
+_lim = re.search(r'grndActLayout\(A\.items, math\.min\(resX - 24, (\d+)\)\)', src)
+MAXW = min(resx - 24, int(_lim.group(1)) if _lim else 960)
 lo = lua.eval('function(items, maxW) return grndActLayout(items, maxW) end')(
-    lua.table(*labels), min(resx - 24, 880))
+    lua.table(*labels), MAXW)
 BTN = int(lo['btn'])
 GAP = int(lo['gap'])
 PAD = int(lo['pad'])
 AW = int(lo['w'])
 stripH = int(lo['stripH'])
-PILL = BTN + 12
+PILL = BTN + 14
 HINT = 22
 panel_w = AW + 16
 panel_h = HINT + stripH + 2
@@ -95,11 +98,18 @@ def draw_icon(key, cx, cy, size, col):
     def py(v):
         return cy + v * s
 
+    # линии рисуем с «круглыми концами»: ImDrawList сглаживает стыки отрезков,
+    # поэтому в превью у каждого конца ставим полукруг радиусом в пол-толщины
     for kind, a in record(key):
         if kind == 'l':
-            d.line([px(a[0]), py(a[1]), px(a[2]), py(a[3])], fill=col,
-                   width=max(1, round((a[4] if len(a) > 4 else 1.5) * k)))
-        elif kind == 'r':
+            w = max(1, round((a[4] if len(a) > 4 else 1.5) * k))
+            x1, y1, x2, y2 = px(a[0]), py(a[1]), px(a[2]), py(a[3])
+            d.line([x1, y1, x2, y2], fill=col, width=w)
+            r = w / 2.0
+            d.ellipse([x1 - r, y1 - r, x1 + r, y1 + r], fill=col)
+            d.ellipse([x2 - r, y2 - r, x2 + r, y2 + r], fill=col)
+            continue
+        if kind == 'r':
             d.rectangle([px(a[0]), py(a[1]), px(a[0] + a[2]), py(a[1] + a[3])], fill=col)
         elif kind in ('ro', 'rro'):
             d.rounded_rectangle([px(a[0]), py(a[1]), px(a[0] + a[2]), py(a[1] + a[3])],
@@ -133,9 +143,15 @@ for row in rows:
     for b in row['btn']:
         bx = b['x'] * SCALE
         by = ry + 5 * SCALE
+        # как в скрипте: мягкая тень, объёмная заливка, рамка и верхний блик
+        d.rounded_rectangle([bx + SCALE, by + 2 * SCALE, bx + BTN * SCALE + SCALE,
+                             by + BTN * SCALE + 2 * SCALE],
+                            radius=9 * SCALE, fill=(0, 0, 0, 70))
         d.rounded_rectangle([bx, by, bx + BTN * SCALE, by + BTN * SCALE],
-                            radius=8 * SCALE, fill=(255, 255, 255, 11),
-                            outline=(255, 255, 255, 16), width=1)
+                            radius=9 * SCALE, fill=(255, 255, 255, 18),
+                            outline=(255, 255, 255, 34), width=2)
+        d.line([bx + 7 * SCALE, by + 1.6 * SCALE, bx + (BTN - 7) * SCALE, by + 1.6 * SCALE],
+               fill=(255, 255, 255, 20), width=max(1, SCALE // 2))
         draw_icon(keys[b['i'] - 1], bx + BTN * SCALE / 2, by + BTN * SCALE / 2,
                   (BTN - 10) * SCALE, (206, 214, 228))
 
@@ -146,9 +162,11 @@ except Exception:
     font = ImageFont.load_default()
     font_small = font
 
-d.text((10, 8), 'Полоса действий (v1.19.70) — значки %d px, панель %dx%d: без шапки, ника и крестика'
-       % (BTN - 12, panel_w, panel_h), fill=(230, 235, 245), font=font)
-d.text((10, 32), 'Разделители групп — светлые черты ровно в зазоре; промежутки между значками одинаковые',
+_ver = re.search(r'GRND_SCRIPT_VERSION = "([\d.]+)"', src)
+d.text((10, 8), 'Полоса действий (v%s) — значки %d px, панель %dx%d: без шапки, ника и крестика'
+       % (_ver.group(1) if _ver else '?', BTN - 12, panel_w, panel_h),
+       fill=(230, 235, 245), font=font)
+d.text((10, 32), 'Разделители групп — светлые черты ровно посередине широкого зазора (по 12 px воздуха с каждой стороны)',
        fill=(150, 160, 175), font=font_small)
 
 # --- легенда ----------------------------------------------------------------

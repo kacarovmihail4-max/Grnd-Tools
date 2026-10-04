@@ -150,17 +150,34 @@ check(#ACTIONS_LIST == 19, 'в списке действий ровно 19 пу�
 local all = icons()
 check(#all == 19, 'значков нарисовано столько же, сколько действий')
 
--- v1.19.70: значки крупнее и стоят РОВНО (одинаковые промежутки)
+-- v1.19.71: значки крупные, внутри группы ровный шаг, на границе групп — воздух
 check(all[1] and all[1].w == 36, 'значок стал крупнее: ' .. tostring(all[1] and all[1].w) .. ' px')
 local gaps = {}
 for i = 2, #all do gaps[#gaps + 1] = all[i].x - (all[i - 1].x + all[i - 1].w) end
-local gMin, gMax = 999, -999
+local gOk, wide = true, 0
 for i = 1, #gaps do
-    if gaps[i] < gMin then gMin = gaps[i] end
-    if gaps[i] > gMax then gMax = gaps[i] end
+    if gaps[i] == 8 then
+        -- обычный промежуток внутри группы
+    elseif gaps[i] == 24 then
+        wide = wide + 1
+    else
+        gOk = false
+    end
 end
-check(gMin == gMax and gMin == 8,
-    'промежутки между значками одинаковые (' .. gMin .. '…' .. gMax .. ')')
+check(gOk, 'промежутки ровные: 8 px внутри группы, 24 px на границе групп')
+check(wide == 5, 'широких промежутков ровно по числу границ групп (5, а не ' .. wide .. ')')
+
+-- кнопки «покачественнее»: тень + объёмная заливка + верхний блик
+local shadows, faces = 0, 0
+for _, q in ipairs(RECTS) do
+    local c = q.c
+    if type(c) == 'table' and c[1] == 0 and c[2] == 0 and c[3] == 0
+       and (tonumber(c[4]) or 0) >= 60 then shadows = shadows + 1 end
+    if type(c) == 'table' and c[1] == 255 and c[2] == 255 and c[3] == 255
+       and (tonumber(c[4]) or 0) >= 16 then faces = faces + 1 end
+end
+check(shadows >= 19, 'под каждой кнопкой мягкая тень (найдено ' .. shadows .. ')')
+check(faces >= 19, 'у каждой кнопки объёмная заливка (найдено ' .. faces .. ')')
 local rowCentered = true
 for _, b in ipairs(all) do
     local rowTop = math.floor(b.y + 0.5)
@@ -184,18 +201,18 @@ end
 check(pill ~= nil, 'значки лежат на тёмной подложке-«таблетке»')
 -- v1.19.70: полоса стала толще — плашка ровно на 12 px выше значка
 local btnPx = all[1] and all[1].w or 36
-check(pill ~= nil and math.abs((pill.p2.y - pill.p1.y) - (btnPx + 12)) <= 0.5,
-    'высота «таблетки» = значок + 12 px (' ..
+check(pill ~= nil and math.abs((pill.p2.y - pill.p1.y) - (btnPx + 14)) <= 0.5,
+    'высота «таблетки» = значок + 14 px (' ..
     tostring(pill and (pill.p2.y - pill.p1.y) or '—') .. ' при значке ' .. btnPx .. ')')
 check(pill ~= nil and (pill.p2.x - pill.p1.x) >= 500,
     '«таблетка» на всю ширину полосы: ' .. tostring(pill and (pill.p2.x - pill.p1.x) or '—'))
 
 -- Компактность: без подписей панель в разы меньше прежнего окна на 6 колонок
-check(WIN.w <= 880, 'панель компактная по ширине: ' .. WIN.w .. ' px')
+check(WIN.w <= 960, 'панель компактная по ширине: ' .. WIN.w .. ' px')
 check(WIN.h <= 90, 'панель компактная по высоте: ' .. WIN.h .. ' px')
 check(WIN.w > 300, 'панель не «схлопнулась» в точку')
-check(WIN.w * WIN.h < 960 * 218 / 3,
-    'панель втрое меньше прежнего окна действий (' .. (WIN.w * WIN.h) .. ' px²)')
+check(WIN.w * WIN.h < 960 * 218 / 2.5,
+    'панель заметно меньше прежнего окна действий (' .. (WIN.w * WIN.h) .. ' px²)')
 
 -- Заголовка «Действия», ника и крестика больше нет
 local bad = nil
@@ -217,9 +234,17 @@ check(inside, 'значки не выходят за пределы панели
 -- ------------------------ 2) наведение и подсказка ------------------------
 local third = all[3]
 GRND_MOUSE.x, GRND_MOUSE.y = center(third)
+SCRIPT.clickId = nil
 frame()
 check(#TEXTS >= 1 and TEXTS[1].t == ACTIONS_LIST[3],
     'над значком показывается название действия («' .. tostring(ACTIONS_LIST[3]) .. '»)')
+local hotFill = 0
+for _, q in ipairs(RECTS) do
+    local c = q.c
+    if type(c) == 'table' and c[1] == 60 and c[2] == 160 and c[3] == 255
+       and (tonumber(c[4]) or 0) >= 40 then hotFill = hotFill + 1 end
+end
+check(hotFill >= 1, 'наведённая кнопка подсвечивается акцентом')
 
 -- «крестик» и ник не появляются даже при наведении
 local bad2 = nil
@@ -476,6 +501,30 @@ end
 check(#dotLabels == 0, 'у каждого действия есть свой значок (без «заглушек»): ' ..
     table.concat(dotLabels, ', '))
 
+-- у ключевых значков проверяем не только «нарисовано», но и КАК нарисовано:
+-- подмена красивой фигуры на грубую должна сразу валить стенд
+local function shapesOf(key)
+    for kk in pairs(DRAWS) do DRAWS[kk] = 0 end
+    grndDrawActIcon(DL, function(x, y) return { x = x, y = y } end, key, 50, 50, 22, 0)
+    local t = {}
+    for kk, vv in pairs(DRAWS) do t[kk] = vv end
+    return t
+end
+local armS = shapesOf('arm')
+check((armS.AddTriangleFilled or 0) >= 20, 'щит брони залит веером (без «ступенек»)')
+check((armS.AddRectFilled or 0) == 0, 'у щита брони нет полос-«ступенек»')
+local keyS = shapesOf('fixcar')
+check((keyS.AddLine or 0) >= 8, 'у гаечного ключа есть ручка, дуга головки и губки')
+check((keyS.AddCircleFilled or 0) == 0, 'головка ключа залита кругом — это уже не гаечный ключ')
+local frS, unS = shapesOf('freeze'), shapesOf('unfreeze')
+check((frS.AddCircle or 0) >= 1 and (frS.AddRectFilled or 0) >= 2,
+    '«Заморозить» — круглая кнопка с двумя полосками (пауза)')
+check((unS.AddCircle or 0) >= 1 and (unS.AddTriangleFilled or 0) >= 1,
+    '«Разморозить» — круглая кнопка с треугольником (воспроизведение)')
+local spS = shapesOf('spawn')
+check((spS.AddLine or 0) >= 15 and (spS.AddTriangleFilled or 0) >= 1,
+    '«Заспавнить» — круговая стрелка с наконечником')
+
 local keys = {}
 for _, label in ipairs(ACTIONS_LIST) do keys[grndActIconKey(label)] = true end
 local nKeys = 0
@@ -523,15 +572,32 @@ for i = 1, #sep do
     if (tonumber(c[4]) or 0) < 60 then bright = false end
 end
 check(bright, 'разделители ярче прежних (α ≥ 60)')
--- разделители не режут значки: стоят в промежутке
-local sepOk = true
+-- v1.19.71: разделитель стоит посередине зазора и не липнет к кнопкам
+local sepOk, sepAir = true, true
 for i = 1, #sep do
     local lx = sep[i].p1.x
     for _, b in ipairs(all) do
         if lx > b.x - 0.5 and lx < b.x + b.w + 0.5 then sepOk = false end
     end
+    local left, right = -9999, 99999
+    for _, b in ipairs(all) do
+        if b.x + b.w <= lx and b.x + b.w > left then left = b.x + b.w end
+        if b.x >= lx and b.x < right then right = b.x end
+    end
+    if (lx - left) < 11.5 or (right - lx) < 11.5 then sepAir = false end
 end
 check(sepOk, 'разделители стоят ровно в промежутках, а не на значках')
+check(sepAir, 'вокруг разделителя есть воздух — до кнопок ≥ 12 px с каждой стороны')
+-- верхние блики кнопок (тонкая светлая черта сверху каждой кнопки)
+local blik = 0
+for _, q in ipairs(LINES) do
+    local c = q.c
+    if type(c) == 'table' and c[1] == 255 and c[2] == 255 and c[3] == 255
+       and (tonumber(c[4]) or 0) <= 40 and math.abs(q.p1.y - q.p2.y) < 0.01 then
+        blik = blik + 1
+    end
+end
+check(blik >= 19, 'у каждой кнопки верхний блик (найдено ' .. blik .. ')')
 
 local emptyIcons = {}
 for _, label in ipairs(ACTIONS_LIST) do
