@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.66"
+GRND_SCRIPT_VERSION = "1.19.67"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -1714,6 +1714,18 @@ function grndClickAlive()
     return (GRND_MOUSE.frame or -9999) - GRND_UIFRAME <= 0
        and (GRND_MOUSE.frame or -9999) >= GRND_UIFRAME - 1
 end
+-- v1.19.67: клик по игроку в чекере (килл-лист, «Админы в сети») — ТОЛЬКО
+-- левой кнопкой. Флаг «сырого» клика помечается кнопкой-источником
+-- (clickedBtn: 1 — ЛКМ, 2 — ПКМ, 3 — СКМ), поэтому правая и средняя кнопки не
+-- могут «нажать» на игрока даже если флаг остался с прошлого кадра.
+function grndLeftClickPending()
+    local M = GRND_MOUSE
+    if type(M) ~= "table" or not M.clicked then return false end
+    local btn = M.clickedBtn
+    if btn ~= nil and btn ~= 1 then return false end
+    if not grndClickAlive() then return false end
+    return true
+end
 -- v1.11.11: самый надёжный способ узнать, зажата ли ПКМ, — прямой вызов
 -- WinAPI GetAsyncKeyState через LuaJIT ffi (MoonLoader — LuaJIT). Если
 -- фишка недоступна, возвращается nil и вызывающий код берёт другие
@@ -1736,6 +1748,23 @@ function grndRmbHeldWin()
     if not v then return nil end
     if v < 0 then v = v + 65536 end
     return v >= 32768
+end
+-- v1.19.67: «сырой» клик живёт ровно один кадр отрисовки. Раньше флаг
+-- GRND_MOUSE.clicked никто не снимал, если окна его не «съели»: следующий
+-- клик ЛЮБОЙ кнопкой (в т.ч. правой/средней) выглядел как свежий левый клик —
+-- и по игроку в чекере срабатывало нажатие не той кнопкой. Теперь флаги
+-- гасятся в НАЧАЛЕ следующего кадра: свой кадр клик виден и окнам, и коду
+-- основного цикла между кадрами, а на следующий кадр уже не переживает.
+function grndMouseFrameBegin()
+    local M = GRND_MOUSE
+    if type(M) ~= "table" then return end
+    local fr = M.frame
+    if not fr then return end
+    local cur = tonumber(GRND_UIFRAME) or 0
+    if fr > cur - 1 then return end   -- клик помечен текущим (или будущим) кадром
+    M.frame = nil
+    M.clicked, M.rclicked, M.mclicked = false, false, false
+    M.clickedBtn, M.rclickedBtn, M.mclickedBtn = nil, nil, nil
 end
 function grndConsumeMsg(passGame)
     if type(consumeWindowMessage) ~= "function" then return end
@@ -8448,31 +8477,37 @@ function onWindowMessage(msg, wparam, lparam)
     -- ---------- 1) мышь: своё состояние кнопок ----------
     if msgN == 0x0201 then
         GRND_MOUSE.down, GRND_MOUSE.clicked = true, true
+        GRND_MOUSE.clickedBtn = 1
         GRND_MOUSE.x, GRND_MOUSE.y = grndMouseXY(lparam)
     elseif msgN == 0x0202 then
         GRND_MOUSE.down = false
         GRND_MOUSE.x, GRND_MOUSE.y = grndMouseXY(lparam)
     elseif msgN == 0x0203 then
         GRND_MOUSE.clicked = true
+        GRND_MOUSE.clickedBtn = 1
         GRND_MOUSE.x, GRND_MOUSE.y = grndMouseXY(lparam)
     elseif msgN == 0x0204 then
         GRND_MOUSE.rdown, GRND_MOUSE.rclicked = true, true
+        GRND_MOUSE.rclickedBtn = 2
         GRND_MOUSE.x, GRND_MOUSE.y = grndMouseXY(lparam)
     elseif msgN == 0x0205 then
         GRND_MOUSE.rdown = false
         GRND_MOUSE.x, GRND_MOUSE.y = grndMouseXY(lparam)
     elseif msgN == 0x0206 then
         GRND_MOUSE.rclicked = true
+        GRND_MOUSE.rclickedBtn = 2
         GRND_MOUSE.x, GRND_MOUSE.y = grndMouseXY(lparam)
     elseif msgN == 0x0207 then
         -- WM_MBUTTONDOWN — ClickWarp (средняя кнопка)
         GRND_MOUSE.mdown, GRND_MOUSE.mclicked = true, true
+        GRND_MOUSE.mclickedBtn = 3
         GRND_MOUSE.x, GRND_MOUSE.y = grndMouseXY(lparam)
     elseif msgN == 0x0208 then
         GRND_MOUSE.mdown = false
         GRND_MOUSE.x, GRND_MOUSE.y = grndMouseXY(lparam)
     elseif msgN == 0x0209 then
         GRND_MOUSE.mclicked = true
+        GRND_MOUSE.mclickedBtn = 3
         GRND_MOUSE.x, GRND_MOUSE.y = grndMouseXY(lparam)
     elseif msgN == 0x0200 or msgN == 0x020A or msgN == 0x020D then
         GRND_MOUSE.x, GRND_MOUSE.y = grndMouseXY(lparam)
@@ -12131,6 +12166,14 @@ end
 -- =====================================================================
 --  МОДУЛЬ 11 (v1.5.1, сборка 2): GRND KILL LIST — кастомный килл-лист (чекер №1).
 --  ------------------------------------------------------------------
+--  v1.19.67: чекеры (килл-лист и «Админы в сети») больше не «просвечивают»
+--  через окна: пока открыто любое окно скрипта (меню, табло, репорт, рекон,
+--  перехват, лог, форма, гос.волна, выпадающий список) или диалог сервера,
+--  они не рисуются и не ловят клики. Исключение — режим перемещения панели,
+--  когда её держат мышью. И нажать на игрока можно ТОЛЬКО ЛЕВОЙ кнопкой:
+--  у «сырого» клика теперь есть источник (1/2/3), а сами флаги гасятся в
+--  конце кадра отрисовки — раньше несъеденный клик «залипал» на след. кадр
+--  и ПКМ/СКМ срабатывала как ЛКМ.
 --  Полностью СВОЯ реализация вместо системного килл-листа SA-MP:
 --    * структура stKillInfo (= CDeathWindow в SA-MP API) читается прямо из
 --      памяти: BOOL iEnabled (+0x00), дальше killEntry[5] по 59 байт
@@ -32965,8 +33008,9 @@ function grndMainBody()
                     end
                 end
             end
-            if hoverRow and type(GRND_MOUSE) == "table" and GRND_MOUSE.clicked
-               and (type(grndClickAlive) ~= "function" or grndClickAlive()) then
+            -- v1.19.67: нажать на игрока можно ТОЛЬКО левой кнопкой мыши
+            if hoverRow and type(grndLeftClickPending) == "function"
+               and grndLeftClickPending() then
                 local r = list[hoverRow]
                 if r then
                     GRND_MOUSE.clicked = false          -- клик наш, другим окнам не отдаём
@@ -33433,8 +33477,9 @@ function grndMainBody()
                     if idx >= 1 and idx <= #rows then hoverI = idx end
                 end
             end
-            if hoverI and type(GRND_MOUSE) == "table" and GRND_MOUSE.clicked
-               and (type(grndClickAlive) ~= "function" or grndClickAlive()) then
+            -- v1.19.67: нажать на игрока можно ТОЛЬКО левой кнопкой мыши
+            if hoverI and type(grndLeftClickPending) == "function"
+               and grndLeftClickPending() then
                 local e = rows[hoverI]
                 if e then
                     GRND_MOUSE.clicked = false
@@ -38934,6 +38979,8 @@ function grndMainBody()
 
         -- =============================================================
         --  МОДУЛЬ 13: отрисовка кастомного рекона (слежка) - MODERN UI
+        --  v1.19.67: в СВЁРНУТОЙ карточке поля слева и справа одинаковые:
+        --  ширина полосы = (pad + отступ кнопки) * 2 + ширина кнопки.
         --  Полностью переработанная система с вкладками и современным дизайном
         -- =============================================================
         -- =============================================================
@@ -39139,7 +39186,11 @@ function grndMainBody()
             local openState = (RC.cardOpen ~= false)
             local Wfull = math.floor(math.max(400, math.min(460, resX * 0.28)))
             local LW = math.floor(Wfull * 0.30)  -- колонка кнопок наказаний
-            local Wmini = pad + LW + 6  -- свёрнутая: остаётся только эта колонка
+            -- v1.19.67: в свёрнутой карточке поля слева и справа ОДИНАКОВЫЕ:
+            -- кнопки стоят с отступом PUN_PAD от края колонки, поэтому ширина
+            -- полосы = отступ + кнопка + такой же отступ справа.
+            local PUN_PAD = 6           -- отступ кнопок наказаний от края
+            local Wmini = (pad + PUN_PAD) * 2 + (LW - 12)
             local W = openState and Wfull or Wmini
             local RX = pad + LW + 12    -- с этой линии — колонка строк
             local RW = Wfull - pad - 12 - RX  -- ширина колонки строк
@@ -40438,15 +40489,51 @@ function grndMainBody()
                 local ok, e = pcall(drawToasts)
                 if not ok then logRenderErr("toast", e) end
             end
-            -- МОДУЛЬ 11 (v1.5): килл-лист (чекер №1). Рисуется всегда, пока
-            -- чекер включён (или пока панель «в руке» при перемещении) и не
-            -- зависит от меню и таблицы.
-            if not gated and GRND_KL then
+            -- v1.19.67: чекеры (килл-лист и «Админы в сети») не «просвечивают»
+            -- через окна: пока открыто ЛЮБОЕ наше окно, они не рисуются и не
+            -- ловят клики. Исключение — режим перемещения панели (её держат
+            -- мышью, меню при этом закрывается само).
+            local checkersHidden = false
+            if not (GRND_KL and GRND_KL.moving) then
+                local formsUp = false
+                if type(_G.grndFormsUiWanted) == "function" then
+                    formsUp = _G.grndFormsUiWanted() and true or false
+                elseif _G.GRND_FORMS and _G.GRND_FORMS.active then
+                    formsUp = true
+                end
+                local gnewsUp = (_G.grndGnewsUiWanted and _G.grndGnewsUiWanted()) and true or false
+                local pickerUp = false
+                if _G.GRND_QR then
+                    pickerUp = (_G.GRND_QR.pickOpen and true or false)
+                        or (_G.GRND_QR.pun and _G.GRND_QR.pun.pickOpen and true or false)
+                end
+                local list = {
+                    (menu.open or menu.anim > 0),
+                    (GRND_TAB.open == true) or (scoreboard.anim > 0),
+                    (GRND_REP and GRND_REP.open) and true or false,
+                    (GRND_RC and GRND_RC.show) and true or false,
+                    (GRND_CATCH and GRND_CATCH.active) and true or false,
+                    GRND_INPUT.wanted() and true or false,
+                    GRND_LOG.wanted() and true or false,
+                    formsUp, gnewsUp, pickerUp,
+                    -- окна САМОГО сервера (диалоги) — тоже «окно»: чекер
+                    -- не должен быть виден поверх них
+                    (type(_G.grndDialogActive) == "function"
+                        and _G.grndDialogActive()) and true or false,
+                }
+                for i = 1, #list do
+                    if list[i] then checkersHidden = true; break end
+                end
+            end
+            -- МОДУЛЬ 11 (v1.5): килл-лист (чекер №1). Рисуется, пока чекер
+            -- включён (или пока панель «в руке» при перемещении) и ни одно
+            -- окно его не перекрывает.
+            if not gated and GRND_KL and not checkersHidden then
                 local ok, e = pcall(drawKillList, dt)
                 if not ok then logRenderErr("killlist", e)
                 elseif e then wantCursor = true end
             end
-            if not gated and GRND_AO then
+            if not gated and GRND_AO and not checkersHidden then
                 local ok, e = pcall(drawAdminsOnline, dt)
                 if not ok then logRenderErr("admins", e)
                 elseif e then wantCursor = true end
@@ -40581,6 +40668,7 @@ function grndMainBody()
             if imKind == "moonimgui" then
                 im.OnDrawFrame = function()
                     GRND_UIFRAME = (GRND_UIFRAME or 0) + 1
+                    pcall(grndMouseFrameBegin)   -- v1.19.67: клик прошлого кадра гаснет
                     endDepth, styleDepth, colorDepth = 0, 0, 0
                     if GRND_MOUSE.clicked or GRND_MOUSE.rclicked then
                         GRND_MOUSE.pending = true
@@ -40630,6 +40718,7 @@ function grndMainBody()
                     end,
                     function(self)
                         GRND_UIFRAME = (GRND_UIFRAME or 0) + 1
+                        pcall(grndMouseFrameBegin)   -- v1.19.67: клик прошлого кадра гаснет
                         endDepth, styleDepth, colorDepth = 0, 0, 0
                         syncIoFlags()
                         local want = safeDraw()

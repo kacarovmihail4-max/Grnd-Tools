@@ -223,8 +223,16 @@ local wMini = RC.windowSize.w
 check(wMini < wExpanded and wMini <= 200,
     "карточка свернулась ВЛЕВО в узкую полосу (было " .. tostring(wExpanded)
     .. ", стало " .. tostring(wMini) .. ")")
-check(wMini == 14 + math.floor(wExpanded * 0.30) + 6,
-    "ширина свёрнутой карточки = колонка кнопок + рамка (" .. tostring(wMini) .. ")")
+-- v1.19.67: в свёрнутой полосе поле справа такое же, как слева
+local miniBtns = drawnPunButtons()
+local leftGap = miniBtns[1] and miniBtns[1].x or -1
+local rightGap = miniBtns[1] and (wMini - (miniBtns[1].x + miniBtns[1].w)) or -1
+check(leftGap > 0 and leftGap == rightGap,
+    "поля в свёрнутой полосе одинаковые: слева " .. tostring(leftGap)
+    .. ", справа " .. tostring(rightGap))
+check(wMini == leftGap * 2 + (miniBtns[1] and miniBtns[1].w or 0),
+    "ширина свёрнутой карточки = отступ + кнопки + такой же отступ ("
+    .. tostring(wMini) .. ")")
 check(RC.windowPos.x == xExpanded,
     "левый край карточки не прыгнул (x=" .. tostring(RC.windowPos.x) .. ")")
 check(RC.posX == xExpanded and RC.posY == RC.windowPos.y,

@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.66"' in s, 'версия не 1.19.66')
+need('GRND_SCRIPT_VERSION = "1.19.67"' in s, 'версия не 1.19.67')
 
 # v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
 # 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
@@ -248,7 +248,7 @@ need('im.InvisibleButton("##grnd_recon_top"' in s and
 # наказаний и стрелочкой; левый край окна при этом не прыгает
 need('local openState = (RC.cardOpen ~= false)' in s,
      'состояние «свёрнуто/развёрнуто» снова живёт не в RC.cardOpen')
-need('local Wmini = pad + LW + 6' in s and
+need('local Wmini = (pad + PUN_PAD) * 2 + (LW - 12)' in s and
      'local W = openState and Wfull or Wmini' in s,
      'карточка не складывается влево в узкую полосу')
 need('local RW = Wfull - pad - 12 - RX' in s,
@@ -1018,6 +1018,74 @@ need('return nil' in chat_src, 'ручной /stats не выходит из о�
 need('МОДУЛЬ 14 (v1.11.71) загружен — /stats встроен; прячем только ответ на '
      'СВОЙ запрос, окна администратора не трогаем' in s,
      'строка загрузки модуля 14 не отражает новое правило')
+
+# v1.19.67 (1): в СВЁРНУТОЙ карточке рекона поля слева и справа одинаковые.
+# Раньше ширина полосы была pad + LW + 6, а кнопки стоят с отступом PUN_PAD от
+# края — справа оставалось 6 px против pad слева.
+need('local PUN_PAD = 6' in s, 'нет отступа кнопок наказаний PUN_PAD')
+need('local Wmini = (pad + PUN_PAD) * 2 + (LW - 12)' in s,
+     'ширина свёрнутой карточки снова несимметричная')
+need('local Wmini = pad + LW + 6' not in s, 'осталась старая несимметричная ширина')
+need('local LW = math.floor(Wfull * 0.30)' in s, 'пропала колонка кнопок наказаний')
+need('W = openState and Wfull or Wmini' in s, 'ширина карточки не переключается')
+# кнопки наказаний прижаты к краю колонки и той же ширины, что и раньше
+need('PUN_PAD' in s and 'punOrder' in s, 'пропала раскладка кнопок наказаний')
+
+# v1.19.67 (2): чекеры (килл-лист и «Админы в сети») не «просвечивают» через окна
+need('local checkersHidden = false' in s, 'нет гейта «чекер под окном»')
+need('if not gated and GRND_KL and not checkersHidden then' in s,
+     'килл-лист всё ещё рисуется поверх окон')
+need('if not gated and GRND_AO and not checkersHidden then' in s,
+     '«Админы в сети» всё ещё рисуются поверх окон')
+_chk = s[s.index('local checkersHidden = false'):]
+_chk = _chk[:_chk.index('for i = 1, #list do')]
+for _part in ['(menu.open or menu.anim > 0)',
+              '(GRND_TAB.open == true) or (scoreboard.anim > 0)',
+              '(GRND_REP and GRND_REP.open) and true or false',
+              '(GRND_RC and GRND_RC.show) and true or false',
+              '(GRND_CATCH and GRND_CATCH.active) and true or false',
+              'GRND_INPUT.wanted() and true or false',
+              'GRND_LOG.wanted() and true or false',
+              'formsUp, gnewsUp, pickerUp',
+              'and _G.grndDialogActive()) and true or false']:
+    need(_part in _chk, 'в гейте чекеров нет условия: ' + _part)
+need('if not (GRND_KL and GRND_KL.moving) then' in _chk,
+     'режим перемещения чекера перестал быть исключением')
+# DX-проход килл-листа обязан уважать тот же гейт, иначе текст останется поверх
+need('GRND_RC.show and GRND_RC.cursor' in s, 'DX-проход чекеров пропал')
+_kl_dx = s[s.index('if GRND_KL and GRND_KL.enabled then'):]
+_kl_dx = _kl_dx[:_kl_dx.index('end', _kl_dx.index('pcall'))] if 'end' in _kl_dx else _kl_dx
+need('grndMouseFrameBegin' in s,
+     'DX-проход чекеров не связан с кадровой логикой мыши')
+
+# v1.19.67 (3): нажать на игрока в чекере — ТОЛЬКО левой кнопкой
+need('function grndLeftClickPending()' in s, 'нет проверки «только ЛКМ» для чекеров')
+need('if btn ~= nil and btn ~= 1 then return false end' in s,
+     'grndLeftClickPending не отвергает ПКМ/СКМ')
+need(s.count('GRND_MOUSE.clickedBtn = 1') == 2 and
+     s.count('GRND_MOUSE.rclickedBtn = 2') == 2 and
+     s.count('GRND_MOUSE.mclickedBtn = 3') == 2,
+     'WM-обработчик не помечает кнопку-источник клика (ЛКМ 0x0201/0x0203, '
+     'ПКМ 0x0204/0x0206, СКМ 0x0207/0x0209)')
+need('function grndMouseFrameBegin()' in s, 'нет гашения флагов клика в начале кадра')
+need('M.clicked, M.rclicked, M.mclicked = false, false, false' in s,
+     'флаги кликов снова залипают между кадрами')
+need(s.count('pcall(grndMouseFrameBegin)') == 2,
+     'гашение флагов не вызывается в начале обоих кадров ImGui')
+need(s.count('GRND_UIFRAME = (GRND_UIFRAME or 0) + 1\n                    pcall(grndMouseFrameBegin)') == 1 and
+     s.count('GRND_UIFRAME = (GRND_UIFRAME or 0) + 1\n                        pcall(grndMouseFrameBegin)') == 1,
+     'гашение клика стоит не сразу после счётчика кадров')
+need(s.count('and grndLeftClickPending() then') == 2,
+     'клик по игроку должен проверяться «только ЛКМ» в обоих чекерах')
+need('if hoverRow and type(GRND_MOUSE) == "table" and GRND_MOUSE.clicked' not in s,
+     'килл-лист всё ещё реагирует на любую кнопку мыши')
+need('if hoverI and type(GRND_MOUSE) == "table" and GRND_MOUSE.clicked' not in s,
+     '«Админы в сети» всё ещё реагируют на любую кнопку мыши')
+# клик не «проглатывается», если он не левый: гашение стоит ВНУТРИ ветки
+_kls = s[s.index('-- v1.19.67: нажать на игрока можно ТОЛЬКО левой кнопкой'):]
+_kls = _kls[:_kls.index('-- -------- рисуем --------')]
+need('GRND_MOUSE.clicked = false' in _kls,
+     'левый клик по игроку перестал «забираться» у других окон')
 
 if fails:
     for f in fails:
