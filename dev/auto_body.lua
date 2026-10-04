@@ -22,7 +22,7 @@ local function textsOne()
 end
 local function hasOne(word) return textsOne():find(word, 1, true) ~= nil end
 local function drawAuto()
-    TXT, BTNS, INVIS, MULTI = {}, {}, {}, {}
+    TXT, BTNS, INVIS, MULTI, WIDTHS = {}, {}, {}, {}, {}
     local ok = _G.grndQrAutoDraw(CTX)
     check(ok == true, "раздел «Автопилот» не нарисовался")
 end
@@ -229,6 +229,56 @@ drawAuto()
 drawAuto()
 check(hasOne(hint1) and hasOne(hint2), "подсказка пропала после сброса триггера")
 HPRINT("короткий триггер: ставится и срабатывает, предупреждений нет; подсказка постоянная")
+
+-- ===== 4b. строка триггеров: во всю ширину и сколько угодно слов (v1.19.54) =====
+-- Поле «Триггер» занимает всю ширину раздела (раньше было 360 px)…
+TYPE["##grnd_qr_auto_trigger"] = "Помогите"
+drawAuto()
+check(#WIDTHS >= 2, "ширины полей не записались: " .. tostring(#WIDTHS))
+check(WIDTHS[1] == 700, "строка триггеров не во всю ширину: " .. tostring(WIDTHS[1]))
+check(WIDTHS[2] == 700, "поле ответа потеряло ширину: " .. tostring(WIDTHS[2]))
+-- …а список слов в ней — без практического лимита: 40 триггеров в строке
+local many = {}
+local longTrigger = ""
+for i = 1, 40 do
+    many[i] = "триг" .. tostring(i)
+    longTrigger = longTrigger .. (i > 1 and ", " or "") .. many[i]
+end
+check(#longTrigger > 128, "тестовая строка короче прежнего лимита — смысла в проверке нет")
+TYPE["##grnd_qr_auto_trigger"] = longTrigger
+drawAuto()
+drawAuto()      -- второй кадр — значение уже прошло нормализацию
+check(Q.autoTabs()[1].trigger == longTrigger,
+    "длинная строка триггеров обрезалась: " .. tostring(#Q.autoTabs()[1].trigger)
+    .. " из " .. tostring(#longTrigger))
+for _, w in ipairs({ many[1], many[20], many[40] }) do
+    local hits = Q.autoMatchAll(w)
+    check(#hits == 1 and hits[1].trig == w, "слово «" .. w .. "» из длинной строки не сработало")
+end
+check(#Q.autoTriggers(Q.autoTabs()[1]) == 40, "разобрались не все 40 триггеров: "
+    .. tostring(#Q.autoTriggers(Q.autoTabs()[1])))
+-- обычные слова по-прежнему совпадают только целиком (свойство не сломалось)
+check(#Q.autoMatchAll("триг40 и ещё текст") == 0, "обычное слово сработало не целиком")
+-- и в конфиг строка уезжает целиком (не обрезается записью)
+Q.autoSave()
+local cfgLine = nil
+do
+    local f = GRND_CONFIG.open(Q.autoPath(), "r")
+    check(f ~= nil, "конфиг автопилота не открылся после сохранения")
+    local iter = f.lines()
+    for line in iter do
+        if tostring(line):sub(1, 11) == "t1_trigger=" then cfgLine = tostring(line) end
+    end
+    pcall(f.close, f)
+end
+check(cfgLine ~= nil, "в конфиге нет строки триггера")
+check(#cfgLine > 128, "строка триггеров обрезалась при записи: " .. tostring(#cfgLine))
+check(cfgLine:find(longTrigger:sub(1, 24), 1, true) ~= nil,
+    "в конфиг попал не тот триггер: " .. cfgLine:sub(1, 60))
+TYPE["##grnd_qr_auto_trigger"] = "Помогите"
+Q.autoTabs()[1].trigger = "Помогите"
+Q.autoEnsure()
+HPRINT("строка триггеров: во всю ширину, 40 слов через запятую разбираются и срабатывают")
 
 -- ===== 5. селектор команды и строка-предпросмотр =====
 CLICK = { ["##grnd_qr_auto_cmd"] = true }

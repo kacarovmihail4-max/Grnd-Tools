@@ -7,6 +7,7 @@ CHAT, ANS, TOASTS, TXT, BTNS = {}, {}, {}, {}, {}
 INPUTS = {}        -- позиции полей ввода ImGui (id + x/y) для проверок вёрстки
 INVIS = {}         -- позиции InvisibleButton (id + x/y): селектор команд, вкладки и т.п.
 MULTI = {}         -- многострочные поля ввода (id + x/y): поле «Ответ игроку»
+WIDTHS = {}        -- v1.19.54: ImGui.SetNextItemWidth по порядку — ширина полей
 -- v1.19.35: «сырой» клик мыши, как в игре (grndClickAlive + GRND_MOUSE).
 -- Нужен, чтобы проверить поведение списка команд при кликах по селектору.
 GRND_UIFRAME = 0
@@ -210,7 +211,9 @@ function im.SetCursorPos(p) if type(p) == "table" then POS.cx, POS.cy = p.x, p.y
     function im.SetNextWindowPos(p, cond) POS.x, POS.y = p.x, p.y end
     function im.SetNextWindowSize(sz, cond) POS.w, POS.h = sz.x, sz.y end
     function im.SetNextWindowFocus() end
-    function im.SetNextItemWidth() end
+    -- v1.19.54: запоминаем ширину полей — по ней проверяем, что строка триггеров
+    -- занимает всю ширину раздела
+    function im.SetNextItemWidth(w) WIDTHS[#WIDTHS + 1] = tonumber(w) or 0 end
     function im.SetTooltip(t) TOOLTIP = tostring(t) end
     function im.InputTextMultiline(id, buf, cap, sz, x)
         MULTI[#MULTI + 1] = { id = tostring(id), x = POS.cx or 0, y = POS.cy or 0 }

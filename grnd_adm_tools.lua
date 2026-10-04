@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.53"
+GRND_SCRIPT_VERSION = "1.19.54"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -27020,7 +27020,10 @@ end
 --  Отладка: QR.auto.lastCheck и QR.auto.err; ошибки отрисовки — в /mp diag.
 -- =====================================================================
 do
-    local MAX_ATRIG = 128      -- символов в триггере
+    -- v1.19.54: триггеров в строке — сколько угодно (список через запятую),
+    -- поэтому лимит чисто технический и очень большой
+    local MAX_ATRIG = 2048     -- символов в строке триггеров
+    local TRIG_CAP = MAX_ATRIG * 2 + 1   -- буфер поля: байты (кириллица — 2 байта)
     local MAX_TABS = 15        -- сколько вкладок можно завести
     local AUTO_GAP = 0.5       -- пауза между срабатываниями (сек)
 
@@ -28607,9 +28610,11 @@ do
             ky = ky + tHintStep
         end
         yy = ky + 4
-        local trigW = math.min(360, iw)
+        -- v1.19.54: строка триггеров — во всю ширину раздела (была 360 px),
+        -- в неё помещается сколько угодно слов через запятую
+        local trigW = iw
         local tkey, tid = "autoTrigger" .. A.sel, "##grnd_qr_auto_trigger"
-        field(ctx, tid, tkey, MAX_ATRIG + 1, x, yy, trigW, 28, "", false, sel2.trigger)
+        field(ctx, tid, tkey, TRIG_CAP, x, yy, trigW, 28, "", false, sel2.trigger)
         local trigVal = trim(bufText(tkey))
         if trigVal ~= sel2.trigger then
             sel2.trigger = trigVal
