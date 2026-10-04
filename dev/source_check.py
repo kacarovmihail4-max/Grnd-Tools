@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.64"' in s, 'версия не 1.19.64')
+need('GRND_SCRIPT_VERSION = "1.19.65"' in s, 'версия не 1.19.65')
 
 # v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
 # 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
@@ -936,17 +936,46 @@ absent('local y = math.max(16, math.min(resY - H - 40, math.floor((resY - H) * 0
 # окно открывается как обычно, рекон не обновляется. Прячем ТОЛЬКО ответ на
 # автозапрос карточки слежки.
 need('local function stIsManual()' in s and
-     'return ST.src == "chat" and os.clock() - (ST.manualAt or -999) < 15' in s and
+     'return os.clock() - (ST.manualAt or -999) < MANUAL_SHOW' in s and
+     'local MANUAL_SHOW, MANUAL_HOLD = 15, 6' in s and
      '_G.grndStatsIsManual = stIsManual' in s,
-     'нет признака «ручной /stats»')
+     'нет признака «ручной /stats» (окна MANUAL_SHOW/MANUAL_HOLD)')
+# v1.19.65: прятать и разбирать можно ТОЛЬКО ответ на СВОЙ запрос
+need('local function stOurs()' in s and
+     'if ST.ownPending then return true end' in s and
+     'return os.clock() - (ST.reqAt or -999) <= 15' in s,
+     'нет признака «ответ на наш запрос» (stOurs)')
+need('if not stOurs() then return nil end' in s,
+     'окно без нашего запроса снова разбирается и прячется')
+need('if stSpecActive() then return stOurs() end' in s,
+     'в слежке прячется и ручное окно (должно прятаться только своё)')
+need('if stIsManual() or not stOurs() then return end' in s,
+     'запасной канал (textdraw) наполняет рекон без нашего запроса')
+need('ST.ownPending, ST.ownId = true, tonumber(id)' in s,
+     'своя отправка /stats не помечается точно (текст + id)')
+need('and m == ("/stats " .. tostring(ST.ownId or ""))' in s and
+     'and now - (ST.ownSentAt or -999) <= 1.0' in s,
+     'свой /stats определяется по старой неточной метке (ручной ввод спрячется)')
+need('ST.manualHold = true       -- v1.19.65: свой автозапрос — на паузу' in s and
+     'ST.manualDialog = 0' in s,
+     'ручной /stats не ставит свой автозапрос на паузу')
+need('local manualHold = (os.clock() - (ST.manualAt or -999)) < MANUAL_HOLD' in s and
+     'and not manualHold' in s,
+     'свой автозапрос не замолкает на время ручного окна')
+need('ST.pendingOpen = true' in s and 'ST.manualHold = false' in s,
+     'после паузы карточка не просит статистику заново')
 hide_start = s.index('_G.grndStatsShouldHide = function(title, text)')
 hide_end = s.index('_G.grndStatsOnDialog = function', hide_start)
 hide_src = s[hide_start:hide_end]
-need('if not looks then return false end' in hide_src and
-     'if stIsManual() then return false end' in hide_src and
-     hide_src.index('if stIsManual() then return false end')
-     < hide_src.index('if stSpecActive() then return true end'),
+_manual_guard = 'if stIsManual() then return false end' in hide_src
+_spec_guard = 'if stSpecActive() then return stOurs() end' in hide_src
+need(_manual_guard and _spec_guard and
+     hide_src.index('if stIsManual() then return false end') if _manual_guard and _spec_guard else False,
      'ручное окно /stats всё ещё прячется в слежке')
+if _manual_guard and _spec_guard:
+    need(hide_src.index('if stIsManual() then return false end')
+         < hide_src.index('if stSpecActive() then return stOurs() end'),
+         'порядок проверок: ручное окно должно проверяться раньше слежки')
 dlg_start = s.index('_G.grndStatsOnDialog = function')
 dlg_src = s[dlg_start:dlg_start + 3000]
 need('if _G.grndStatsIsManual and _G.grndStatsIsManual() then' in dlg_src and
@@ -955,7 +984,7 @@ need('if _G.grndStatsIsManual and _G.grndStatsIsManual() then' in dlg_src and
      'окно ручного /stats разбирается в рекон (должно остаться нетронутым)')
 chat_start = s.index('_G.grndStatsOnSendChat = function')
 chat_src = s[chat_start:s.index('return nil\n    end', chat_start)]
-need('ST.manualAt = os.clock()' in chat_src and 'ST.waiting = false' in chat_src,
+need('ST.manualAt = now' in chat_src and 'ST.waiting = false' in chat_src,
      'ручной /stats становится «нашей» сессией (автозапрос спрячет чужое окно)')
 need('grndStatsPopup' not in chat_src,
      'на ручной /stats снова открывается своё окно статистики')

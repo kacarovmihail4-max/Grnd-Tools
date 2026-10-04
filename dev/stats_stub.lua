@@ -1,10 +1,12 @@
--- ==== стенд окна /stats (v1.19.64): ручной запрос администратора неприкосновенен ====
--- Грузим НАСТОЯЩИЙ модуль 14 (статистика игрока) и проверяем главное правило:
+-- ==== стенд окна /stats (v1.19.65): ручной запрос администратора неприкосновенен ====
+-- Грузим НАСТОЯЩИЙ модуль 14 (статистика игрока) и играем за игру: часы
+-- виртуальные (os.clock подменён), поэтому «через 6 секунд» проверяется мгновенно.
+-- Главное правило:
 --   • /stats, который отправил САМ СКРИПТ (автозапрос для карточки слежки) —
 --     окно сервера прячется, поля уходят в рекон;
 --   • /stats, который администратор ВВЁЛ РУКАМИ — серверное окно открывается
---     как обычно (не прячем ни в слежке, ни вне неё), рекон не обновляется,
---     своих окон скрипт не открывает.
+--     как обычно (в том числе в слежке), рекон не обновляется, своих окон
+--     скрипт не открывает, а его собственный автозапрос на это время молчит.
 HPRINT = print
 function print(...) end
 FAILS = 0
@@ -17,14 +19,30 @@ function check(cond, msg)
     end
 end
 
-SENT = {}          -- что скрипт отправил в чат
-POPUPS = 0         -- сколько раз скрипт открыл СВОЁ окно статистики
-CHAT = {}
+-- ---- виртуальные часы ----
+VNOW = 1000
+os.clock = function() return VNOW end
+function advance(dt) VNOW = VNOW + dt end
 
-sampSendChat = function(cmd) SENT[#SENT + 1] = tostring(cmd) end
+SENT = {}          -- что ушло в чат (и от скрипта, и от администратора)
+CHAT = {}
+POPUPS = 0         -- сколько раз скрипт открыл СВОЁ окно статистики
+HOOK_FOR_SCRIPT_SENDS = true   -- в игре samp.events.onSendChat ловит и наши отправки
+
+-- отправка команд скриптом: в игре sampSendChat поднимает событие onSendChat
+sampSendChat = function(cmd)
+    SENT[#SENT + 1] = tostring(cmd)
+    if HOOK_FOR_SCRIPT_SENDS and _G.grndStatsOnSendChat then
+        pcall(_G.grndStatsOnSendChat, tostring(cmd))
+    end
+end
 sampAddChatMessage = function(text) CHAT[#CHAT + 1] = tostring(text) end
 sampRegisterChatCommand = function() end
 grndToUtf = function(s) return tostring(s or "") end
+grndIsSpawnedSafe = function() return true end
+grndIsTyping = function() return false end
+grndStatsPopup = function() POPUPS = POPUPS + 1 end
+
 -- string.lower() в Lua не трогает кириллицу — повторяем настоящий grndLowerUtf
 grndLowerUtf = function(s)
     s = tostring(s or "")
@@ -50,9 +68,6 @@ grndLowerUtf = function(s)
     return table.concat(out)
 end
 grndToAnsi = function(s) return tostring(s or "") end
-grndIsSpawnedSafe = function() return true end
-grndIsTyping = function() return false end
-grndStatsPopup = function() POPUPS = POPUPS + 1 end
 
 GRND_RC = { show = false, id = nil, live = {} }
 GRND_SPEC = { active = false, id = nil, confirmT = nil }
@@ -61,24 +76,26 @@ GRND_SPEC = { active = false, id = nil, confirmT = nil }
 local DIALOG_TITLE = "Статистика игрока"
 local DIALOG_TEXT = "Уровень: 18\nНомер аккаунта: 54\nВарнов: 2\nСтатистика игрока Test_Player[77]"
 
-local function openRecon(id)
+function openRecon(id)
     GRND_RC.show = true
     GRND_RC.id = id
     GRND_RC.live = {}
 end
-
-local function scriptRequest()
-    -- тик сам отправляет /stats, когда открыт рекон и есть цель
-    GRND_STATS.reqAt = -999
-    _G.grndStatsTick()
+function closeRecon()
+    GRND_RC.show = false
+    GRND_RC.id = nil
 end
 
-local function manualStats(id)
-    -- администратор печатает /stats руками: ownSentAt давно старый
-    GRND_STATS.ownSentAt = -999
-    _G.grndStatsOnSendChat("/stats " .. tostring(id))
+-- кадр игры: модуль 14 тикает из главного цикла
+function gameFrame()
+    local ok, err = pcall(_G.grndStatsTick)
+    if not ok then HPRINT('ОШИБКА тика: ' .. tostring(err)) end
 end
-
-local function serverDialog()
+-- администратор печатает /stats руками (команда уходит серверу как есть)
+function userStats(cmd)
+    SENT[#SENT + 1] = tostring(cmd)
+    pcall(_G.grndStatsOnSendChat, tostring(cmd))
+end
+function serverDialog()
     return _G.grndStatsOnDialog(1, 0, DIALOG_TITLE, "Ок", "", DIALOG_TEXT)
 end

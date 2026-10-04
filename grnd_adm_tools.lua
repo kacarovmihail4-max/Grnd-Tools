@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.64"
+GRND_SCRIPT_VERSION = "1.19.65"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -11571,6 +11571,10 @@ end
 --  /stats, который администратор ввёл РУКАМИ, неприкосновенен: серверное
 --  окно открывается как обычно (и в слежке тоже), рекон из него не
 --  обновляется, свои окна скрипт не показывает и чужие не прячет.
+--  v1.19.65: свою отправку /stats скрипт теперь помечает точно (текст команды
+--  + время), а на время ручного запроса его собственный автозапрос молчит —
+--  иначе ответ на ручной /stats считался «нашим» и окно сервера пропадало.
+--  Прятать и разбирать можно ТОЛЬКО ответ на свой запрос (stOurs).
 --  Запасной канал — «окно» из textdraw'ов.
 --  АВТОЗАПРОС: при открытом реконе и смене цели скрипт сам шлёт /stats.
 --  Обновление: кнопка «Статистика» в реконе.
@@ -11580,6 +11584,9 @@ GRND_STATS = _G.GRND_STATS or {
     fields = {}, src = "auto", ownSentAt = -999,   -- src: auto | cmd | chat
     lastTarget = 0, wasShow = false, reqAt = -999, cmdReg = false,
     lastIngestAt = 0, statsAt = nil,
+    -- v1.19.65: ownPending/ownId — «наша» отправка /stats; manualHold — пауза
+    -- своего автозапроса на время ручного окна администратора
+    ownPending = false, ownId = nil, manualHold = false, manualDialog = 0,
 }
 -- маркер в консоль MoonLoader в момент загрузки файла: если этой строки
 -- нет в moonloader.log — игра грузит НЕ этот файл (старый/другой).
@@ -11842,10 +11849,28 @@ do
     -- серверное окно открывается как обычно, рекон из него не обновляется, и
     -- никакие свои окна мы не скрываем. Прячем только ответ на СВОЙ запрос
     -- (/stats, который отправил сам скрипт для карточки слежки).
+    -- v1.19.65: два окна у ручного /stats.
+    --   • MANUAL_SHOW — сколько секунд ответ сервера на ручной запрос считаем
+    --     «окном администратора»: его показываем и никогда не разбираем;
+    --   • MANUAL_HOLD — сколько секунд СВОЙ автозапрос молчит, чтобы не
+    --     перебить ручной запрос и не подменить его ответ своим (сервер
+    --     отвечает за доли секунды, поэтому окно небольшое).
+    local MANUAL_SHOW, MANUAL_HOLD = 15, 6
     local function stIsManual()
-        return ST.src == "chat" and os.clock() - (ST.manualAt or -999) < 15
+        return os.clock() - (ST.manualAt or -999) < MANUAL_SHOW
     end
     _G.grndStatsIsManual = stIsManual
+
+    -- v1.19.65: «это ответ на НАШ запрос» — единственное условие, при котором
+    -- окно сервера можно спрятать или положить данные в рекон. Своя отправка
+    -- помечена (ownPending), открыта сессия разбора (waiting) или наш запрос
+    -- был недавно (reqAt — сервер иногда отвечает с задержкой, а окно может
+    -- прийти несколькими страницами). Всё остальное — окно администратора.
+    local function stOurs()
+        if ST.ownPending then return true end
+        if ST.waiting and os.clock() - (ST.waitAt or -999) <= 15 then return true end
+        return os.clock() - (ST.reqAt or -999) <= 15
+    end
 
     _G.grndStatsShouldHide = function(title, text)
         local full = ("%s\n%s"):format(tostring(title or ""), tostring(text or ""))
@@ -11855,11 +11880,11 @@ do
         -- Ручной /stats — окно сервера оставляем игроку как есть (и в слежке).
         if stIsManual() then return false end
         -- В слежке прячем модальный ответ сервера на СВОЙ запрос: он заслонил
-        -- бы рекон, а данные и так идут в карточку слежки.
-        if stSpecActive() then return true end
+        -- бы рекон, а данные и так идут в карточку слежки. Ответ на ЧУЖОЙ
+        -- (ручной) запрос прятать нельзя — v1.19.65.
+        if stSpecActive() then return stOurs() end
         -- Вне слежки — то же самое, пока наш запрос свежий.
-        if ST.waiting and ST.src ~= "chat"
-            and os.clock() - (ST.waitAt or -999) <= 6 then
+        if ST.waiting and os.clock() - (ST.waitAt or -999) <= 6 then
             return true
         end
         return false
@@ -11880,6 +11905,11 @@ do
                 ST.manualDialog = (ST.manualDialog or 0) + 1
                 return nil
             end
+            -- v1.19.65: разбираем ТОЛЬКО ответ на свой запрос. Окно, которое
+            -- администратор открыл сам (или вообще без нашего запроса), в
+            -- рекон не попадает и не прячется — даже если признак ручного
+            -- ввода потерялся.
+            if not stOurs() then return nil end
             -- v1.11.63: разбор — в pcall: ошибка в инжесте больше не
             -- может помешать спрятать окно.
             local okI, errI = pcall(stIngest, full, id)
@@ -11892,35 +11922,46 @@ do
         return nil
     end
 
-    -- хук в sampev.onSendChat: запомнили, что ушёл /stats.
-    -- Если команду отправили НЕ мы (ownSentAt старый) — это ввод игрока:
-    -- такое окно НЕ прячем и в рекон не кладём (v1.19.64), свои окна тоже
-    -- не открываем — админ увидит ровно серверное окно.
+    -- хук в sampev.onSendChat: разбираем, ЧЕЙ это /stats.
+    -- v1.19.65: «свой» — только тот, что прямо сейчас отправил сам скрипт
+    -- (ST.ownPending + совпал текст + не прошло секунды). Всё остальное —
+    -- ручной ввод администратора: такое окно НЕ прячем, в рекон не кладём,
+    -- свои окна не открываем, а свой автозапрос на это время молчит.
     _G.grndStatsOnSendChat = function(msg)
         local m = stLower(stTrim(tostring(msg or "")))
-        if m:match("^/stats%s") or m == "/stats" then
-            if os.clock() - (ST.ownSentAt or -999) > 1 then
-                ST.src = "chat"
-                ST.manualAt = os.clock()   -- v1.11.62: метка ручного /stats
-                -- v1.19.64: ручной запрос не становится «нашей сессией» —
-                -- иначе автозапрос для карточки считал бы его своим и
-                -- следующий ответ сервера снова спрятался бы.
-                ST.waiting = false
-                ST.targetNick = ""
-                return nil
-            end
-            ST.fields = {}          -- новая сессия разбора
-            ST.lastIngestAt = 0
-            ST.waiting = true
-            ST.waitAt = os.clock()
-            ST.targetId = tonumber(tostring(msg):match("^/stats%s+(%d+)"))
+        if not (m:match("^/stats%s") or m == "/stats") then return nil end
+        local now = os.clock()
+        local ours = ST.ownPending
+            and m == ("/stats " .. tostring(ST.ownId or ""))
+            and now - (ST.ownSentAt or -999) <= 1.0
+        if not ours then
+            ST.ownPending = false
+            ST.src = "chat"
+            ST.manualAt = now          -- v1.11.62: метка ручного /stats
+            ST.manualHold = true       -- v1.19.65: свой автозапрос — на паузу
+            ST.manualDialog = 0
+            -- ручной запрос не становится «нашей сессией»: иначе автозапрос
+            -- для карточки счёл бы его своим и спрятал ответ сервера
+            ST.waiting = false
             ST.targetNick = ""
+            return nil
         end
+        ST.ownPending = false
+        ST.manualAt = -999             -- своя отправка — ручного окна нет
+        ST.fields = {}                 -- новая сессия разбора
+        ST.lastIngestAt = 0
+        ST.waiting = true
+        ST.waitAt = now
+        ST.targetId = tonumber(tostring(msg):match("^/stats%s+(%d+)"))
+        ST.targetNick = ""
         return nil
     end
 
     -- «окно» из textdraw'ов (запасной канал)
     _G.grndStatsOnTextDraw = function(text)
+        -- v1.19.65: запасной канал наполняет рекон, только пока наш запрос
+        -- свеж; во время ручного окна администратора он молчит
+        if stIsManual() or not stOurs() then return end
         if type(text) == "string" and text ~= "" then
             stIngest(text, "textdraw")
         end
@@ -11936,6 +11977,13 @@ do
     local function stRequest(id, src)
         if type(sampSendChat) ~= "function" then return false end
         ST.ownSentAt = os.clock()
+        -- v1.19.65: свою отправку помечаем ТОЧНО (текст + время): по старой
+        -- метке в 1 секунду ручной /stats администратора, отправленный сразу
+        -- после нашего автозапроса, считался нашей же отправкой — окно
+        -- сервера пряталось, а данные уходили в рекон.
+        ST.ownPending, ST.ownId = true, tonumber(id)
+        ST.manualAt = -999          -- свой запрос снимает ручное окно
+        ST.manualHold = false
         ST.src = src or "auto"
         ST.fields = {}              -- новая сессия разбора
         ST.lastIngestAt = 0
@@ -11954,6 +12002,21 @@ do
         local now = os.clock()
         if not ST.cmdReg and type(sampRegisterChatCommand) == "function" then
             ST.cmdReg = true
+        end
+        -- v1.19.65: страховка от «повисшей» метки своей отправки (хук
+        -- onSendChat по какой-то причине не пришёл)
+        if ST.ownPending and now - (ST.ownSentAt or -999) > 1.5 then
+            ST.ownPending = false
+        end
+        -- v1.19.65: пока идёт ручной /stats администратора — свой автозапрос
+        -- молчит (иначе ответ на ручной запрос приходил бы «нашим» и окно
+        -- сервера пряталось). Когда пауза кончилась — просим данные заново:
+        -- окно администратора к этому времени уже открыто, а карточка
+        -- наполняется ответом на НАШ запрос.
+        local manualHold = (os.clock() - (ST.manualAt or -999)) < MANUAL_HOLD
+        if ST.manualHold and not manualHold then
+            ST.manualHold = false
+            ST.pendingOpen = true
         end
         if ST.waiting then
             -- сессия разбора закрывается: 15 с без ответа ИЛИ 4 с тишины после
@@ -11974,6 +12037,7 @@ do
         local opened = show and not ST.wasShow
         if opened then ST.pendingOpen = true end  -- v1.11.62: не терять
         if show and id and id > 0
+            and not manualHold
             and now - (ST.reqAt or -999) > 5
             and grndIsSpawnedSafe() and not grndIsTyping() then
             local key = grndStSessionKey(id)
