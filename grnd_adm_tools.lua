@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.41"
+GRND_SCRIPT_VERSION = "1.19.42"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -24436,7 +24436,6 @@ local QR = {
         paused = nil,      -- причина паузы: «слежка» | «мероприятие» | nil
         fired = 0,         -- сколько раз сработал
         lastAt = 0,        -- время последнего срабатывания
-        perPid = {},       -- id -> время последнего ответа (антидубль)
         rate = {},         -- времена срабатываний (предохранитель 12/мин)
         lastCheck = nil,   -- чем закончилась последняя проверка
         dirtyAt = nil,     -- есть несохранённые правки (пишем с задержкой)
@@ -26983,8 +26982,9 @@ end
 --      как только причина уходит (телепорт посреди наблюдения сломал бы и
 --      слежку, и ответы; на мероприятии ответы админам-МП не нужны);
 --    * идёт ввод текста (чат, диалог, поле ImGui) — пропускаем, не мешаем;
---    * одному игроку — один автоответ в минуту, пауза 2.5 с между
---      срабатываниями, максимум 12 автоответов в минуту;
+--    * темп: пауза 2.5 с между срабатываниями и максимум 12 автоответов в
+--      минуту. Ответ игроку — НЕ повод пропускать его следующий репорт:
+--      сколько раз написал, столько раз и отвечаем (в рамках темпа);
 --    * репорт без числового ID не трогаем — отвечать некому;
 --    * ответ и команда идут в ОДНУ очередь репорта: ответ уходит первым,
 --      сервер не получает две команды в одном кадре;
@@ -27006,7 +27006,6 @@ do
     local MAX_ATRIG = 128      -- символов в триггере
     local MAX_TABS = 15        -- сколько вкладок можно завести
     local AUTO_GAP = 2.5       -- пауза между срабатываниями (сек)
-    local AUTO_PER_PID = 60    -- одному игроку — один ответ в минуту
     local AUTO_PER_MIN = 12    -- предохранитель: не больше 12 автоответов в минуту
 
     -- Команды после ответа. «Без команды» — только ответ игроку.
@@ -27416,7 +27415,6 @@ do
         if type(A) ~= "table" then A = {} QR.auto = A end
         A.on = A.on and true or false
         A.fired = math.max(0, math.floor(tonumber(A.fired) or 0))
-        if type(A.perPid) ~= "table" then A.perPid = {} end
         if type(A.rate) ~= "table" then A.rate = {} end
         local tabs = QR.autoTabs()
         for i = 1, #tabs do
@@ -27923,7 +27921,7 @@ do
     end
 
     -- Пауза и предохранители. Возвращает причину пропуска или nil.
-    function QR.autoGuard(pid, now)
+    function QR.autoGuard(now)
         local A = QR.auto
         now = tonumber(now) or os.clock()
         -- ждём окно /getinfo по {punishments}: второй репорт подождёт,
@@ -27938,8 +27936,10 @@ do
             end
         end
         if now - (A.lastAt or 0) < AUTO_GAP then return "слишком часто" end
-        local prev = A.perPid[pid]
-        if prev and now - prev < AUTO_PER_PID then return "этому игроку уже отвечали" end
+        -- v1.19.42: антидубля «этому игроку уже отвечали» больше НЕТ. Если
+        -- игрок написал ещё раз — он ждёт ответа, и пропускать его нельзя:
+        -- ответ на прошлый репорт не делает следующий лишним. Темп держат
+        -- только пауза 2.5 с и предохранитель 12 ответов в минуту.
         local kept = {}
         for i = 1, #A.rate do
             if now - A.rate[i] < 60 then kept[#kept + 1] = A.rate[i] end
@@ -28026,7 +28026,7 @@ do
                 return false, "ввод"
             end
         end
-        local guard = QR.autoGuard(id, os.clock())
+        local guard = QR.autoGuard(os.clock())
         if guard then
             A.lastCheck = "пропуск: " .. guard
             return false, guard
@@ -28145,7 +28145,7 @@ do
         end
 
         local now = os.clock()
-        A.lastAt, A.perPid[id] = now, now
+        A.lastAt = now
         A.rate[#A.rate + 1] = now
         A.fired = (A.fired or 0) + 1
         local planTabsTxt = table.concat(planTabs, ", ")

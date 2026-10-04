@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.41"' in s, 'версия не 1.19.41')
+need('GRND_SCRIPT_VERSION = "1.19.42"' in s, 'версия не 1.19.42')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -413,7 +413,7 @@ need('pcall(grndRepAnswer, id, chunks[ci])' in auto_part,
 need(auto_part.index('pcall(grndRepAnswer, id, chunks[ci])') < auto_part.index('if it.cmd then'),
      'команда вкладки уходит раньше её ответа игроку')
 need('if not A.on then' in auto_part, 'автопилот срабатывает при выключенном тумблере')
-need('local guard = QR.autoGuard(id, os.clock())' in auto_part, 'нет предохранителей автопилота')
+need('local guard = QR.autoGuard(os.clock())' in auto_part, 'нет предохранителей автопилота')
 # слежка: не отвечает и выключается сам
 need('function QR.autoSpectating()' in auto_part or 'function QR.autoSpectating()' in s,
      'нет проверки слежки')
@@ -444,10 +444,14 @@ need('A.lastCheck = "идёт ввод текста — пропуск"' in auto
      'автопилот не пропускает репорты во время ввода текста')
 need('QR.toast("Автопилот: пропуск — открыт чат или ввод"' in auto_part,
      'нет предупреждения о пропуске')
-# предохранители: пауза, антидубль по ID, лимит в минуту
-need('local AUTO_GAP = 2.5' in s and 'local AUTO_PER_PID = 60' in s and 'local AUTO_PER_MIN = 12' in s,
+# предохранители: пауза между срабатываниями и лимит в минуту.
+# v1.19.42: антидубля по игроку НЕТ — ответ не повод пропускать его
+# следующий репорт, сколько раз написал, столько раз и отвечаем.
+need('local AUTO_GAP = 2.5' in s and 'local AUTO_PER_MIN = 12' in s,
      'нет настроек предохранителей автопилота')
-need('return "этому игроку уже отвечали"' in s, 'нет антидубля по ID игрока')
+need('AUTO_PER_PID' not in s and 'A.perPid' not in s
+     and 'return "этому игроку уже отвечали"' not in s,
+     'вернулся антидубль «этому игроку уже отвечали»')
 need('return "лимит " .. tostring(AUTO_PER_MIN) .. " в минуту"' in s, 'нет лимита срабатываний')
 # конфиг автопилота — отдельный файл, правки пишутся с задержкой
 need('function QR.autoPath()' in s and 'grnd_repauto.cfg' in s, 'нет своего файла настроек автопилота')
