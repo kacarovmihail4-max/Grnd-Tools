@@ -150,6 +150,25 @@ check(#ACTIONS_LIST == 19, 'в списке действий ровно 19 пу�
 local all = icons()
 check(#all == 19, 'значков нарисовано столько же, сколько действий')
 
+-- v1.19.70: значки крупнее и стоят РОВНО (одинаковые промежутки)
+check(all[1] and all[1].w == 36, 'значок стал крупнее: ' .. tostring(all[1] and all[1].w) .. ' px')
+local gaps = {}
+for i = 2, #all do gaps[#gaps + 1] = all[i].x - (all[i - 1].x + all[i - 1].w) end
+local gMin, gMax = 999, -999
+for i = 1, #gaps do
+    if gaps[i] < gMin then gMin = gaps[i] end
+    if gaps[i] > gMax then gMax = gaps[i] end
+end
+check(gMin == gMax and gMin == 8,
+    'промежутки между значками одинаковые (' .. gMin .. '…' .. gMax .. ')')
+local rowCentered = true
+for _, b in ipairs(all) do
+    local rowTop = math.floor(b.y + 0.5)
+    local rowBot = math.floor(b.y + b.h + 0.5)
+    if b.y < WIN.y or b.y + b.h > WIN.y + WIN.h then rowCentered = false end
+end
+check(rowCentered, 'значки стоят внутри своей полосы')
+
 local total = 0
 for _, v in pairs(DRAWS) do total = total + v end
 check(total >= 38, 'у каждого значка есть графика (примитивов: ' .. total .. ')')
@@ -163,15 +182,17 @@ for _, q in ipairs(RECTS) do
     end
 end
 check(pill ~= nil, 'значки лежат на тёмной подложке-«таблетке»')
-check(pill ~= nil and math.abs((pill.p2.y - pill.p1.y) - (32 + 10)) <= 12,
-    'высота «таблетки» обнимает значки: ' ..
-    tostring(pill and (pill.p2.y - pill.p1.y) or '—'))
+-- v1.19.70: полоса стала толще — плашка ровно на 12 px выше значка
+local btnPx = all[1] and all[1].w or 36
+check(pill ~= nil and math.abs((pill.p2.y - pill.p1.y) - (btnPx + 12)) <= 0.5,
+    'высота «таблетки» = значок + 12 px (' ..
+    tostring(pill and (pill.p2.y - pill.p1.y) or '—') .. ' при значке ' .. btnPx .. ')')
 check(pill ~= nil and (pill.p2.x - pill.p1.x) >= 500,
     '«таблетка» на всю ширину полосы: ' .. tostring(pill and (pill.p2.x - pill.p1.x) or '—'))
 
 -- Компактность: без подписей панель в разы меньше прежнего окна на 6 колонок
-check(WIN.w <= 760, 'панель компактная по ширине: ' .. WIN.w .. ' px')
-check(WIN.h <= 70, 'панель компактная по высоте: ' .. WIN.h .. ' px')
+check(WIN.w <= 880, 'панель компактная по ширине: ' .. WIN.w .. ' px')
+check(WIN.h <= 90, 'панель компактная по высоте: ' .. WIN.h .. ' px')
 check(WIN.w > 300, 'панель не «схлопнулась» в точку')
 check(WIN.w * WIN.h < 960 * 218 / 3,
     'панель втрое меньше прежнего окна действий (' .. (WIN.w * WIN.h) .. ' px²)')
@@ -473,6 +494,44 @@ for _, label in ipairs(ACTIONS_LIST) do
 end
 check(#sigList >= 15, 'значки различаются графикой, а не только подписью (вариантов: '
     .. #sigList .. ')')
+
+-- v1.19.70: разделители групп — светлые черты ровно между значками
+local LINES = {}
+do
+    local dl2 = DL
+    local saved = dl2.AddLine
+    dl2.AddLine = function(_, p1, p2, c, w)
+        LINES[#LINES + 1] = { p1 = p1, p2 = p2, c = c, w = w }
+        return saved(_, p1, p2, c, w)
+    end
+    resetPanel()
+    SCRIPT.clickId = nil
+    frame()
+    dl2.AddLine = saved
+end
+local sep = {}
+for _, q in ipairs(LINES) do
+    local c = q.c
+    if type(c) == 'table' and c[1] == 255 and c[2] == 255 and c[3] == 255 and (tonumber(c[4]) or 0) >= 60 then
+        sep[#sep + 1] = q
+    end
+end
+check(#sep == 5, 'разделителей групп пять — как групп (' .. #sep .. ')')
+local bright = true
+for i = 1, #sep do
+    local c = sep[i].c
+    if (tonumber(c[4]) or 0) < 60 then bright = false end
+end
+check(bright, 'разделители ярче прежних (α ≥ 60)')
+-- разделители не режут значки: стоят в промежутке
+local sepOk = true
+for i = 1, #sep do
+    local lx = sep[i].p1.x
+    for _, b in ipairs(all) do
+        if lx > b.x - 0.5 and lx < b.x + b.w + 0.5 then sepOk = false end
+    end
+end
+check(sepOk, 'разделители стоят ровно в промежутках, а не на значках')
 
 local emptyIcons = {}
 for _, label in ipairs(ACTIONS_LIST) do

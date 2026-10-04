@@ -10,7 +10,7 @@ base = io.open(SRC, encoding='utf-8').read()
 
 MUTATIONS = [
     ("версия осталась прежней",
-     'GRND_SCRIPT_VERSION = "1.19.69"', 'GRND_SCRIPT_VERSION = "1.19.68"'),
+     'GRND_SCRIPT_VERSION = "1.19.70"', 'GRND_SCRIPT_VERSION = "1.19.69"'),
     ("в панель вернули крестик",
      '                        -- Подсказка над наведённым значком',
      '                        im.InvisibleButton("##act_close_btn", im.ImVec2(1, 1))\n'
@@ -19,8 +19,8 @@ MUTATIONS = [
      '                    A.tip = nil\n',
      '                    local targetTitle = "Действия"\n                    A.tip = nil\n'),
     ("в панель вернули шапку прежнего окна",
-     '                    A.pillH = A.lo.btn + 10',
-     '                    local AH_HEAD = 34\n                    A.pillH = A.lo.btn + 10'),
+     '                    A.pillH = A.lo.btn + 12',
+     '                    local AH_HEAD = 34\n                    A.pillH = A.lo.btn + 12'),
     ("кнопки с подпанелью снова закрывают панель",
      '                                    -- Без подпанели нажатие закрывает панель\n'
      '                                    if not subKey then',
@@ -71,6 +71,21 @@ MUTATIONS = [
     ("клик по полосе действий достаётся чекерам",
      '        if RC.actionsWinOpen and grndCheckerRectOk(RC.actionsWinRect) then',
      '        if false then'),
+    ("полоса снова тонкая",
+     'A.pillH = A.lo.btn + 12', 'A.pillH = A.lo.btn + 10'),
+    ("значки снова мелкие",
+     '    local BTN = 36', '    local BTN = 32'),
+    ("разделитель снова тусклый",
+     'col32(255, 255, 255, 74), 1.2)', 'col32(255, 255, 255, 22), 1.0)'),
+    ("разделитель «съел» промежуток",
+     'row.divs[#row.divs + 1] = x - GAP / 2',
+     'row.divs[#row.divs + 1] = x - GAP / 2\n                x = x + 9'),
+    ("«Заморозить» снова снежинка, а не пауза",
+     'H.co(0, 0, 0.82, 1.7)\n        H.rr(-0.31, -0.36, 0.22, 0.72, 0.08)\n'
+     '        H.rr(0.09, -0.36, 0.22, 0.72, 0.08)',
+     'H.l(0, -0.86, 0, 0.86, 1.6)'),
+    ("щит брони снова гранёный",
+     'local x = w * math.sqrt(1 - t * t)', 'local x = w * (1 - t ^ 1.7)'),
     ("повторное нажатие значка не убирает подпанель",
      '        if RC.actSubPopup == "hp" then RC.actSubPopup = nil else RC.actSubPopup = "hp" end',
      '        RC.actSubPopup = (RC.actSubPopup == "hp") and nil or "hp"'),

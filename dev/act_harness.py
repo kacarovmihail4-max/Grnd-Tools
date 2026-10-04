@@ -105,7 +105,7 @@ subpopup = src[s1:block_end(src, s1, 'grndDrawActSubPopup')] + '\n'
 
 # 5) сам блок отрисовки панели
 # охватываем и «предохранители» панели, стоящие прямо перед её отрисовкой
-_pmark = '                -- v1.19.69: если цель слежки сменилась'
+_pmark = '                -- v1.19.70: если цель слежки сменилась'
 p1 = src.index(_pmark)
 p2 = src.index('            return (RC.cursor or RC.actionsWinOpen) and true or false')
 panel = src[p1:p2]
