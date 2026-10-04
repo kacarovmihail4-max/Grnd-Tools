@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.62"
+GRND_SCRIPT_VERSION = "1.19.63"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -39006,8 +39006,10 @@ function grndMainBody()
             -- пустым местом 3D-модели, из-за чего кнопки «уезжали» вниз)
             local leftTop = TOP_Y + 2
             local leftBottom = leftTop + punH
-            local contentH = math.max(openState and (TOP_Y + rowsH) or 0,
-                leftBottom) + BOT + 6
+            -- v1.19.63: карточка кончается там же, где и панель наказаний
+            -- («сделай меньше — на уровне конца всех кнопок»). Весь список
+            -- строк живёт в окне прокрутки под шапкой.
+            local contentH = leftBottom + BOT + 6
             -- Высота окна ограничена ЭКРАНОМ, а не содержимым: всё, что не
             -- влезло, живёт в окне прокрутки (шапка при этом не уезжает).
             local H_MAX = math.max(H_MIN, math.min(560, resY - 42))
@@ -39032,24 +39034,6 @@ function grndMainBody()
             local px = resX - W - 24
             local py = math.max(22, math.floor((resY - H) / 2))
             if RC.posX and RC.posY then px, py = RC.posX, RC.posY end
-            -- перетаскивание за шапку. Доступно при включённом курсоре (ПКМ):
-            -- иначе ЛКМ-клик уходит в игру (выстрел) — тащить было бы нельзя.
-            local headRect = { x = px, y = py, w = W, h = HEAD }
-            if RC.cursor and GRND_MOUSE.down then
-                if not RC.dragging and grndMouseInside(headRect) then
-                    RC.dragging = true
-                    RC.dragDX = GRND_MOUSE.x - px
-                    RC.dragDY = GRND_MOUSE.y - py
-                end
-            elseif RC.dragging then
-                RC.dragging = false
-                pcall(grndCamCfgSave)   -- запомнили позицию окна
-            end
-            if RC.dragging then
-                px = math.max(0, math.min(resX - W, GRND_MOUSE.x - (RC.dragDX or 0)))
-                py = math.max(0, math.min(resY - H, GRND_MOUSE.y - (RC.dragDY or 0)))
-                RC.posX, RC.posY = px, py
-            end
             local valueX = math.floor(W * 0.51)
             local valueW = W - pad - valueX
             RC.activeTab = "overview"
@@ -39134,6 +39118,62 @@ function grndMainBody()
             end
             if lvlRaw == "" then lvlRaw = "—" end
 
+            -- v1.19.63: окно можно взять за ЛЮБОЕ свободное место и утащить
+            -- (шапка, строки, пустота слева, края). Кнопки наказаний, значок
+            -- «копировать» и стрелка внизу — не «ручки»: по ним обычный клик.
+            -- Тянем только при включённом курсоре (ПКМ): иначе ЛКМ-клик уходит
+            -- в игру (выстрел) — тащить было бы нельзя. Позиция окна — экранная,
+            -- курсор тоже, поэтому всё сравниваем в одних координатах.
+            local title = shortValue(nick, 18) .. " [" .. tostring(id) .. "]"
+            local titleW = grndTextW(title)
+            local icRect = { x = px + pad + titleW + 10, y = py + 6, w = 22, h = 22 }
+            local function onWidget(mx, my)
+                -- значок «копировать»
+                if mx >= icRect.x and mx <= icRect.x + icRect.w
+                    and my >= icRect.y and my <= icRect.y + icRect.h then return true end
+                -- кнопки наказаний
+                local bxx = px + pad + 6
+                local bw2 = LW - 12
+                for i = 1, punCnt do
+                    local byy = py + leftTop + (i - 1) * (PUN_BH + PUN_BG)
+                    if mx >= bxx and mx <= bxx + bw2
+                        and my >= byy and my <= byy + PUN_BH then return true end
+                end
+                -- стрелка «свернуть/развернуть»
+                local ax = px + math.floor(W / 2) - 12
+                local ay = py + H - BOT + 1
+                if mx >= ax and mx <= ax + 24 and my >= ay and my <= ay + 18 then
+                    return true
+                end
+                return false
+            end
+            local winRect = { x = px, y = py, w = W, h = H }
+            if RC.cursor and GRND_MOUSE.down then
+                if not RC.dragging and grndMouseInside(winRect)
+                    and not onWidget(GRND_MOUSE.x, GRND_MOUSE.y) then
+                    RC.dragging = true
+                    RC.dragDX = GRND_MOUSE.x - px
+                    RC.dragDY = GRND_MOUSE.y - py
+                end
+            elseif RC.dragging then
+                RC.dragging = false
+                pcall(grndCamCfgSave)   -- запомнили позицию окна
+            end
+            if RC.dragging then
+                px = math.max(0, math.min(resX - W, GRND_MOUSE.x - (RC.dragDX or 0)))
+                py = math.max(0, math.min(resY - H, GRND_MOUSE.y - (RC.dragDY or 0)))
+                RC.posX, RC.posY = px, py
+                -- окно уехало в этом же кадре: обновляем рамки (позиция окна,
+                -- значок копирования, область колеса) — иначе при перетаске
+                -- «отставали» на кадр
+                RC.windowPos = { x = px, y = py }
+                icRect.x, icRect.y = px + pad + titleW + 10, py + 6
+                if openState and scrollMax > 0 then
+                    RC.scrollRect = { x = px + RX - 8, y = py + listTop,
+                        w = math.min(RW + 20, W - RX - 4), h = listH }
+                end
+            end
+
             im.SetNextWindowPos(im.ImVec2(px, py), COND_ALWAYS)
             im.SetNextWindowSize(im.ImVec2(W, H), COND_ALWAYS)
             local styleN, colorN = 0, 0
@@ -39199,9 +39239,9 @@ function grndMainBody()
                 frame(0.5, 0.5, W - 1, H - 1, col32(255, 255, 255, 25), 13)
                 -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
 
-                -- Шапка: ник СЛЕВА, сразу за ним значок «копировать».
-                local title = shortValue(nick, 18) .. " [" .. tostring(id) .. "]"
-                local titleW = drawnW(title, 1.0)
+                -- Шапка: ник СЛЕВА, сразу за ним значок «копировать»
+                -- (title/titleW посчитаны выше — там же, где рамки «ручек»
+                -- перетаскивания).
                 put(pad, 9, title, c4(TH.textHi), 1.0)
                 local icS = 22
                 local icX = pad + titleW + 10

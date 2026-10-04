@@ -98,7 +98,13 @@ function grndTextW(s) return #tostring(s) * 7 end
 function grndUtf8Len(s) return #tostring(s) end
 function reconUtf(s) return tostring(s or '') end
 function reconCopyNickname(s) return true end
-function grndMouseInside(r) return false end
+-- рабочая мышь: карточка спрашивает, попал ли курсор в её рамку
+MOUSEX, MOUSEY = 0, 0
+function grndMouseInside(r)
+    if not r then return false end
+    return MOUSEX >= r.x and MOUSEX <= r.x + (r.w or 0)
+        and MOUSEY >= r.y and MOUSEY <= r.y + (r.h or 0)
+end
 function grndCamCfgSave() end
 
 -- ---- игровые данные цели ----

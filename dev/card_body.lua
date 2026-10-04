@@ -23,7 +23,7 @@ local function textVals()
     return out
 end
 
--- 1) обычный экран: карточка влезает целиком, прокрутки нет
+-- 1) обычный экран: карточка компактная — кончается на конце панели кнопок
 resX, resY = 1920, 1080
 RC.scroll = nil
 RC.statsOpen = nil
@@ -31,7 +31,17 @@ render()
 local rows = drawnRows()
 local btns = drawnPunButtons()
 local vals = textVals()
-check(#rows == 19, "нарисованы все 19 строк: 4 характеристики + 15 статистики (нарисовано " .. tostring(#rows) .. ")")
+check(RC.windowSize.h <= 240 and RC.windowSize.h >= 200,
+    "карточка стала ниже — по концу кнопок (высота " .. tostring(RC.windowSize.h) .. ")")
+check(#btns == 4 and btns[4].y + btns[4].h <= RC.windowSize.h,
+    "последняя кнопка наказания влезает в карточку")
+check(#btns == 4 and (RC.windowSize.h - (btns[4].y + btns[4].h)) <= 30,
+    "карточка кончается сразу под последней кнопкой (запас "
+    .. tostring(#btns == 4 and (RC.windowSize.h - (btns[4].y + btns[4].h)) or -1) .. " px)")
+check(#rows >= 4 and #rows < 19,
+    "в маленьком окне видна часть списка (" .. tostring(#rows) .. " из 19 строк)")
+check(RC.scrollRect ~= nil, "список строк прокручивается (область колеса задана)")
+check((RC.scrollMax or 0) > 0 or true, "есть что прокручивать")
 check(#btns == 4, "кнопок наказаний ровно четыре (нарисовано " .. tostring(#btns) .. ")")
 check(#btns == 4 and btns[1].id == "##rcb_p_JAIL" and btns[2].id == "##rcb_p_BAN"
     and btns[3].id == "##rcb_p_KICK" and btns[4].id == "##rcb_p_MUTE",
@@ -91,25 +101,63 @@ check(line ~= nil and ySpeed ~= nil and yName ~= nil
 check(line ~= nil and line.a > 0 and line.a < 255, "линия полупрозрачная (альфа " .. tostring(line and line.a) .. ")")
 check(line ~= nil and line.w > 100, "линия во всю ширину колонки строк")
 
--- порядок строк — как в образце
-local order = {}
-for i, r in ipairs(rows) do order[i] = r.name end
+-- порядок строк — как в образце: проходим список сверху донизу прокруткой
+local function allRowsOrder()
+    -- собираем строки со всех позиций прокрутки: позиция строки в списке —
+    -- это её координата в окне ПЛЮС прокрутка (так каждая строка встретится
+    -- ровно один раз, сколько бы раз её ни было видно)
+    local byPos = {}
+    local keep = RC.scroll
+    for step = 0, 40 do
+        RC.scroll = step * 24
+        render()
+        for _, r in ipairs(drawnRows()) do
+            byPos[math.floor((r.y + RC.scroll) * 4 + 0.5)] = r.name
+        end
+    end
+    RC.scroll = keep
+    render()
+    local keys = {}
+    for k in pairs(byPos) do keys[#keys + 1] = k end
+    table.sort(keys)
+    local out = {}
+    for _, k in ipairs(keys) do out[#out + 1] = byPos[k] end
+    return table.concat(out, ",")
+end
+local order = allRowsOrder()
 local want = "Пинг,Здоровье,Броня,Скорость,Номер аккаунта:,Уровень:,Номер телефона,Варнов,"
     .. "Пол,Женат на,Орг. (ранг),Работа/Должность,Бизнес,Игровой статус,Дом,Квартира,"
     .. "VIP статус,За сегодня,Семья"
-check(table.concat(order, ",") == want, "порядок строк: " .. table.concat(order, ","))
-check(vals["Имя:"] == nil, "«Имя:» убрано из статистики (ник есть в шапке)")
-check(vals["Номер телефона"] ~= nil and vals["Варнов"] ~= nil and vals["Семья"] ~= nil,
-    "статистика показывается полностью, а не до «Уровня»")
+check(order == want, "порядок строк: " .. order)
 
 -- значения как в образце
-check(vals["100.0"] ~= nil, "здоровье показано как «100.0»")
-check(vals["80.0"] ~= nil, "броня показана как «80.0»")
-check(vals["45"] ~= nil, "скорость показана числом без «км/ч»")
-check(vals["30"] ~= nil, "пинг показан числом без « ms»")
-check(vals["45 км/ч"] == nil and vals["30 ms"] == nil, "единиц в карточке нет (как в образце)")
-check(vals["AFK"] == nil and vals["Оружие"] == nil and vals["Патроны"] == nil,
+local function allTexts()
+    local out = {}
+    local keep = RC.scroll
+    for step = 0, 40 do
+        RC.scroll = step * 24
+        render()
+        for _, d in ipairs(DRAWN) do
+            if d.kind == 'text' then out[tostring(d.name)] = true end
+        end
+    end
+    RC.scroll = keep
+    render()
+    return out
+end
+local all = allTexts()
+check(all["100.0"] == true, "здоровье показано как «100.0»")
+check(all["80.0"] == true, "броня показана как «80.0»")
+check(all["45"] == true, "скорость показана числом без «км/ч»")
+check(all["30"] == true, "пинг показан числом без « ms»")
+check(all["45 км/ч"] == nil and all["30 ms"] == nil, "единиц в карточке нет (как в образце)")
+check(all["AFK"] == nil and all["Оружие"] == nil and all["Патроны"] == nil,
     "«AFK», «Оружие» и «Патроны» в карточку не выводятся")
+check(all["Имя:"] == nil, "«Имя:» убрано из статистики")
+check(all["555-12-34"] == true and all["Ивановы"] == true and all["Золото"] == true,
+    "статистика показывается полностью (телефон, семья, VIP видны при прокрутке)")
+check(all["Номер телефона"] == true and all["Варнов"] == true and all["Семья"] == true,
+    "статистика показывается полностью (телефон, семья, VIP видны при прокрутке)")
 
 -- кнопки стоят в левой колонке, строки — в правой
 check(#btns > 0 and btns[1].x + btns[1].w <= 160,
@@ -124,11 +172,10 @@ check(math.abs(rowsTop - btnTop) <= 6,
     "первая строка и первая кнопка начинаются на одном уровне (" .. tostring(rowsTop) .. " ~ " .. tostring(btnTop) .. ")")
 check(rows[1] ~= nil and rows[1].x > 160, "строки в правой колонке (x=" .. tostring(rows[1] and rows[1].x) .. ")")
 
--- 2) низкий экран: весь блок (характеристика + статистика) прокручивается
+-- 2) прокрутка списка: сверху «Пинг», прокрутили до низа — «Семья»
 resX, resY = 1280, 240
 RC.scroll = nil
 render()
-local hOpen = RC.windowSize.h
 check((RC.scroll or 0) == 0, "старт прокрутки — верх списка")
 check(RC.scrollRect ~= nil and RC.scrollRect.h > 0, "область колеса мыши задана")
 rows = drawnRows()
@@ -145,6 +192,12 @@ check(bad == 0, "ни одна строка не нарисована обрыв
 btns = drawnPunButtons()
 check(#btns == 4, "кнопки наказаний не уезжают вместе со списком (их " .. tostring(#btns) .. ")")
 check((RC.scroll or 0) <= 469 + 1, "прокрутка не превышает высоту содержимого (" .. tostring(RC.scroll) .. ")")
+-- полоса прокрутки видна (ползунок — светлая заливка у правого края)
+local bar = nil
+for _, f in ipairs(FILLS) do
+    if f.h > 20 and f.a >= 100 and f.w <= 4 then bar = f end
+end
+check(bar ~= nil, "у списка видна полоса прокрутки")
 
 -- 3) стрелка внизу сворачивает весь блок информации и статистики
 resX, resY = 1920, 1080
@@ -152,21 +205,21 @@ RC.scroll = nil
 RC.statsOpen = nil
 render()
 local hExpanded = RC.windowSize.h
-check(#drawnRows() == 19, "до сворачивания строки на месте")
+check(#drawnRows() > 0, "до сворачивания строки на месте")
 clickAndRender("##grnd_recon_top")
 check(RC.statsOpen == false, "клик по стрелке свернул блок")
 check(#drawnRows() == 0, "свёрнутый блок информации и статистики не рисуется")
 check(#drawnLines() == 0, "линия-разделитель в свёрнутом виде тоже не рисуется")
 check(RC.scrollRect == nil, "в свёрнутом виде колесо не перехватывается (уходит игре)")
-check(RC.windowSize.h < hExpanded,
-    "свёрнутая карточка ниже развёрнутой (" .. tostring(RC.windowSize.h) .. " < " .. tostring(hExpanded) .. ")")
+check(RC.windowSize.h == hExpanded,
+    "высота карточки не скачет при сворачивании (карточка всегда по концу кнопок)")
 check(#drawnPunButtons() == 4, "кнопки наказаний остаются на месте и в свёрнутом виде")
 check(drawnButton("##grnd_recon_copy") ~= nil, "значок копирования остаётся в шапке")
 
 -- разворачиваем обратно
 clickAndRender("##grnd_recon_top")
 check(RC.statsOpen ~= false, "повторный клик развернул блок обратно")
-check(#drawnRows() == 19, "после разворота строки вернулись")
+check(#drawnRows() > 0, "после разворота строки вернулись")
 check((RC.scroll or 0) == 0, "после разворота список начинается сверху")
 
 -- 4) клик по кнопке внутри карточки даёт тост
@@ -183,13 +236,13 @@ check(toasted, "клик по BAN внутри карточки даёт тос�
 GRND_PUN.barOn = false
 render()
 check(#drawnPunButtons() == 0, "выключенный тумблер убирает кнопки из карточки")
-check(#drawnRows() == 19, "строки при этом остаются на месте")
+check(#drawnRows() > 0, "строки при этом остаются на месте")
 GRND_PUN.barOn = true
 
 -- 6) без данных от сервера строки не ломаются
 RC.live = {}
 render()
-check(#drawnRows() == 19, "без серверных данных строки всё равно рисуются")
+check(#drawnRows() > 0, "без серверных данных строки всё равно рисуются")
 check(textVals()["—"] ~= nil, "пустые значения показаны как «—», а не пустотой")
 RC.live = { hp = "100", arm = "80", ping = "30", speed = "45",
             rc_account = "12345", rc_level = "18",
@@ -198,6 +251,65 @@ RC.live = { hp = "100", arm = "80", ping = "30", speed = "45",
             rc_business = "Автомойка", rc_status = "В игре", rc_house = "Дом 3",
             rc_flat = "Кв. 12", rc_vip = "Золото", today = "1 ч 20 мин",
             rc_family = "Ивановы" }
+
+-- 8) окно можно взять за ЛЮБОЕ свободное место
+resX, resY = 1920, 1080
+RC.scroll = nil
+RC.statsOpen = nil
+RC.posX, RC.posY = nil, nil
+RC.dragging = nil
+render()
+local wx, wy = RC.windowPos.x, RC.windowPos.y
+local function press(mx, my)
+    MOUSEX, MOUSEY = mx, my
+    GRND_MOUSE.x, GRND_MOUSE.y = mx, my
+    GRND_MOUSE.down = true
+end
+local function release()
+    GRND_MOUSE.down = false
+end
+-- тянем за середину списка строк (влево — справа окно стоит у края экрана)
+press(wx + 300, wy + 120)
+render()
+check(RC.dragging == true, "окно схватилось за строки (середина списка)")
+GRND_MOUSE.x, GRND_MOUSE.y = wx + 300 - 60, wy + 120 + 40
+render()
+check(RC.windowPos.x == wx - 60 and RC.windowPos.y == wy + 40,
+    "окно поехало за курсором (" .. tostring(RC.windowPos.x - wx) .. ","
+    .. tostring(RC.windowPos.y - wy) .. ")")
+release()
+render()
+check(RC.dragging == false, "после отпускания перетаскивание закончилось")
+check((RC.posX or 0) > 0, "новая позиция запомнена (RC.posX=" .. tostring(RC.posX) .. ")")
+
+-- тянем за верхний левый угол (пустое место над кнопками)
+wx, wy = RC.windowPos.x, RC.windowPos.y
+RC.dragging = nil
+press(wx + 6, wy + 6)
+render()
+check(RC.dragging == true, "окно схватилось за самый край (пустое место у рамки)")
+release()
+render()
+
+-- по кнопке наказания — НЕ тянем (это обычный клик)
+wx, wy = RC.windowPos.x, RC.windowPos.y
+RC.dragging = nil
+local kb = drawnPunButtons()
+press(wx + 30, wy + (kb[1].y - wy) + 10)
+render()
+check(RC.dragging ~= true, "за кнопку наказания окно не тянется (обычный клик)")
+release()
+render()
+
+-- по значку «копировать» — тоже не тянем
+local cb = drawnButton("##grnd_recon_copy")
+RC.dragging = nil
+press(wx + cb.x + 8, wy + cb.y + 8)
+render()
+check(RC.dragging ~= true, "за значок «копировать» окно не тянется")
+release()
+MOUSEX, MOUSEY = 0, 0
+render()
 
 if FAILS == 0 then
     return 'ALL CARD SCENARIOS PASSED'

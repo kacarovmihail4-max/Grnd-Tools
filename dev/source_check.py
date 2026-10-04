@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.62"' in s, 'версия не 1.19.62')
+need('GRND_SCRIPT_VERSION = "1.19.63"' in s, 'версия не 1.19.63')
 
 # v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
 # 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
@@ -198,6 +198,24 @@ need('"Кнопки наказаний в карточке"' in s and
      'JAIL · BAN · KICK · MUTE — столбиком под аватаром · курсор — ПКМ' in s,
      'описание тумблера наказаний не соответствует карточке')
 # прокрутка: листается весь блок (характеристика + статистика)
+# v1.19.63: карточка компактная — кончается на конце панели кнопок, а весь
+# список строк живёт в окне прокрутки («сделай меньше и добавь скролл»)
+need('local contentH = leftBottom + BOT + 6' in s,
+     'высота карточки снова тянется по строкам (должна кончаться на конце кнопок)')
+absent('local contentH = math.max(openState and (TOP_Y + rowsH) or 0',
+       'вернулась высота карточки по строкам (карточка снова длинная)')
+# v1.19.63: окно тянется за ЛЮБОЕ свободное место (не только за шапку)
+need('local winRect = { x = px, y = py, w = W, h = H }' in s and
+     'local function onWidget(mx, my)' in s and
+     'and not onWidget(GRND_MOUSE.x, GRND_MOUSE.y) then' in s,
+     'окно снова тянется не за любое место')
+absent('local headRect = { x = px, y = py, w = W, h = HEAD }',
+       'вернулось перетаскивание только за шапку')
+need('local titleW = grndTextW(title)' in s and
+     'local icRect = { x = px + pad + titleW + 10, y = py + 6, w = 22, h = 22 }' in s,
+     'значок «копировать» не исключён из «ручек» перетаскивания')
+need('icRect.x, icRect.y = px + pad + titleW + 10, py + 6' in s,
+     'при перетаскивании не обновляются рамки окна (значок «отстаёт»)')
 need('local SCROLL_STEP = ROW_H' in s and 'local H_MIN = 180' in s,
      'у карточки нет прокрутки (окно снова режет низ карточки)')
 need("local scrollMax = openState and math.max(0, rowsH - listH) or 0" in s and
