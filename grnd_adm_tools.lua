@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.68"
+GRND_SCRIPT_VERSION = "1.19.69"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -1437,9 +1437,11 @@ do
         local ok, f = pcall(GRND_CONFIG.open, punCfgPath(), "w")
         if not ok or not f then return false end
         f:write("barOn=" .. (P.barOn and "1" or "0") .. "\n")
-        if _G.GRND_RC and _G.GRND_RC.savedActionsWinX and _G.GRND_RC.savedActionsWinY then
+        if _G.GRND_RC and _G.GRND_RC.actionsWinUser
+           and _G.GRND_RC.savedActionsWinX and _G.GRND_RC.savedActionsWinY then
             f:write("actX=" .. tostring(math.floor(_G.GRND_RC.savedActionsWinX)) .. "\n")
             f:write("actY=" .. tostring(math.floor(_G.GRND_RC.savedActionsWinY)) .. "\n")
+            f:write("actUser=1\n")
         end
         for _, it in ipairs(P.list) do
             local d = P.data[it.id]
@@ -1486,6 +1488,9 @@ do
                     _G.GRND_RC = _G.GRND_RC or {}
                     _G.GRND_RC.savedActionsWinY = n
                 end
+            elseif k == "actUser" then
+                _G.GRND_RC = _G.GRND_RC or {}
+                _G.GRND_RC.actionsWinUser = (v == "1")
             elseif k then
                 local id, kind = k:match("^(%u+)%.([rt])$")
                 if id and kind and idx[id] then
@@ -1766,7 +1771,7 @@ function grndMouseFrameBegin()
     M.clicked, M.rclicked, M.mclicked = false, false, false
     M.clickedBtn, M.rclickedBtn, M.mclickedBtn = nil, nil, nil
 end
--- v1.19.68: чекеры рисуются ПОД окнами (окно закрывает их там, где стоит),
+-- v1.19.69: чекеры рисуются ПОД окнами (окно закрывает их там, где стоит),
 -- поэтому клик, который пришёлся на окно поверх чекера, чекеру НЕ принадлежит:
 -- иначе он «украл» бы нажатие у карточки рекона (её тянут мышью), у оверлея
 -- репортов (у него свои кнопки) и у окна статистики игрока. Окна, которые
@@ -12288,7 +12293,7 @@ end
 -- =====================================================================
 --  МОДУЛЬ 11 (v1.5.1, сборка 2): GRND KILL LIST — кастомный килл-лист (чекер №1).
 --  ------------------------------------------------------------------
---  v1.19.68: чекеры (килл-лист и «Админы в сети») рисуются ПЕРВЫМИ — ПОД
+--  v1.19.69: чекеры (килл-лист и «Админы в сети») рисуются ПЕРВЫМИ — ПОД
 --  всеми окнами: любое окно (карточка рекона, оверлей репортов, окно
 --  статистики) закрывает их там, где стоит, и «сквозь окно» чекер не видно.
 --  Целиком они прячутся только под большими окнами, которые и раньше их
@@ -14842,6 +14847,11 @@ do
     RC.actDragging    = false
     RC.savedActionsWinX = RC.savedActionsWinX or nil
     RC.savedActionsWinY = RC.savedActionsWinY or nil
+    RC.actionsWinUser = false
+    RC.actionsWinAnchorX = nil
+    RC.actionsWinAnchorY = nil
+    RC.actionsWinCircleY = nil
+    RC.actionsWinAt = nil
     RC.hoverTarget    = nil
     RC.actTargetId    = nil
     RC.actTargetNick  = nil
@@ -18231,10 +18241,14 @@ function _G.grndHandleActionBtn(cleanLabel, tid, tNick, targetPed)
     end
 
     if cleanLabel == "Выдать ХП" then
-        RC.actSubPopup = (RC.actSubPopup == "hp") and nil or "hp"
+        -- v1.19.69: повторное нажатие значка убирает подпанель
+        -- (старая запись `and nil or` не работала: nil или "key" всегда даёт "key")
+        if RC.actSubPopup == "hp" then RC.actSubPopup = nil else RC.actSubPopup = "hp" end
         RC.actHpVal = grndRcClampHp(RC.actHpVal)
     elseif cleanLabel == "Выдать броню" then
-        RC.actSubPopup = (RC.actSubPopup == "arm") and nil or "arm"
+        -- v1.19.69: повторное нажатие значка убирает подпанель
+        -- (старая запись `and nil or` не работала: nil или "key" всегда даёт "key")
+        if RC.actSubPopup == "arm" then RC.actSubPopup = nil else RC.actSubPopup = "arm" end
         RC.actArmVal = RC.actArmVal or 100
     elseif cleanLabel == "Подбросить" then
         RC.actSubPopup = nil
@@ -18261,7 +18275,9 @@ function _G.grndHandleActionBtn(cleanLabel, tid, tNick, targetPed)
         sampSendChat("/flip " .. tostring(tid))
         if notify and notify.add then notify.add("Перевёрнуто т/с игрока " .. tNick .. " (/flip " .. tid .. ")", "ok", 2) end
     elseif cleanLabel == "Заправить т/с" then
-        RC.actSubPopup = (RC.actSubPopup == "fuel") and nil or "fuel"
+        -- v1.19.69: повторное нажатие значка убирает подпанель
+        -- (старая запись `and nil or` не работала: nil или "key" всегда даёт "key")
+        if RC.actSubPopup == "fuel" then RC.actSubPopup = nil else RC.actSubPopup = "fuel" end
         local curV = _G.grndGetTargetVehId(tid, targetPed)
         if curV then RC.actFuelVehId = curV end
         RC.actFuelVal = RC.actFuelVal or 150
@@ -18317,13 +18333,316 @@ function _G.grndHandleActionBtn(cleanLabel, tid, tNick, targetPed)
         RC.actSubPopup = nil
         sampSendChat("/alic " .. tostring(tid))
     elseif cleanLabel == "Сообщить в /a" then
-        RC.actSubPopup = (RC.actSubPopup == "report_a") and nil or "report_a"
+        -- v1.19.69: повторное нажатие значка убирает подпанель
+        -- (старая запись `and nil or` не работала: nil или "key" всегда даёт "key")
+        if RC.actSubPopup == "report_a" then RC.actSubPopup = nil else RC.actSubPopup = "report_a" end
     else
         RC.actSubPopup = nil
         if notify and notify.add then
             pcall(notify.add, "«" .. cleanLabel .. "» [" .. tNick .. "]: команда подключится позже", "info", 2.2)
         end
     end
+end
+
+-- =====================================================================
+--  v1.19.69: ЗНАЧКИ ПАНЕЛИ ДЕЙСТВИЙ (компактная полоса вместо окна)
+--  ---------------------------------------------------------------------
+--  Панель «Действия» стала компактной: подписи убраны, вместо них —
+--  линейные значки в стиле игрового интерфейса (как в образце заказчика).
+--  Значок выбирается по СМЫСЛУ названия действия, поэтому список действий
+--  можно менять (в порядке и составе) — панель всё равно нарисуется.
+--  Неизвестное действие получает нейтральный значок, а не пропадает.
+-- =====================================================================
+-- Lua не умеет понижать регистр кириллицы (string.lower работает только с
+-- латиницей), а названия действий — русские: «Выдать ХП» иначе не узнаётся.
+-- Поэтому понижаем регистр вручную, прямо по байтам UTF-8.
+function grndActLower(t)
+    local s = tostring(t or ""):lower()
+    s = s:gsub("(\208)([\144-\175])", function(p, b)
+        local c = b:byte(1)
+        if c <= 159 then return "\208" .. string.char(c + 32) end   -- А..Я -> а..я
+        return "\209" .. string.char(c - 160 + 128)                -- Р..Я -> р..я
+    end)
+    s = s:gsub("\208\129", "\209\145")                            -- Ё -> ё
+    return s
+end
+
+function grndActIconKey(label)
+    local s = grndActLower(label)
+    -- «ё» и пробелы не должны мешать узнаванию (в т.ч. «т/с» и «т с»)
+    s = s:gsub("ё", "е")
+    local flat = s:gsub("%s+", "")
+    local function has(...)
+        for i = 1, select("#", ...) do
+            local w = select(i, ...)
+            if s:find(w, 1, true) or flat:find(w, 1, true) then return true end
+        end
+        return false
+    end
+    -- порядок важен: «отобрать оружие» — раньше «оружия», «т/с» — раньше «спавн»
+    if has("хп", "hp", "здоров") then return "hp" end
+    if has("брон", "armor", "arm") then return "arm" end
+    if has("подброс", "slap") then return "slap" end
+    if has("т/с", "тс", "car", "авто", "машин") then
+        if has("почин", "fix") then return "fixcar" end
+        if has("перевер", "flip") then return "flipcar" end
+        if has("заправ", "fuel", "топлив") then return "fuel" end
+        if has("спавн", "spawn") then return "spawncar" end
+        return "car"
+    end
+    if has("размороз", "unfreeze") then return "unfreeze" end
+    if has("замороз", "freeze", "мороз") then return "freeze" end
+    if has("спавн", "spawn") then return "spawn" end
+    if has("тп", "tp", "телепорт", "goto", "gethere", "дорог", "road") then
+        if has("дорог", "road") then return "tproad" end
+        if has("к себе", "ксебе", "gethere") then return "tphere" end
+        return "tpgo"
+    end
+    if has("отобрать", "забрать", "rgun") then return "rgun" end
+    if has("оруж", "weap", "gun", "пушк") then return "weap" end
+    if has("стат", "stat", "инфо", "info") then return "stats" end
+    if has("наказ", "getinfo", "pun") then return "punish" end
+    if has("лиценз", "lic", "прав") then return "lic" end
+    if has("сообщ", "в /a", "report", "жалоб", "мегафон") then return "admin" end
+    return "dot"
+end
+
+-- Кнопки с «подпанелью» (ползунок/поле): нажатие на них панель НЕ закрывает —
+-- иначе пользоваться ползунком было бы невозможно (список — как в
+-- grndHandleActionBtn, по точному названию).
+function grndActSubKey(label)
+    local t = tostring(label or ""):gsub("\n", " ")
+    if t == "Выдать ХП" then return "hp" end
+    if t == "Выдать броню" then return "arm" end
+    if t == "Заправить т/с" then return "fuel" end
+    if t == "Сообщить в /a" then return "report_a" end
+    return nil
+end
+
+-- Группы значков: внутри группы — без разделителей, между группами — тонкая
+-- линия (как в образце). Группа определяется по смыслу значка.
+function grndActGroupOf(label)
+    local k = grndActIconKey(label)
+    if k == "hp" or k == "arm" then return 1 end
+    if k == "slap" or k == "spawn" or k == "freeze" or k == "unfreeze" then return 2 end
+    if k == "fixcar" or k == "flipcar" or k == "fuel" or k == "spawncar" or k == "car" then return 3 end
+    if k == "tproad" or k == "tpgo" or k == "tphere" then return 4 end
+    if k == "weap" or k == "rgun" then return 5 end
+    return 6
+end
+
+-- Раскладка полосы: ряды значков, ширина, высота. Если значки не влезают в
+-- экран при минимальном размере — переносим на второй ряд (панель не «уезжает»
+-- за край и не обрезается).
+function grndActLayout(items, maxW)
+    local n = #items
+    maxW = tonumber(maxW) or 780
+    local GAP, PAD, DIV = 3, 8, 9
+    local function sepAt(a, b)
+        if a < 1 or b > n then return 0 end
+        return (grndActGroupOf(items[a]) ~= grndActGroupOf(items[b])) and 1 or 0
+    end
+    local function widthFor(btn, i1, i2)
+        local w = PAD * 2 + (i2 - i1 + 1) * btn + math.max(0, i2 - i1) * GAP
+        for i = i1 + 1, i2 do w = w + sepAt(i - 1, i) * DIV end
+        return w
+    end
+    local BTN = 32
+    while BTN > 26 and widthFor(BTN, 1, n) > maxW do BTN = BTN - 1 end
+    -- Ряды набираем жадно, по одному значку: ряд закрывается, как только
+    -- следующий значок (вместе с разделителем) перестаёт влезать. Так ни один
+    -- ряд не шире экрана — панель не «уезжает» за край и не обрезается.
+    local rows = {}
+    if n > 0 then
+        local i = 1
+        while i <= n do
+            local row = { i1 = i, i2 = i }
+            local w = PAD * 2 + BTN
+            local k = i
+            while k < n do
+                local step = GAP + sepAt(k, k + 1) * DIV + BTN
+                if w + step > maxW then break end
+                w = w + step
+                k = k + 1
+                row.i2 = k
+            end
+            row.w = w
+            rows[#rows + 1] = row
+            i = row.i2 + 1
+        end
+    end
+    local AW = 0
+    for r = 1, #rows do
+        rows[r].w = widthFor(BTN, rows[r].i1, rows[r].i2)
+        if rows[r].w > AW then AW = rows[r].w end
+    end
+    for r = 1, #rows do
+        local row = rows[r]
+        local x = PAD + math.floor((AW - row.w) / 2)
+        row.x = math.floor((AW - row.w) / 2)
+        row.y = (r - 1) * (BTN + 10 + 4)
+        row.btns, row.divs = {}, {}
+        for i = row.i1, row.i2 do
+            if i > row.i1 and sepAt(i - 1, i) == 1 then
+                row.divs[#row.divs + 1] = x + DIV / 2
+                x = x + DIV
+            end
+            row.btns[#row.btns + 1] = { i = i, x = x }
+            x = x + BTN + GAP
+        end
+    end
+    local stripH = #rows * (BTN + 10) + math.max(0, #rows - 1) * 4
+    return { rows = rows, btn = BTN, gap = GAP, pad = PAD, div = DIV,
+             w = AW, stripH = stripH, n = n }
+end
+
+-- ---------------------------------------------------------------------
+--  Линейные значки. Рисуются примитивами ImDrawList (без картинок), в
+--  квадрате -1..1: H.l — линия, H.r — заливка, H.ro — рамка, H.t —
+--  треугольник, H.c/H.co — круг (залитый/контур). Всё одной толщины,
+--  чтобы стиль совпадал с игровым интерфейсом.
+-- ---------------------------------------------------------------------
+local ACT_ICONS = {
+    dot = function(H) H.co(0, 0, 0.52, 1.6) H.c(0, 0, 0.16) end,
+    hp = function(H)                          -- сердце
+        H.c(-0.30, -0.26, 0.42) H.c(0.30, -0.26, 0.42)
+        H.t(-0.71, -0.06, 0.71, -0.06, 0, 0.74)
+    end,
+    arm = function(H)                         -- щит
+        H.l(-0.62, -0.68, 0.62, -0.68, 1.6) H.l(0.62, -0.68, 0.62, 0.02, 1.6)
+        H.l(0.62, 0.02, 0, 0.76, 1.6) H.l(0, 0.76, -0.62, 0.02, 1.6)
+        H.l(-0.62, 0.02, -0.62, -0.68, 1.6)
+    end,
+    slap = function(H)                        -- подбросить: вверх + земля
+        H.l(-0.66, 0.80, 0.66, 0.80, 2.0)
+        H.l(0, 0.46, 0, -0.66, 2.0)
+        H.l(-0.42, -0.26, 0, -0.70, 2.0) H.l(0.42, -0.26, 0, -0.70, 2.0)
+    end,
+    spawn = function(H)                       -- заспавнить: искра
+        H.l(0, -0.86, 0, 0.86, 1.7) H.l(-0.86, 0, 0.86, 0, 1.7)
+        H.l(-0.62, -0.62, -0.34, -0.34, 1.5) H.l(0.62, 0.62, 0.34, 0.34, 1.5)
+        H.l(0.62, -0.62, 0.34, -0.34, 1.5) H.l(-0.62, 0.62, -0.34, 0.34, 1.5)
+    end,
+    freeze = function(H)                      -- заморозить: снежинка
+        H.l(0, -0.86, 0, 0.86, 1.6)
+        H.l(-0.74, -0.42, 0.74, 0.42, 1.6)
+        H.l(-0.74, 0.42, 0.74, -0.42, 1.6)
+        H.c(0, 0, 0.13)
+    end,
+    unfreeze = function(H)                    -- разморозить: солнце
+        H.co(0, 0, 0.34, 1.6)
+        H.l(0, -0.55, 0, -0.88, 1.6) H.l(0, 0.55, 0, 0.88, 1.6)
+        H.l(-0.55, 0, -0.88, 0, 1.6) H.l(0.55, 0, 0.88, 0, 1.6)
+        H.l(-0.40, -0.40, -0.62, -0.62, 1.5) H.l(0.40, 0.40, 0.62, 0.62, 1.5)
+        H.l(0.40, -0.40, 0.62, -0.62, 1.5) H.l(-0.40, 0.40, -0.62, 0.62, 1.5)
+    end,
+    fixcar = function(H)                      -- починить т/с: ключ
+        H.l(-0.66, 0.70, 0.10, -0.14, 2.8)
+        H.co(0.40, -0.44, 0.34, 2.2)
+        H.l(0.18, -0.66, 0.52, -0.30, 2.2)
+    end,
+    flipcar = function(H)                     -- перевернуть т/с: авто + дуга
+        H.ro(-0.76, -0.06, 1.52, 0.42, 0.12, 1.5)
+        H.l(-0.34, -0.06, -0.18, -0.38, 1.5) H.l(-0.18, -0.38, 0.28, -0.38, 1.5)
+        H.l(0.28, -0.38, 0.44, -0.06, 1.5)
+        H.c(-0.42, 0.44, 0.17) H.c(0.42, 0.44, 0.17)
+        H.l(-0.62, -0.54, -0.26, -0.78, 1.5) H.l(-0.26, -0.78, 0.18, -0.82, 1.5)
+        H.t(0.62, -0.52, 0.24, -0.58, 0.52, -0.92)
+    end,
+    fuel = function(H)                        -- заправить: капля
+        H.c(0, 0.22, 0.46)
+        H.t(-0.44, 0.12, 0.44, 0.12, 0, -0.78)
+    end,
+    spawncar = function(H)                    -- заспавнить т/с: авто + искра
+        H.ro(-0.76, 0.08, 1.52, 0.40, 0.12, 1.5)
+        H.l(-0.34, 0.08, -0.18, -0.26, 1.5) H.l(-0.18, -0.26, 0.28, -0.26, 1.5)
+        H.l(0.28, -0.26, 0.44, 0.08, 1.5)
+        H.c(-0.42, 0.44, 0.16) H.c(0.42, 0.44, 0.16)
+        H.l(0, -0.92, 0, -0.60, 1.5) H.l(-0.15, -0.76, 0.15, -0.76, 1.5)
+    end,
+    car = function(H)                         -- транспорт (общий)
+        H.ro(-0.76, -0.02, 1.52, 0.42, 0.12, 1.5)
+        H.l(-0.34, -0.02, -0.18, -0.36, 1.5) H.l(-0.18, -0.36, 0.28, -0.36, 1.5)
+        H.l(0.28, -0.36, 0.44, -0.02, 1.5)
+        H.c(-0.42, 0.46, 0.17) H.c(0.42, 0.46, 0.17)
+    end,
+    tproad = function(H)                      -- ТП на дорогу: дорога
+        H.l(-0.52, -0.82, -0.24, 0.82, 1.6) H.l(0.52, -0.82, 0.24, 0.82, 1.6)
+        H.l(0, -0.62, 0, -0.32, 2.2) H.l(0, -0.06, 0, 0.24, 2.2) H.l(0, 0.44, 0, 0.74, 2.2)
+    end,
+    tpgo = function(H)                        -- ТП к игроку
+        H.c(0.66, 0, 0.20)
+        H.l(-0.80, 0, 0.16, 0, 1.8)
+        H.t(0.48, 0, 0.10, -0.30, 0.10, 0.30)
+    end,
+    tphere = function(H)                      -- ТП игрока к себе
+        H.c(-0.66, 0, 0.20)
+        H.l(0.80, 0, -0.16, 0, 1.8)
+        H.t(-0.48, 0, -0.10, -0.30, -0.10, 0.30)
+    end,
+    weap = function(H)                        -- оружие
+        H.r(-0.68, -0.46, 1.42, 0.28)
+        H.t(-0.62, -0.18, -0.16, -0.18, -0.46, 0.62)
+        H.l(-0.10, -0.18, -0.10, 0.10, 1.4) H.l(-0.10, 0.10, 0.16, 0.10, 1.4)
+    end,
+    rgun = function(H)                        -- отобрать оружие: перечёркнуто
+        H.ro(-0.68, -0.46, 1.42, 0.28, 0.05, 1.5)
+        H.l(-0.60, -0.18, -0.44, 0.60, 1.5)
+        H.l(-0.22, -0.18, -0.06, 0.60, 1.5)
+        H.l(-0.86, 0.86, 0.86, -0.86, 2.2)
+    end,
+    stats = function(H)                       -- статистика: столбики
+        H.r(-0.62, 0.14, 0.32, 0.60)
+        H.r(-0.16, -0.14, 0.32, 0.88)
+        H.r(0.30, -0.44, 0.32, 1.18)
+    end,
+    punish = function(H)                      -- наказания: молоток
+        H.r(-0.78, -0.66, 1.05, 0.32)
+        H.l(0.16, -0.30, 0.66, 0.52, 2.6)
+        H.l(-0.82, 0.80, 0.82, 0.80, 1.6)
+    end,
+    lic = function(H)                         -- лицензии: документ
+        H.ro(-0.60, -0.78, 1.20, 1.56, 0.14, 1.5)
+        H.l(-0.32, -0.42, 0.32, -0.42, 1.4) H.l(-0.32, -0.06, 0.32, -0.06, 1.4)
+        H.l(-0.32, 0.30, 0.10, 0.30, 1.4)
+        H.co(0.24, 0.44, 0.16, 1.4)
+    end,
+    admin = function(H)                       -- сообщить в /a: сообщение
+        H.ro(-0.78, -0.66, 1.56, 1.02, 0.22, 1.5)
+        H.t(-0.34, 0.34, -0.02, 0.34, -0.34, 0.78)
+        H.c(-0.32, -0.15, 0.12) H.c(0, -0.15, 0.12) H.c(0.32, -0.15, 0.12)
+    end,
+}
+
+-- Рисует значок key в квадрате size с центром (cx, cy) в координатах окна.
+-- dl — ImDrawList, at(x, y) — перевод локальных координат окна в экранные.
+function _G.grndDrawActIcon(dl, at, key, cx, cy, size, col)
+    if not dl or type(at) ~= "function" then return false end
+    size = tonumber(size) or 20
+    if size < 8 then size = 8 end
+    local s = size * 0.5
+    local function px(u) return cx + u * s end
+    local function py(v) return cy + v * s end
+    local H = {
+        l = function(x1, y1, x2, y2, w)
+            pcall(dl.AddLine, dl, at(px(x1), py(y1)), at(px(x2), py(y2)), col, w or 1.5)
+        end,
+        r = function(x, y, w, h)
+            pcall(dl.AddRectFilled, dl, at(px(x), py(y)), at(px(x + w), py(y + h)), col)
+        end,
+        ro = function(x, y, w, h, rad, t)
+            pcall(dl.AddRect, dl, at(px(x), py(y)), at(px(x + w), py(y + h)), col, (rad or 0) * s, 0, t or 1.5)
+        end,
+        t = function(x1, y1, x2, y2, x3, y3)
+            pcall(dl.AddTriangleFilled, dl, at(px(x1), py(y1)), at(px(x2), py(y2)),
+                at(px(x3), py(y3)), col)
+        end,
+        c = function(x, y, r) pcall(dl.AddCircleFilled, dl, at(px(x), py(y)), r * s, col, 20) end,
+        co = function(x, y, r, w) pcall(dl.AddCircle, dl, at(px(x), py(y)), r * s, col, 24, w or 1.5) end,
+    }
+    local fn = ACT_ICONS[key] or ACT_ICONS.dot
+    pcall(fn, H)
+    return true
 end
 
 function _G.grndDrawActSubPopup(RC, TH, tid, tNick, targetPed, apos, adl, aat, afill, aframe, AW, AH_PAD, subY, subH, H)
@@ -33127,7 +33446,7 @@ function grndMainBody()
             local mx, my
             if doInteract then
                 mx, my = klMousePos()
-                -- v1.19.68: под окном (карточка рекона, оверлей репортов,
+                -- v1.19.69: под окном (карточка рекона, оверлей репортов,
                 -- окно статистики) строки чекера не нажимаются — клик там
                 -- принадлежит окну
                 if mx and tonumber(my) and type(grndCheckerPointTaken) == "function"
@@ -33163,7 +33482,7 @@ function grndMainBody()
             -- ImGui, закрыл бы надписи. Скругления в DX-режиме нет — фон
             -- по умолчанию выключен, включённый становится прямым.
             if dxf and KL.bg then
-                -- v1.19.68: DX-плашка ложится поверх ВСЕХ окон ImGui, поэтому
+                -- v1.19.69: DX-плашка ложится поверх ВСЕХ окон ImGui, поэтому
                 -- под окном её не рисуем — разрезаем по габаритам окна
                 local pieces = grndCheckerClipRect(KL.x, KL.y, W, H)
                 if pieces then
@@ -33213,7 +33532,7 @@ function grndMainBody()
                     local twPx = klTextPx(txt)
                     if dxf then
                         local ax, ay = KL.x + x, KL.y + y
-                        -- v1.19.68: надпись GDI рисуется поверх всех окон —
+                        -- v1.19.69: надпись GDI рисуется поверх всех окон —
                         -- под окном её просто НЕ рисуем (иначе чекер был бы
                         -- виден сквозь карточку рекона и оверлей репортов)
                         if not grndCheckerBandTaken(ax, ay, ax + twPx, ay + fpx + 6) then
@@ -33634,7 +33953,7 @@ function grndMainBody()
                     end
                 end
                 if not mx then mx, my = klMousePos() end
-                -- v1.19.68: под окном строки не нажимаются (см. килл-лист)
+                -- v1.19.69: под окном строки не нажимаются (см. килл-лист)
                 if mx and tonumber(my) and type(grndCheckerPointTaken) == "function"
                    and grndCheckerPointTaken(mx, my) then
                     mx, my = nil, nil
@@ -33674,7 +33993,7 @@ function grndMainBody()
                 local sal = shA
                 if dxf then
                     local ax, ay = AO.x + x, AO.y + y
-                    -- v1.19.68: GDI-надпись поверх всех окон — под окном её
+                    -- v1.19.69: GDI-надпись поверх всех окон — под окном её
                     -- не рисуем (см. килл-лист)
                     if not grndCheckerBandTaken(ax, ay, ax + aoTextPx(txt), ay + fpx + 6) then
                         if sal > 0 then
@@ -33695,7 +34014,7 @@ function grndMainBody()
                 x, y, w, h = math.floor(x), math.floor(y), math.floor(w), math.floor(h)
                 if w < 1 or h < 1 then return end
                 if type(renderDrawBox) == "function" then
-                    -- v1.19.68: DX-плашка поверх всех окон — под окном не
+                    -- v1.19.69: DX-плашка поверх всех окон — под окном не
                     -- рисуем (режем по габаритам окна)
                     local pieces = grndCheckerClipRect(AO.x + x, AO.y + y, w, h)
                     if pieces then
@@ -38036,7 +38355,7 @@ function grndMainBody()
             local fx = math.floor((resX - FW) / 2)
             local fy = math.max(20, math.floor((resY - FH) / 2) - 30)
 
-            -- v1.19.68: габариты окна нужны чекерам — под ним строки не
+            -- v1.19.69: габариты окна нужны чекерам — под ним строки не
             -- нажимаются (клик принадлежит этому окну, а не чекеру)
             if RC then RC.statsPopRect = { x = fx, y = fy, w = FW, h = FH } end
             im.SetNextWindowPos(im.ImVec2(fx, fy), COND_ALWAYS)
@@ -40011,10 +40330,27 @@ function grndMainBody()
                 local hoveredCandidate = nil
                 local bestDist = 99999999
 
-                if RC.cursor and not RC.actionsWinOpen and not (menu and menu.open) and type(convert3DCoordsToScreen) == "function" then
+                -- v1.19.69: пока открыта панель действий, следим ТОЛЬКО за своим
+                -- игроком — белая кнопка остаётся на месте и повторное нажатие
+                -- по ней закрывает панель (см. ниже).
+                local actTargetHold = false
+                if RC.actionsWinOpen and (RC.actTargetPed or RC.actTargetId) then
+                    actTargetHold = true
+                end
+                if RC.cursor and (not RC.actionsWinOpen or actTargetHold)
+                   and not (menu and menu.open) and type(convert3DCoordsToScreen) == "function" then
                     for _, cand in ipairs(candidates) do
-                        local okC, csx, csy = pcall(convert3DCoordsToScreen, cand.wx, cand.wy, cand.wz + 0.35)
-                        if okC and csx and type(csx) == "number"
+                        local skipCand = false
+                        if RC.actionsWinOpen then
+                            local mine = (RC.actTargetPed and cand.ped == RC.actTargetPed)
+                                or (RC.actTargetId and cand.id == RC.actTargetId)
+                            if not mine then skipCand = true end
+                        end
+                        local okC, csx, csy
+                        if not skipCand then
+                            okC, csx, csy = pcall(convert3DCoordsToScreen, cand.wx, cand.wy, cand.wz + 0.35)
+                        end
+                        if not skipCand and okC and csx and type(csx) == "number"
                             and csx >= -50 and csx <= resX + 50
                             and csy >= -50 and csy <= resY + 50 then
 
@@ -40054,8 +40390,17 @@ function grndMainBody()
 
                 local nowTime = os.clock()
                 if RC.actionsWinOpen then
-                    RC.interactHover = false
-                    RC.hoverTarget = nil
+                    -- v1.19.69: панель открыта — кнопка взаимодействия остаётся
+                    -- видимой (по ней же панель и закрывается), но «прилипает»
+                    -- только к тому игроку, для которого панель открыта.
+                    if hoveredCandidate then
+                        RC.hoverTarget = hoveredCandidate
+                        RC.interactHover = true
+                        RC.interactHoverAt = nowTime
+                    else
+                        RC.hoverTarget = nil
+                        RC.interactHover = false
+                    end
                 elseif hoveredCandidate then
                     RC.hoverTarget = hoveredCandidate
                     RC.interactHover = true
@@ -40070,8 +40415,9 @@ function grndMainBody()
                 -- Отрисовка белой круглой кнопки при наведении на персонажа
                 local curTarget = RC.hoverTarget
 
-                -- Когда открыто окно «Действия» (или главное меню) — кнопки при наведении не появляются
-                if not RC.actionsWinOpen and RC.interactHover and curTarget and curTarget.csx and RC.cursor and not (menu and menu.open) then
+                -- v1.19.69: кнопка взаимодействия рисуется и при открытой панели
+                -- действий — повторный клик по ней эту панель закрывает.
+                if RC.interactHover and curTarget and curTarget.csx and RC.cursor and not (menu and menu.open) then
                     local csx = curTarget.csx
                     local csy = curTarget.csy
                     local IW, IH = 240, 96
@@ -40179,7 +40525,12 @@ function grndMainBody()
                             (btnHov and c4(TH.accent) or c4(TH.textHi)), scaleText2)
 
                         -- АКТИВАЦИЯ: ТОЛЬКО при нажатии на эту кнопку!
-                        if btnClicked then
+                        if btnClicked and RC.actionsWinOpen then
+                            -- v1.19.69: повторное нажатие кнопки закрывает панель
+                            RC.actionsWinOpen = false
+                            RC.actSubPopup = nil
+                            RC.actDragging = false
+                        elseif btnClicked then
                             RC.actionsWinOpen = true
                             RC.actionsWinFocus = true
                             RC.interactHover = false
@@ -40189,19 +40540,18 @@ function grndMainBody()
                             RC.actTargetPed = curTarget.ped
                             RC.actSubPopup = nil
 
-                            -- Открытие окна «Действия»: если пользователь уже перетаскивал панель — открываем на том же месте!
-                            if not RC.savedActionsWinX or not RC.savedActionsWinY then
-                                local calcW = math.max(680, math.min(resX - 24, 960))
-                                local calcRows = math.ceil(19 / 6)
-                                local calcH = 34 + 6 + calcRows * 42 + 10
-                                RC.actionsWinX = math.floor((resX - calcW) / 2)
-                                RC.actionsWinY = math.floor((resY - calcH) / 2)
-                                RC.savedActionsWinX = RC.actionsWinX
-                                RC.savedActionsWinY = RC.actionsWinY
-                            else
-                                RC.actionsWinX = RC.savedActionsWinX
-                                RC.actionsWinY = RC.savedActionsWinY
-                            end
+                            -- v1.19.69: панель значков встаёт рядом с кнопкой
+                            -- взаимодействия (см. отрисовку панели). Точку «якоря»
+                            -- и время открытия запоминаем: первое — для позиции,
+                            -- второе — чтобы клик, которым панель открыли, не
+                            -- закрыл её в том же кадре.
+                            RC.actionsWinAt = os.clock()
+                            RC.actionsWinAnchorX = csx
+                            -- низ плашки с ником (csy + 63) + зазор: панель встаёт
+                            -- сразу под кнопкой и НЕ перекрывает её окно
+                            -- (окно кнопки кончается на csy + 72)
+                            RC.actionsWinAnchorY = csy + 80
+                            RC.actionsWinCircleY = csy
                         end
                     end
                     if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
@@ -40210,89 +40560,134 @@ function grndMainBody()
                 end
 
                 -- =====================================================
-                --  ОКНО «ДЕЙСТВИЯ» (открывается ТОЛЬКО по клику на кнопку)
-                --  6 кнопок в одном ряду, расширение в ширину, по центру.
+                --  ПАНЕЛЬ ДЕЙСТВИЙ (v1.19.69) — компактная полоса значков
+                --  ------------------------------------------------------------------
+                --  Вместо большого окна с подписями — узкая «таблетка» со
+                --  значками, как в образце заказчика: без заголовка «Действия»,
+                --  без ника и без крестика. Закрывается:
+                --    * нажатием кнопки действия (кроме кнопок с «подпанелью» —
+                --      там нужен ползунок, панель закрывает кнопка «Выдать»);
+                --    * кликом по ЛЮБОМУ месту экрана вне панели;
+                --    * по ESC (общий обработчик окна рекона).
+                --  Значки сгруппированы по смыслу, между группами — тонкая
+                --  линия; над наведённым значком показывается его название.
                 -- =====================================================
                 if RC.actionsWinOpen and RC.show then
-                    local PUN = GRND_PUN
-                    local actItems = (PUN and PUN.actions) or {
+                    local A = {}
+                    A.items = (GRND_PUN and GRND_PUN.actions) or {
                         "Выдать ХП", "Выдать броню", "Подбросить", "Заспавнить", "Заморозить", "Разморозить",
                         "Починить т/с", "Перевернуть т/с", "Заправить т/с", "Заспавнить т/с", "ТП на дорогу", "ТП к игроку",
                         "ТП игрока к себе", "Оружие", "Отобрать все оружие", "Статистика", "Активные наказания", "Лицензии",
                         "Сообщить в /a",
                     }
-
-                    local targetTitle = "Действия"
-                    if RC.actTargetNick and RC.actTargetNick ~= "" then
-                        if RC.actTargetId then
-                            targetTitle = "Действия: " .. RC.actTargetNick .. " [" .. RC.actTargetId .. "]"
-                        else
-                            targetTitle = "Действия: " .. RC.actTargetNick
-                        end
-                    elseif RC.actTargetId then
-                        targetTitle = "Действия [ID " .. RC.actTargetId .. "]"
-                    end
-
-                    local COLS = 6
-                    local aCnt = #actItems
-                    local rows = math.ceil(aCnt / COLS)
-
-                    local AH_HEAD = 34
-                    local AH_ROW = 36
-                    local AH_GAP_X = 6
-                    local AH_GAP_Y = 6
-                    local AH_PAD = 12
-
-                    -- Расширение в ширину: 6 кнопок в ряд
-                    local maxW = math.min(resX - 24, 960)
-                    local AW = math.max(680, maxW)
-                    local availW = AW - AH_PAD * 2 - (COLS - 1) * AH_GAP_X
-                    local BTN_W = math.floor(availW / COLS)
-
-                    local baseAH = AH_HEAD + 6 + rows * (AH_ROW + AH_GAP_Y) + 10
-                    local subH = 0
+                    if #A.items < 1 then
+                        RC.actionsWinOpen = false
+                    else
+                    A.lo = grndActLayout(A.items, math.min(resX - 24, 780))
+                    A.pillH = A.lo.btn + 10
+                    A.hintH = 22
+                    A.pad = 12
+                    A.subH = 0
                     if RC.actSubPopup == "hp" or RC.actSubPopup == "arm" or RC.actSubPopup == "fuel" then
-                        subH = 76
+                        A.subH = 76
                     elseif RC.actSubPopup == "report_a" then
-                        subH = 58
+                        A.subH = 58
                     end
-                    local AH = baseAH + subH
+                    A.aw = A.lo.w + 16
+                    -- подпанель (ползунок/поле) требует ширины: иначе её
+                    -- содержимое не поместится и обрежется краем окна
+                    if A.subH > 0 and A.aw < 704 then A.aw = 704 end
+                    A.subY = A.hintH + A.lo.stripH + 2
+                    A.ah = A.hintH + A.lo.stripH + ((A.subH > 0) and (A.subH + 4) or 0) + 2
 
-                    -- Позиция окна: сохранённая точка перетаскивания (или центр экрана)
-                    local ax = RC.savedActionsWinX or RC.actionsWinX or math.floor((resX - AW) / 2)
-                    local ay = RC.savedActionsWinY or RC.actionsWinY or math.floor((resY - AH) / 2)
-                    ax = math.max(4, math.min(resX - AW - 4, ax))
-                    ay = math.max(4, math.min(resY - AH - 4, ay))
-                    RC.actionsWinX, RC.actionsWinY = ax, ay
-                    RC.savedActionsWinX, RC.savedActionsWinY = ax, ay
+                    -- Позиция: сохранённая (её двигал пользователь) или рядом с
+                    -- кнопкой взаимодействия; если места снизу нет — над кнопкой.
+                    local anchorX = tonumber(RC.actionsWinAnchorX)
+                    local anchorY = tonumber(RC.actionsWinAnchorY)
+                    local circleY = tonumber(RC.actionsWinCircleY)
+                    if RC.actionsWinUser and tonumber(RC.savedActionsWinX)
+                       and tonumber(RC.savedActionsWinY) then
+                        A.ax = tonumber(RC.savedActionsWinX)
+                        A.ay = tonumber(RC.savedActionsWinY)
+                    elseif anchorX and anchorY then
+                        A.ax = math.floor(anchorX - A.aw / 2)
+                        A.ay = anchorY
+                        if A.ay + A.ah > resY - 6 then
+                            A.ay = (circleY or anchorY) - 18 - A.ah - 10
+                        end
+                    else
+                        A.ax = math.floor((resX - A.aw) / 2)
+                        A.ay = math.max(30, resY - A.ah - 150)
+                    end
+                    A.ax = math.max(4, math.min(resX - A.aw - 4, A.ax))
+                    A.ay = math.max(4, math.min(resY - A.ah - 4, A.ay))
+                    RC.actionsWinX, RC.actionsWinY = A.ax, A.ay
 
-                    -- Перетаскивание за шапку окна «Действия» с сохранением позиции
-                    local actHeadRect = { x = ax, y = ay, w = AW, h = AH_HEAD }
-                    local actCloseRect = { x = ax + AW - 30, y = ay + 4, w = 26, h = 24 }
-                    if RC.cursor and GRND_MOUSE.down then
-                        if not RC.actDragging and grndMouseInside(actHeadRect)
-                            and not grndMouseInside(actCloseRect) then
+                    -- Зоны панели: полоса значков, строка подсказки и подпанель.
+                    -- Нужны, чтобы «клик мимо = закрыть панель» не срабатывал по
+                    -- самой панели и чтобы панель можно было перетаскивать.
+                    A.inPanel, A.inPill = false, false
+                    A.inHint = grndMouseInside({ x = A.ax + 3, y = A.ay + 2,
+                        w = A.aw - 6, h = A.hintH - 4 })
+                    if A.inHint then A.inPanel = true end
+                    for r = 1, #A.lo.rows do
+                        local row = A.lo.rows[r]
+                        if grndMouseInside({ x = A.ax + row.x, y = A.ay + A.hintH + row.y,
+                                w = row.w, h = A.pillH }) then
+                            A.inPanel, A.inPill, A.row = true, true, row
+                        end
+                    end
+                    if A.subH > 0 and grndMouseInside({ x = A.ax + A.pad, y = A.ay + A.subY + 3,
+                            w = A.aw - A.pad * 2, h = A.subH - 6 }) then
+                        A.inPanel = true
+                    end
+
+                    -- Перетаскивание: за пустое место полосы (между значками и по
+                    -- краям) или за строку подсказки. Нажатие ПО значку панель не
+                    -- тянет — это нажатие действия.
+                    if RC.cursor and GRND_MOUSE.down and not RC.actDragging
+                       and (A.inPill or A.inHint) then
+                        A.onBtn = false
+                        if A.inPill and A.row then
+                            for k = 1, #A.row.btns do
+                                local b = A.row.btns[k]
+                                if grndMouseInside({ x = A.ax + b.x, y = A.ay + A.hintH + A.row.y + 5,
+                                        w = A.lo.btn, h = A.lo.btn }) then
+                                    A.onBtn = true
+                                end
+                            end
+                        end
+                        if not A.onBtn then
                             RC.actDragging = true
-                            RC.actDragDX = GRND_MOUSE.x - ax
-                            RC.actDragDY = GRND_MOUSE.y - ay
+                            RC.actDragDX = GRND_MOUSE.x - A.ax
+                            RC.actDragDY = GRND_MOUSE.y - A.ay
                         end
                     end
                     if RC.actDragging then
                         if not (GRND_MOUSE and GRND_MOUSE.down) then
                             RC.actDragging = false
-                            RC.savedActionsWinX = RC.actionsWinX
-                            RC.savedActionsWinY = RC.actionsWinY
-                            if PUN and PUN.save then
-                                PUN.cfgDirty = true
-                                pcall(PUN.save)
+                            RC.actionsWinUser = true
+                            RC.savedActionsWinX, RC.savedActionsWinY = RC.actionsWinX, RC.actionsWinY
+                            if GRND_PUN and GRND_PUN.save then
+                                GRND_PUN.cfgDirty = true
+                                pcall(GRND_PUN.save)
                             end
                         else
-                            RC.actionsWinX = math.max(4, math.min(resX - AW - 4, GRND_MOUSE.x - (RC.actDragDX or 0)))
-                            RC.actionsWinY = math.max(4, math.min(resY - AH - 4, GRND_MOUSE.y - (RC.actDragDY or 0)))
-                            ax, ay = RC.actionsWinX, RC.actionsWinY
-                            RC.savedActionsWinX = ax
-                            RC.savedActionsWinY = ay
+                            A.ax = math.max(4, math.min(resX - A.aw - 4, GRND_MOUSE.x - (RC.actDragDX or 0)))
+                            A.ay = math.max(4, math.min(resY - A.ah - 4, GRND_MOUSE.y - (RC.actDragDY or 0)))
+                            RC.actionsWinX, RC.actionsWinY = A.ax, A.ay
                         end
+                    end
+
+                    -- Закрытие кликом по любому месту экрана (кроме самой панели).
+                    -- Левый клик: правый/средний — это камера и прицел, их не трогаем.
+                    -- Задержка после открытия — чтобы клик, которым панель открыли,
+                    -- не закрыл её в том же кадре.
+                    if RC.cursor and not RC.actDragging and not A.inPanel
+                       and (os.clock() - (RC.actionsWinAt or 0)) > 0.25
+                       and type(grndLeftClickPending) == "function" and grndLeftClickPending() then
+                        RC.actionsWinOpen = false
+                        RC.actSubPopup = nil
                     end
 
                     -- Открывается ПОВЕРХ ВСЕГО: фокус и выдвижение на передний план
@@ -40303,8 +40698,8 @@ function grndMainBody()
                         end
                     end
 
-                    im.SetNextWindowPos(im.ImVec2(ax, ay), COND_ALWAYS)
-                    im.SetNextWindowSize(im.ImVec2(AW, AH), COND_ALWAYS)
+                    im.SetNextWindowPos(im.ImVec2(A.ax, A.ay), COND_ALWAYS)
+                    im.SetNextWindowSize(im.ImVec2(A.aw, A.ah), COND_ALWAYS)
                     local stA, clA = 0, 0
                     if grndPushStyleV2(im.StyleVar and im.StyleVar.WindowPadding, 0, 0) then stA = stA + 1 end
                     if grndPushStyleF(im.StyleVar and im.StyleVar.WindowRounding, 12) then stA = stA + 1 end
@@ -40315,6 +40710,8 @@ function grndMainBody()
                         flagsA = flagsA + wflag("NoInputs")
                     end
 
+                    A.tip = nil
+                    A.tipX = 0
                     if grndBegin("##grnd_recon_actions", flagsA) then
                         if im.BringWindowToDisplayFront then
                             pcall(im.BringWindowToDisplayFront, im.GetCurrentWindow())
@@ -40335,151 +40732,92 @@ function grndMainBody()
                             end
                         end
 
-                        -- Каркас окна в общем стиле рекона
-                        afill(5, 6, AW - 5, AH - 5, col32(0, 0, 0, 85), 13)
-                        afill(0, 0, AW, AH, col32(10, 15, 20, 247), 13)
-                        aframe(0.5, 0.5, AW - 1, AH - 1, col32(255, 255, 255, 25), 13)
-                        -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
-
-                        -- Шапка: название с ником / ID игрока
-                        uiText(AH_PAD + 2, 10, targetTitle, c4(TH.textHi), 0.95)
-
-                        -- Кнопка закрытия «×»
-                        im.SetCursorPos(im.ImVec2(AW - 28, 7))
-                        local closeClicked = im.InvisibleButton("##act_close_btn", im.ImVec2(22, 22))
-                        local closeHov = (im.IsItemHovered and im.IsItemHovered()) or false
-                        if closeHov then
-                            afill(AW - 28, 7, 22, 22, col32(255, 255, 255, 18), 4)
-                        end
-                        uiText(AW - 22, 9, "×", closeHov and c4(TH.textHi) or c4(TH.textMuted), 0.95)
-                        if closeClicked then
-                            RC.actionsWinOpen = false
-                            RC.actSubPopup = nil
-                        end
-
-                        -- Разделитель под шапкой
-                        adl:AddRectFilled(aat(AH_PAD, AH_HEAD - 2), aat(AW - AH_PAD, AH_HEAD - 1),
-                            col32(255, 255, 255, 16))
-
-                        -- Функция автоматического разбиения длинного текста на 2 строки
-                        local function splitBtnLines(str, maxW)
-                            if not str or str == "" then return { "" } end
-                            if str:find("\n") then
-                                local r = {}
-                                for line in str:gmatch("[^\r\n]+") do table.insert(r, line) end
-                                return r
+                        -- Полоса значков: «таблетка» со скруглением, как в образце
+                        for r = 1, #A.lo.rows do
+                            local row = A.lo.rows[r]
+                            local ry = A.hintH + row.y
+                            afill(row.x + 2, ry + 3, row.w, A.pillH, col32(0, 0, 0, 65), 12)
+                            afill(row.x, ry, row.w, A.pillH, col32(10, 14, 20, 236), 12)
+                            aframe(row.x + 0.5, ry + 0.5, row.w - 1, A.pillH - 1,
+                                col32(255, 255, 255, 24), 12)
+                            for k = 1, #row.divs do
+                                pcall(adl.AddLine, adl, aat(row.divs[k], ry + 9),
+                                    aat(row.divs[k], ry + A.pillH - 9), col32(255, 255, 255, 24), 1.0)
                             end
-                            local tw0 = drawnWb(str, 0.82)
-                            if (tw0 > (maxW - 8) or #str > 14) and str:find(" ") then
-                                local mid = math.floor(#str / 2)
-                                local bestSp = nil
-                                local bestDist = 999
-                                for sp = 1, #str do
-                                    if str:sub(sp, sp) == " " then
-                                        local d = math.abs(sp - mid)
-                                        if d < bestDist then
-                                            bestDist = d
-                                            bestSp = sp
-                                        end
+                            for k = 1, #row.btns do
+                                local b = row.btns[k]
+                                local rawLabel = tostring(A.items[b.i])
+                                local subKey = grndActSubKey(rawLabel)
+                                local bx, by = b.x, ry + 5
+                                im.SetCursorPos(im.ImVec2(bx, by))
+                                local bClicked = im.InvisibleButton("##act_" .. tostring(r) .. "_" .. tostring(k),
+                                    im.ImVec2(A.lo.btn, A.lo.btn))
+                                local bHov = (im.IsItemHovered and im.IsItemHovered()) or false
+                                local bAct = (im.IsItemActive and im.IsItemActive()) or false
+                                local isSub = (subKey ~= nil and RC.actSubPopup == subKey)
+                                afill(bx, by, A.lo.btn, A.lo.btn,
+                                    isSub and col32(TH.accent[1], TH.accent[2], TH.accent[3], 64)
+                                        or (bAct and col32(TH.accent[1], TH.accent[2], TH.accent[3], 52)
+                                            or (bHov and col32(TH.accent[1], TH.accent[2], TH.accent[3], 30)
+                                                or col32(255, 255, 255, 11))), 8)
+                                aframe(bx + 0.5, by + 0.5, A.lo.btn - 1, A.lo.btn - 1,
+                                    (isSub or bHov or bAct)
+                                        and col32(TH.accent[1], TH.accent[2], TH.accent[3], 150)
+                                        or col32(255, 255, 255, 16), 8)
+                                -- Значок действия: подписей нет (панель компактная),
+                                -- название смотрится в подсказке над полосой.
+                                if type(_G.grndDrawActIcon) == "function" then
+                                    _G.grndDrawActIcon(adl, aat, grndActIconKey(rawLabel),
+                                        bx + A.lo.btn / 2, by + A.lo.btn / 2, A.lo.btn - 12,
+                                        (isSub or bHov or bAct) and col32(247, 250, 255, 252)
+                                            or col32(206, 214, 228, 238))
+                                end
+                                if bHov then
+                                    A.tip = rawLabel:gsub("\n", " ")
+                                    A.tipX = bx + A.lo.btn / 2
+                                end
+                                if bClicked then
+                                    local cleanLabel = rawLabel:gsub("\n", " ")
+                                    local tid = tonumber(RC.actTargetId) or tonumber(RC.id)
+                                        or (_G.GRND_SPEC and tonumber(_G.GRND_SPEC.id))
+                                    local tNick = (RC.actTargetNick and RC.actTargetNick ~= "") and RC.actTargetNick
+                                        or (RC.nick and RC.nick ~= "" and RC.nick) or ("ID " .. tostring(tid or 0))
+                                    if _G.grndHandleActionBtn then
+                                        _G.grndHandleActionBtn(cleanLabel, tid, tNick, RC.actTargetPed)
+                                    end
+                                    -- Нажатие кнопки закрывает панель. Исключение —
+                                    -- кнопки с подпанелью (ползунок/поле): там панель
+                                    -- остаётся, а закрывает её кнопка «Выдать/Отправить».
+                                    -- Без подпанели нажатие закрывает панель
+                                    if not subKey then
+                                        RC.actionsWinOpen = false
+                                        RC.actSubPopup = nil
                                     end
                                 end
-                                if bestSp then
-                                    return { str:sub(1, bestSp - 1), str:sub(bestSp + 1) }
-                                end
-                            end
-                            return { str }
-                        end
-
-                        -- Сетка кнопок действий: 6 кнопок в ряд
-                        for i = 1, aCnt do
-                            local rawLabel = tostring(actItems[i])
-                            local tag = "act_btn_" .. i
-
-                            local col = (i - 1) % COLS
-                            local row = math.floor((i - 1) / COLS)
-                            local bx = AH_PAD + col * (BTN_W + AH_GAP_X)
-                            local by = AH_HEAD + 6 + row * (AH_ROW + AH_GAP_Y)
-
-                            im.SetCursorPos(im.ImVec2(bx, by))
-                            local clicked = im.InvisibleButton("##" .. tag, im.ImVec2(BTN_W, AH_ROW))
-                            local hov = (im.IsItemHovered and im.IsItemHovered()) or false
-                            local act = (im.IsItemActive and im.IsItemActive()) or false
-
-                            local isSubActive = false
-                            if (rawLabel == "Выдать ХП" and RC.actSubPopup == "hp")
-                                or (rawLabel == "Выдать броню" and RC.actSubPopup == "arm")
-                                or (rawLabel == "Заправить т/с" and RC.actSubPopup == "fuel")
-                                or (rawLabel == "Сообщить в /a" and RC.actSubPopup == "report_a") then
-                                isSubActive = true
-                            end
-
-                            afill(bx, by, BTN_W, AH_ROW,
-                                isSubActive and col32(TH.accent[1], TH.accent[2], TH.accent[3], 70)
-                                    or (act and col32(TH.accent[1], TH.accent[2], TH.accent[3], 55)
-                                        or (hov and col32(TH.accent[1], TH.accent[2], TH.accent[3], 30)
-                                            or col32(255, 255, 255, 9))), 8)
-                            aframe(bx + 0.5, by + 0.5, BTN_W - 1, AH_ROW - 1,
-                                (isSubActive or hov or act)
-                                    and col32(TH.accent[1], TH.accent[2], TH.accent[3], 150)
-                                    or col32(255, 255, 255, 20), 8)
-
-                            -- Отрисовка текста (1 или 2 строки с центрированием и защитой от вылезания)
-                            local bLines = splitBtnLines(rawLabel, BTN_W)
-                            if #bLines <= 1 then
-                                local scale = 0.84
-                                local twL = drawnWb(bLines[1], scale)
-                                if twL > (BTN_W - 8) then
-                                    scale = scale * ((BTN_W - 8) / twL)
-                                    if scale < 0.60 then scale = 0.60 end
-                                    twL = drawnWb(bLines[1], scale)
-                                end
-                                local tx = bx + (BTN_W - twL) / 2
-                                local ty = by + (AH_ROW - 14 * scale) / 2
-                                uiText(tx, ty, bLines[1], (isSubActive or hov) and c4(TH.textHi) or c4(TH.text), scale)
-                            else
-                                local lineH = 13
-                                local totalH = #bLines * lineH
-                                local startY = by + (AH_ROW - totalH) / 2
-                                for lIdx = 1, #bLines do
-                                    local lText = bLines[lIdx]
-                                    local scale = 0.78
-                                    local twL = drawnWb(lText, scale)
-                                    if twL > (BTN_W - 6) then
-                                        scale = scale * ((BTN_W - 6) / twL)
-                                        if scale < 0.60 then scale = 0.60 end
-                                        twL = drawnWb(lText, scale)
-                                    end
-                                    local tx = bx + (BTN_W - twL) / 2
-                                    local ty = startY + (lIdx - 1) * lineH
-                                    uiText(tx, ty, lText, (isSubActive or hov) and c4(TH.textHi) or c4(TH.text), scale)
-                                end
-                            end
-
-                            if clicked then
-                                local cleanLabel = rawLabel:gsub("\n", " ")
-                                local tid = tonumber(RC.actTargetId) or tonumber(RC.id)
-                                    or (_G.GRND_SPEC and tonumber(_G.GRND_SPEC.id))
-                                local tNick = (RC.actTargetNick and RC.actTargetNick ~= "") and RC.actTargetNick
-                                    or (RC.nick and RC.nick ~= "" and RC.nick) or ("ID " .. tostring(tid or 0))
-
-                                if _G.grndHandleActionBtn then
-                                    _G.grndHandleActionBtn(cleanLabel, tid, tNick, RC.actTargetPed)
-                                end
                             end
                         end
 
-                        if subH > 0 and _G.grndDrawActSubPopup then
+                        -- Подсказка над наведённым значком — вместо подписей
+                        if A.tip then
+                            local tw = drawnWb(A.tip, 0.86)
+                            local tx = A.tipX - tw / 2
+                            tx = math.max(6, math.min(A.aw - tw - 6, tx))
+                            uiText(tx, 3, A.tip, c4(TH.textHi), 0.86)
+                        end
+
+                        -- Подпанель (ползунки ХП/брони/топлива и «Сообщить в /a»)
+                        if A.subH > 0 and _G.grndDrawActSubPopup then
+                            A.subWas = RC.actSubPopup
                             local tid = tonumber(RC.actTargetId) or tonumber(RC.id)
                                 or (_G.GRND_SPEC and tonumber(_G.GRND_SPEC.id))
                             local tNick = (RC.actTargetNick and RC.actTargetNick ~= "") and RC.actTargetNick
                                 or (RC.nick and RC.nick ~= "" and RC.nick) or ("ID " .. tostring(tid or 0))
-                            local subY = AH_HEAD + 6 + rows * (AH_ROW + AH_GAP_Y) + 3
                             -- v1.11.72: примитивы рисования передаём ЯВНО.
                             -- Плюс pcall: даже если внутри что-то упадёт,
                             -- окно «Действия» будет закрыто корректно
                             -- (im.End ниже), а не останется висеть.
                             local okSub, errSub = pcall(_G.grndDrawActSubPopup, RC, TH, tid, tNick,
-                                RC.actTargetPed, apos, adl, aat, afill, aframe, AW, AH_PAD, subY, subH,
+                                RC.actTargetPed, apos, adl, aat, afill, aframe, A.aw, A.pad, A.subY, A.subH,
                                 { imgui = im, uiText = uiText, c4 = c4, col32 = col32, drawnWb = drawnWb })
                             if not okSub then
                                 RC.actSubError = tostring(errSub)
@@ -40494,11 +40832,19 @@ function grndMainBody()
                                 end
                                 print("{FF6666}[GRND]{FFFFFF} подпанель действий: " .. tostring(RC.actSubError))
                             end
+                            -- Вышли из подпанели нажатием внутри её рамки — это
+                            -- кнопка «Выдать/Отправить»: закрываем всю панель
+                            if A.subWas and not RC.actSubPopup
+                               and grndMouseInside({ x = A.ax + A.pad, y = A.ay + A.subY + 3,
+                                     w = A.aw - A.pad * 2, h = A.subH - 6 }) then
+                                RC.actionsWinOpen = false
+                            end
                         end
                     end
                     if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
                     grndPopCol(clA)
                     grndPopStyle(stA)
+                    end
                 end
             end
             return (RC.cursor or RC.actionsWinOpen) and true or false
@@ -40665,7 +41011,7 @@ function grndMainBody()
                 end
             end
             local wantCursor = false
-            -- v1.19.68: чекеры (килл-лист и «Админы в сети») рисуются ПЕРВЫМИ,
+            -- v1.19.69: чекеры (килл-лист и «Админы в сети») рисуются ПЕРВЫМИ,
             -- под всеми окнами: любое окно закрывает их там, где стоит, — и
             -- «сквозь окно» чекер больше не видно. При этом в слежке (карточка
             -- рекона открыта постоянно) чекеры НЕ пропадают: их видно рядом с
@@ -40711,7 +41057,7 @@ function grndMainBody()
             -- МОДУЛЬ 11 (v1.5): килл-лист (чекер №1). Рисуется, пока чекер
             -- включён (или пока панель «в руке» при перемещении); под большими
             -- окнами прячется целиком, под остальными его закрывает само окно
-            -- (чекеры рисуются ПЕРВЫМИ — см. v1.19.68 выше).
+            -- (чекеры рисуются ПЕРВЫМИ — см. v1.19.69 выше).
             if not gated and GRND_KL and not checkersHidden then
                 local ok, e = pcall(drawKillList, dt)
                 if not ok then logRenderErr("killlist", e)

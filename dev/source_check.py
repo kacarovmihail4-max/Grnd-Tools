@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.68"' in s, 'версия не 1.19.68')
+need('GRND_SCRIPT_VERSION = "1.19.69"' in s, 'версия не 1.19.69')
 
 # v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
 # 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
@@ -1031,7 +1031,7 @@ need('W = openState and Wfull or Wmini' in s, 'ширина карточки н�
 # кнопки наказаний прижаты к краю колонки и той же ширины, что и раньше
 need('PUN_PAD' in s and 'punOrder' in s, 'пропала раскладка кнопок наказаний')
 
-# v1.19.68: чекеры — ПОД окнами. Рисуются ПЕРВЫМИ, значит любое окно
+# v1.19.69: чекеры — ПОД окнами. Рисуются ПЕРВЫМИ, значит любое окно
 # (карточка рекона, оверлей репортов, окно статистики) закрывает их там, где
 # стоит, и «сквозь окно» чекер не видно. Порядок отрисовки обязателен.
 need('        local function drawAll()' in s, 'пропала отрисовка кадра')
@@ -1081,16 +1081,16 @@ need('RC.windowPos, RC.windowSize' in s or ('RC.windowPos' in s and 'RC.windowSi
      'карточка рекона не отдаёт свои габариты')
 need('grndCheckerRectOk(RC.statsPopRect)' in s, 'окно статистики не отдаёт свои габариты')
 need('grndCheckerRectOk(R.rect)' in s, 'оверлей репортов не отдаёт свои габариты')
-_kl_guard = s[s.index('-- v1.19.68: под окном (карточка рекона'):]
+_kl_guard = s[s.index('-- v1.19.69: под окном (карточка рекона'):]
 _kl_guard = _kl_guard[:_kl_guard.index('if mx and tonumber(my) and KL.x')]
 need('grndCheckerPointTaken(mx, my)' in _kl_guard, 'килл-лист игнорирует окна поверх себя')
-_ao_guard = s[s.index('-- v1.19.68: под окном строки не нажимаются (см. килл-лист)'):]
+_ao_guard = s[s.index('-- v1.19.69: под окном строки не нажимаются (см. килл-лист)'):]
 _ao_guard = _ao_guard[:_ao_guard.index('if mx and tonumber(my) and AO.x')]
 need('grndCheckerPointTaken(mx, my)' in _ao_guard, '«Админы в сети» игнорируют окна поверх себя')
 need('RC.statsPopRect = { x = fx, y = fy, w = FW, h = FH }' in s,
      'окно статистики не запоминает свои габариты')
 
-# v1.19.68: DX-текст и DX-плашки рисуются поверх ВСЕХ окон ImGui, поэтому их
+# v1.19.69: DX-текст и DX-плашки рисуются поверх ВСЕХ окон ImGui, поэтому их
 # недостаточно «закрыть окном» — их надо не рисовать под окном и разрезать по
 # габаритам окна. Иначе кейс «чекер виден сквозь карточку» возвращается вместе
 # с GDI-текстом (это и был реальный «просвет»).
@@ -1134,8 +1134,8 @@ need(s.count('pcall(grndMouseFrameBegin)') == 2,
 need(s.count('GRND_UIFRAME = (GRND_UIFRAME or 0) + 1\n                    pcall(grndMouseFrameBegin)') == 1 and
      s.count('GRND_UIFRAME = (GRND_UIFRAME or 0) + 1\n                        pcall(grndMouseFrameBegin)') == 1,
      'гашение клика стоит не сразу после счётчика кадров')
-need(s.count('and grndLeftClickPending() then') == 2,
-     'клик по игроку должен проверяться «только ЛКМ» в обоих чекерах')
+need(s.count('and grndLeftClickPending() then') == 3,
+     'клик «только ЛКМ» должен проверяться в двух чекерах и в закрытии панели действий')
 need('if hoverRow and type(GRND_MOUSE) == "table" and GRND_MOUSE.clicked' not in s,
      'килл-лист всё ещё реагирует на любую кнопку мыши')
 need('if hoverI and type(GRND_MOUSE) == "table" and GRND_MOUSE.clicked' not in s,
@@ -1145,6 +1145,80 @@ _kls = s[s.index('-- v1.19.67: нажать на игрока можно ТОЛ�
 _kls = _kls[:_kls.index('-- -------- рисуем --------')]
 need('GRND_MOUSE.clicked = false' in _kls,
      'левый клик по игроку перестал «забираться» у других окон')
+
+# ================= v1.19.69: компактная панель действий значками =============
+# Панель действий переделана в узкую полосу значков: без шапки, ника и
+# крестика; закрывается нажатием действия, повторным нажатием кнопки
+# взаимодействия или кликом в любом месте экрана.
+need('function grndActLower(t)' in s, 'нет понижения регистра для кириллицы (grndActLower)')
+need('function grndActIconKey(label)' in s, 'нет подбора значка по смыслу действия')
+need('function grndActSubKey(label)' in s, 'нет списка кнопок с подпанелью')
+need('function grndActLayout(items, maxW)' in s, 'нет раскладки полосы значков')
+need('function _G.grndDrawActIcon(dl, at, key, cx, cy, size, col)' in s,
+     'нет отрисовки значка (grndDrawActIcon)')
+need('local fn = ACT_ICONS[key] or ACT_ICONS.dot' in s,
+     'неизвестное действие не получает нейтральный значок')
+
+_act_beg = s.index('    P.actions = {')
+_act_end = s.index('\n    }', _act_beg)
+_act_labels = re.findall(r'"([^"]+)"', s[_act_beg:_act_end])
+need(len(_act_labels) == 19, 'в списке действий не 19 пунктов (а %d)' % len(_act_labels))
+
+# окно-панель: прежнее окно с шапкой и крестиком вырезано
+need('##grnd_recon_actions' in s, 'нет окна панели действий')
+absent('##act_close_btn', 'в панели остался крестик')
+absent('targetTitle', 'в панели остался заголовок «Действия»/ник')
+absent('AH_HEAD', 'в панели осталась шапка прежнего окна')
+absent('calcRows = math.ceil(19 / 6)', 'остался старый расчёт окна на 6 колонок')
+need('if RC.actionsWinOpen and RC.show then' in s, 'панель не привязана к состоянию рекона')
+need('if _G.grndHandleActionBtn then\n'
+     '                                        _G.grndHandleActionBtn(cleanLabel, tid, tNick, RC.actTargetPed)'
+     in s, 'нажатие значка не вызывает обработчик действия')
+need('_G.grndDrawActIcon(adl, aat, grndActIconKey(rawLabel)' in s,
+     'значок рисуется не по названию действия')
+need('A.tip = rawLabel:gsub("\\n", " ")' in s,
+     'нет подсказки с названием действия над значком')
+need('if not subKey then' in s, 'кнопки с подпанелью снова закрывают панель')
+need('A.subH = 76' in s and 'A.subH = 58' in s, 'подпанели потеряли высоту')
+need('if A.subH > 0 and A.aw < 704 then A.aw = 704 end' in s,
+     'подпанель не получает минимальную ширину — содержимое обрежется')
+need('A.ah = A.hintH + A.lo.stripH + ((A.subH > 0) and (A.subH + 4) or 0) + 2' in s,
+     'панель не растёт под подпанель')
+need('A.inHint = grndMouseInside(' in s and '(A.inPill or A.inHint)' in s,
+     'панель не за что ухватить (нет зон перетаскивания)')
+need('and (os.clock() - (RC.actionsWinAt or 0)) > 0.25' in s,
+     'нет защиты: клик, открывший панель, закрывает её же')
+need('if RC.cursor and not RC.actDragging and not A.inPanel' in s,
+     'нет закрытия панели кликом мимо неё')
+need('and type(grndLeftClickPending) == "function" and grndLeftClickPending() then' in s,
+     'панель закрывается не только левым кликом')
+need('flagsA = flagsA + wflag("NoInputs")' in s,
+     'без курсора панель перехватывает ввод')
+
+# кнопка взаимодействия: открывает панель и закрывает её повторным нажатием
+need('if btnClicked and RC.actionsWinOpen then' in s,
+     'повторное нажатие кнопки взаимодействия не закрывает панель')
+need('RC.actionsWinAnchorX = csx' in s and 'RC.actionsWinAnchorY = csy + 80' in s,
+     'панель не встаёт рядом с кнопкой взаимодействия')
+need('local actTargetHold = false' in s, 'в слежке кнопка не удерживает своего игрока')
+need("RC.hoverTarget = hoveredCandidate\n                        RC.interactHover = true" in s,
+     'кнопка взаимодействия пропадает при открытой панели')
+
+# положение панели: своё — только если его выбрал пользователь
+need('if RC.actionsWinUser and tonumber(RC.savedActionsWinX)' in s,
+     'панель не различает «свою» и пользовательскую позицию')
+need('f:write("actUser=1\\n")' in s, 'пользовательская позиция панели не сохраняется')
+need('elseif k == "actUser" then' in s, 'позиция панели не читается из конфига')
+need('RC.actionsWinUser = true' in s, 'перетаскивание не помечает позицию как пользовательскую')
+
+# повторное нажатие значка убирает подпанель (старая запись `and nil or` не работала)
+need('if RC.actSubPopup == "hp" then RC.actSubPopup = nil else RC.actSubPopup = "hp" end' in s,
+     'повторное нажатие значка не убирает подпанель ХП')
+for _k in ('hp', 'arm', 'fuel', 'report_a'):
+    need('if RC.actSubPopup == "%s" then RC.actSubPopup = nil else RC.actSubPopup = "%s" end'
+         % (_k, _k) in s, 'повторное нажатие значка не убирает подпанель ' + _k)
+    need('(RC.actSubPopup == "%s") and nil or' % _k not in s,
+         'осталась нерабочая запись `and nil or` в переключателе подпанели ' + _k)
 
 if fails:
     for f in fails:
