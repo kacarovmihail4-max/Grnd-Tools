@@ -1818,6 +1818,11 @@ function grndCheckerCovers()
         if RC.statsPop and grndCheckerRectOk(RC.statsPopRect) then
             out[#out + 1] = RC.statsPopRect
         end
+        -- v1.19.69: компактная полоса действий — тоже окно поверх чекеров:
+        -- клик по ней строкам килл-листа и «Админов» не принадлежит
+        if RC.actionsWinOpen and grndCheckerRectOk(RC.actionsWinRect) then
+            out[#out + 1] = RC.actionsWinRect
+        end
     end
     local R = _G.GRND_REPHUD
     if R and R.enabled and grndCheckerRectOk(R.rect) then
@@ -14852,6 +14857,8 @@ do
     RC.actionsWinAnchorY = nil
     RC.actionsWinCircleY = nil
     RC.actionsWinAt = nil
+    RC.actionsWinRcId = nil
+    RC.actionsWinRect = nil
     RC.hoverTarget    = nil
     RC.actTargetId    = nil
     RC.actTargetNick  = nil
@@ -18580,16 +18587,16 @@ local ACT_ICONS = {
         H.l(0.80, 0, -0.16, 0, 1.8)
         H.t(-0.48, 0, -0.10, -0.30, -0.10, 0.30)
     end,
-    weap = function(H)                        -- оружие
-        H.r(-0.68, -0.46, 1.42, 0.28)
-        H.t(-0.62, -0.18, -0.16, -0.18, -0.46, 0.62)
-        H.l(-0.10, -0.18, -0.10, 0.10, 1.4) H.l(-0.10, 0.10, 0.16, 0.10, 1.4)
+    weap = function(H)                        -- оружие: пистолет
+        H.r(-0.86, -0.60, 1.60, 0.34)         -- ствол
+        H.t(-0.86, -0.26, -0.32, -0.26, -0.66, 0.80)  -- рукоять
+        H.l(-0.22, -0.26, -0.22, 0.02, 1.4) H.l(-0.22, 0.02, 0.06, 0.02, 1.4)
     end,
-    rgun = function(H)                        -- отобрать оружие: перечёркнуто
-        H.ro(-0.68, -0.46, 1.42, 0.28, 0.05, 1.5)
-        H.l(-0.60, -0.18, -0.44, 0.60, 1.5)
-        H.l(-0.22, -0.18, -0.06, 0.60, 1.5)
-        H.l(-0.86, 0.86, 0.86, -0.86, 2.2)
+    rgun = function(H)                        -- отобрать оружие: перечёркнутый пистолет
+        H.ro(-0.86, -0.60, 1.60, 0.34, 0.05, 1.5)
+        H.l(-0.74, -0.26, -0.56, 0.64, 1.5)
+        H.l(-0.34, -0.26, -0.16, 0.64, 1.5)
+        H.l(-0.94, 0.86, 0.94, -0.86, 2.4)
     end,
     stats = function(H)                       -- статистика: столбики
         H.r(-0.62, 0.14, 0.32, 0.60)
@@ -18597,9 +18604,9 @@ local ACT_ICONS = {
         H.r(0.30, -0.44, 0.32, 1.18)
     end,
     punish = function(H)                      -- наказания: молоток
-        H.r(-0.78, -0.66, 1.05, 0.32)
-        H.l(0.16, -0.30, 0.66, 0.52, 2.6)
-        H.l(-0.82, 0.80, 0.82, 0.80, 1.6)
+        H.r(-0.74, -0.80, 1.34, 0.40)         -- головка
+        H.r(-0.26, -0.40, 0.30, 0.30)         -- шейка
+        H.l(0.14, -0.06, 0.74, 0.86, 3.0)     -- ручка
     end,
     lic = function(H)                         -- лицензии: документ
         H.ro(-0.60, -0.78, 1.20, 1.56, 0.14, 1.5)
@@ -40546,6 +40553,7 @@ function grndMainBody()
                             -- второе — чтобы клик, которым панель открыли, не
                             -- закрыл её в том же кадре.
                             RC.actionsWinAt = os.clock()
+                            RC.actionsWinRcId = tonumber(RC.id)
                             RC.actionsWinAnchorX = csx
                             -- низ плашки с ником (csy + 63) + зазор: панель встаёт
                             -- сразу под кнопкой и НЕ перекрывает её окно
@@ -40572,6 +40580,14 @@ function grndMainBody()
                 --  Значки сгруппированы по смыслу, между группами — тонкая
                 --  линия; над наведённым значком показывается его название.
                 -- =====================================================
+                -- v1.19.69: если цель слежки сменилась (например, администратор
+                -- кликнул по чекеру), панель действий закрываем: она открыта
+                -- для конкретного игрока и не должна «переезжать» на другого.
+                if RC.actionsWinOpen and RC.id ~= nil
+                   and RC.actionsWinRcId ~= nil and tonumber(RC.id) ~= RC.actionsWinRcId then
+                    RC.actionsWinOpen = false
+                    RC.actSubPopup = nil
+                end
                 if RC.actionsWinOpen and RC.show then
                     local A = {}
                     A.items = (GRND_PUN and GRND_PUN.actions) or {
@@ -40622,6 +40638,8 @@ function grndMainBody()
                     A.ax = math.max(4, math.min(resX - A.aw - 4, A.ax))
                     A.ay = math.max(4, math.min(resY - A.ah - 4, A.ay))
                     RC.actionsWinX, RC.actionsWinY = A.ax, A.ay
+                    -- габариты окна панели: чекеры по ним не принимают клики
+                    RC.actionsWinRect = { x = A.ax, y = A.ay, w = A.aw, h = A.ah }
 
                     -- Зоны панели: полоса значков, строка подсказки и подпанель.
                     -- Нужны, чтобы «клик мимо = закрыть панель» не срабатывал по

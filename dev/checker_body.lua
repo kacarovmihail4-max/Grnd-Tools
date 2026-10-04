@@ -126,6 +126,27 @@ check(grndCheckerClipRect(250, 60, 400, 200) == nil,
 GRND_KL = { moving = false }
 bump()
 check(grndCheckerPointTaken(320, 120) == true, "перетаскивание кончилось — окно снова закрывает")
+
+-- v1.19.69: компактная полоса действий — тоже окно поверх чекеров
+bump()
+GRND_RC = { show = true, actionsWinOpen = true,
+    actionsWinRect = { x = 400, y = 500, w = 739, h = 66 } }
+check(grndCheckerPointTaken(500, 520) == true,
+    "клик по полосе действий чекеру не принадлежит (внутри неё)")
+check(grndCheckerPointTaken(399, 520) == false, "слева от полосы действий точка свободна")
+check(grndCheckerPointTaken(1139, 520) == true, "правый край полосы действий ещё занят окном")
+check(grndCheckerPointTaken(1140, 520) == false, "справа от полосы действий точка свободна")
+check(grndCheckerPointTaken(500, 566) == true, "низ полосы действий занят окном")
+check(grndCheckerPointTaken(500, 567) == false, "под полосой действий точка свободна")
+bump()
+GRND_RC = { show = true, actionsWinOpen = false,
+    actionsWinRect = { x = 400, y = 500, w = 739, h = 66 } }
+check(grndCheckerPointTaken(500, 520) == false,
+    "полоса действий закрыта — её габариты точку не занимают")
+bump()
+GRND_RC = { show = true, actionsWinOpen = true }
+check(grndCheckerPointTaken(500, 520) == false,
+    "полоса действий без габаритов точку не занимает (защита от мусора)")
 check(gateScene({kl = { enabled = true }}) == false, "чекер включён — окон нет, он виден")
 check(gateScene({menu = true}) == true and gateScene({}) == false,
     "после закрытия окна чекер снова рисуется")

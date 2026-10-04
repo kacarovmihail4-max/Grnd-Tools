@@ -64,6 +64,13 @@ MUTATIONS = [
      'f:write("actUser=1\\n")', 'f:write("actX=1\\n")'),
     ("перетаскивание не помечает позицию как пользовательскую",
      '                            RC.actionsWinUser = true\n', ''),
+    ("панель не закрывается при смене цели слежки",
+     '                if RC.actionsWinOpen and RC.id ~= nil\n'
+     '                   and RC.actionsWinRcId ~= nil and tonumber(RC.id) ~= RC.actionsWinRcId then',
+     '                if false then'),
+    ("клик по полосе действий достаётся чекерам",
+     '        if RC.actionsWinOpen and grndCheckerRectOk(RC.actionsWinRect) then',
+     '        if false then'),
     ("повторное нажатие значка не убирает подпанель",
      '        if RC.actSubPopup == "hp" then RC.actSubPopup = nil else RC.actSubPopup = "hp" end',
      '        RC.actSubPopup = (RC.actSubPopup == "hp") and nil or "hp"'),

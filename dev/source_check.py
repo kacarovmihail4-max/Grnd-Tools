@@ -1210,6 +1210,14 @@ need('if RC.actionsWinUser and tonumber(RC.savedActionsWinX)' in s,
 need('f:write("actUser=1\\n")' in s, 'пользовательская позиция панели не сохраняется')
 need('elseif k == "actUser" then' in s, 'позиция панели не читается из конфига')
 need('RC.actionsWinUser = true' in s, 'перетаскивание не помечает позицию как пользовательскую')
+need('RC.actionsWinRcId = tonumber(RC.id)' in s, 'панель не запоминает цель слежки при открытии')
+need('if RC.actionsWinOpen and RC.id ~= nil' in s and
+     'and RC.actionsWinRcId ~= nil and tonumber(RC.id) ~= RC.actionsWinRcId then' in s,
+     'панель не закрывается, когда цель слежки сменилась (клик по чекеру)')
+need('RC.actionsWinRect = { x = A.ax, y = A.ay, w = A.aw, h = A.ah }' in s,
+     'панель не отдаёт свои габариты гейту чекеров')
+need('if RC.actionsWinOpen and grndCheckerRectOk(RC.actionsWinRect) then' in s,
+     'клик по полосе действий достаётся чекерам (окно не учтено)')
 
 # повторное нажатие значка убирает подпанель (старая запись `and nil or` не работала)
 need('if RC.actSubPopup == "hp" then RC.actSubPopup = nil else RC.actSubPopup = "hp" end' in s,

@@ -406,6 +406,39 @@ check(SUBP[1] and SUBP[1].AW >= 704,
 check(WIN.w >= 704, 'окно панели расширяется под подпанель (w=' .. WIN.w .. ')')
 resX = 1920
 
+-- ----------------------- 7б) смена цели слежки ----------------------------
+-- Пока панель открыта для одного игрока, администратор может кликнуть по
+-- чекеру и перейти на другого: панель обязана закрыться, а не «переехать».
+resetPanel()
+SCRIPT.clickId = nil
+frame()
+check(RC.actionsWinRcId == nil or RC.actionsWinRcId == tonumber(RC.id),
+    'при открытии панель запоминает цель слежки')
+RC.actionsWinRcId = 77
+RC.id = 88
+frame()
+check(RC.actionsWinOpen == false, 'цель слежки сменилась — панель закрывается')
+resetPanel()
+RC.actionsWinRcId = 77
+RC.id = 77
+frame()
+check(RC.actionsWinOpen == true, 'та же цель слежки — панель остаётся открытой')
+resetPanel()
+RC.actionsWinRcId = nil
+RC.id = 88
+frame()
+check(RC.actionsWinOpen == true, 'цель слежки неизвестна — панель не закрываем наугад')
+
+-- габариты окна панели запоминаются: по ним чекеры не принимают клики
+resetPanel()
+SCRIPT.clickId = nil
+frame()
+check(type(RC.actionsWinRect) == 'table' and RC.actionsWinRect.w == WIN.w
+    and RC.actionsWinRect.h == WIN.h,
+    'панель запоминает свои габариты для гейта чекеров')
+check(RC.actionsWinRect.x == WIN.x and RC.actionsWinRect.y == WIN.y,
+    'габариты панели совпадают с её положением на экране')
+
 -- ------------------ 8) панель закрыта — ничего не рисуем ------------------
 resetPanel({ actionsWinOpen = false })
 GRND_MOUSE.x, GRND_MOUSE.y = 100, 100
