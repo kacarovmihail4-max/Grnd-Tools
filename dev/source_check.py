@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.40"' in s, 'версия не 1.19.40')
+need('GRND_SCRIPT_VERSION = "1.19.41"' in s, 'версия не 1.19.41')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -305,8 +305,12 @@ need('local function autoChunks(line)' in s and 'pcall(QR.punChunks, line, 100)'
 # /n /sp ID, /n /getinfo ID): ничего не выполняется, видно ровно то, что ушло бы
 need('QR.autoTest = true' in s, 'нет переключателя проверки QR.autoTest')
 need('local test = (QR.autoTest ~= false)' in s, 'отправка не смотрит на режим проверки')
-need('if QR.queueCmd("/n " .. chunks[ci]) then sentAns = sentAns + 1 end' in s,
+need('if QR.queueCmd(QR.answerCmd(id, chunks[ci])) then' in s,
      'в режиме проверки ответ не уходит в /n')
+# v1.19.41: ручной ответ из окна репорта — той же строкой и тоже под /n
+need('_G.grndQrAnswerCmd = QR.answerCmd' in s and
+     'grndRepQueue(_G.grndQrAnswerCmd(pid, enc))' in s,
+     'ручной ответ из окна репорта не уходит под проверкой «/n /ans ID текст»')
 need('(test and "проверка /n: " or "")' in s, 'в состоянии нет пометки проверки')
 need('"Автопилот (проверка /n): игроку "' in s, 'тост не сообщает про проверку')
 deliver = s[s.index('-- Отправка готового плана'):s.index('-- Тик из основного цикла')]
@@ -316,6 +320,11 @@ need('if QR.queueCmd(sent) then sentCmd = sentCmd + 1 end' in deliver,
      'команда вкладки в проверке не уходит')
 need('QR.queueCmd("/n /getinfo " .. id)' in s,
      'запрос /getinfo в проверке не уходит строкой «/n /getinfo ID»')
+# v1.19.41: строка ответа в проверке — целиком, вместе с командой и ID
+need('function QR.autoAnsCmd(pid, text)' in s and
+     'QR.queueCmd(QR.answerCmd(id, chunks[ci]))' in s and
+     'function QR.answerCmd(pid, text)' in s,
+     'ответ в проверке не уходит строкой «/n /ans ID текст»')
 # v1.19.40: сам запрос остаётся настоящим — иначе {punishments} нечего показать
 need('QR.queueCmd("/getinfo " .. id)' in s and 'local txt = lines and QR.autoPunText(lines)' in s,
      'запрос наказаний перестал быть настоящим — список не получить')
@@ -326,6 +335,36 @@ need('QR.autoPunFill(it.line, txt)' in s and '"нет активных нака�
      'нет подстановки списка наказаний вместо {punishments}')
 need('if QR.punBegin(id, nick, "auto") then' in s and 'QR.queueCmd("/getinfo " .. id)' in s,
      'автопилот не запрашивает наказания через /getinfo')
+# v1.19.41: {punishments} в ТРИГГЕРЕ — ответ только про наказания
+need('function QR.autoPunInTrigger(tab)' in s and
+     'QR.autoPunWrap = function(txt)' in s,
+     'нет режима «{punishments} в триггере — ответ про наказания»')
+need('local punOnly = QR.autoPunInTrigger(tab)' in s and 'line = "{punishments}"' in s,
+     'план не переключается на автоответ про наказания')
+need('if trim(str) == "{punishments}" then return QR.autoPunWrap(txt) end' in s,
+     'маркер автоответа не разворачивается в текст кнопки «Наказания игрока»')
+# поле ответа в этом режиме прячется, вместо него — пояснение
+need('local selPun = QR.autoPunInTrigger(sel2)' in s and 'if selPun then' in s and
+     '"Соберётся сам:' in s,
+     'поле «Ответ игроку» не скрывается при {punishments} в триггере')
+# вкладка без слов (только переменные) отвечает на любой репорт
+need('function QR.autoVarsOnly(tab)' in s and 'function QR.autoTrigLabel(tab)' in s and
+     'if QR.autoVarsOnly(tabs[i]) then' in s,
+     'вкладка с одним {punishments}/{ID} без слова не срабатывает')
+# диагностика «почему не сработал» прямо в окне
+need('A.lastReport = utf8Cut(tostring(nick) .. ": " .. text, 60)' in s and
+     '"Репорт: " .. utf8Cut(dbgTxt, 44)' in s,
+     'в окне автопилота нет строки «последний репорт и что с ним стало»')
+# v1.19.41: строка репорта распознаётся и без «К-во репорта», и в вариантах
+need('function QR.repCountOf(msg)' in s and 'function QR.repLaxParse(text)' in s and
+     '_G.grndRepCountOf = QR.repCountOf' in s and '_G.grndRepLaxParse = QR.repLaxParse' in s,
+     'нет разбора строки репорта без маркера «К-во репорта»')
+need('local cnt = _G.grndRepCountOf(msg)' in s and
+     'msg = msg:gsub("%[[^%]]*[Рр]епорта%s*:%s*%d*%s*%]", "")' in s,
+     'маркер репорта ищется только в одном написании')
+need('local lNick, lId, lMsg = _G.grndRepLaxParse(text)' in s and
+     'pcall(_G.grndQrAutoOnReport, lNick, lId, lMsg)' in s,
+     'строка «Ник[ID]: текст» без маркера не доходит до автопилота')
 need('A.pend = { on = true, at = os.clock(), id = id, hit = hit,' in s,
      'нет ожидания окна наказаний в автопилоте')
 need('pcall(QR.autoPunAbsorb, lines)' in s,
@@ -350,7 +389,7 @@ need(auto_draw_src.count('{ID} — найдёт ID в репорте') == 1,
      'подсказка про {ID} должна быть ровно одна (внизу раздела)')
 need('local tab = QR.autoTab(hits[k].idx)' in s, 'срабатывание не привязано к вкладке')
 need('return QR.autoCmdFor(pid, tab)' in s, 'команда берётся не из вкладки')
-need('local line = oneLine(QR.apply(tab.answer, rep))' in s, 'ответ берётся не из вкладки')
+need('line = oneLine(QR.apply(tab.answer, rep))' in s, 'ответ берётся не из вкладки')
 need('planTabsTxt' in s, 'в подсказке нет списка сработавших вкладок')
 # конфиг: вкладки как t<N>_trigger / t<N>_answer / t<N>_command
 need('"t" .. i .. "_trigger="' in s and '"t" .. i .. "_answer="' in s and '"t" .. i .. "_command="' in s,

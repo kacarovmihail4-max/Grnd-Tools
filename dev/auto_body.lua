@@ -22,7 +22,7 @@ local function textsOne()
 end
 local function hasOne(word) return textsOne():find(word, 1, true) ~= nil end
 local function drawAuto()
-    TXT, BTNS, INVIS = {}, {}, {}
+    TXT, BTNS, INVIS, MULTI = {}, {}, {}, {}
     local ok = _G.grndQrAutoDraw(CTX)
     check(ok == true, "раздел «Автопилот» не нарисовался")
 end
@@ -561,8 +561,8 @@ NOW = NOW + 100
 A.perPid, A.rate = {}, {}
 QUEUE, ANS, CHAT = {}, {}, {}
 check(Q.autoOnReport("Mixa_Grozz", 55, "проверка") == true, "репорт не принят в режиме проверки")
-check(QUEUE[1] == "/n Приветствую, Mixa_Grozz! Проверка ответа",
-    "ответ не ушёл в /n: " .. tostring(QUEUE[1]))
+check(QUEUE[1] == "/n /ans 55 Приветствую, Mixa_Grozz! Проверка ответа",
+    "строка ответа не ушла в /n целиком: " .. tostring(QUEUE[1]))
 check(QUEUE[2] == "/n /sp 55", "команда вкладки не ушла в /n: " .. tostring(QUEUE[2]))
 for qi = 1, #QUEUE do
     check(QUEUE[qi]:sub(1, 5) ~= "/ans ", "в режиме проверки ушёл настоящий /ans: " .. tostring(QUEUE[qi]))
@@ -593,7 +593,7 @@ QUEUE = {}
 check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игрока", "OK", "",
     "Аккаунт Чек[56]\nМут 60 минут") == true, "окно наказаний не спрятано")
 check(A.pend == nil, "ожидание окна не снято")
-check(QUEUE[1] == "/n Ваши наказания: Мут 60 минут",
+check(QUEUE[1] == "/n /ans 56 Ваши наказания: Мут 60 минут",
     "настоящий список не ушёл в /n: " .. tostring(QUEUE[1]))
 -- возвращаем боевой режим, первую и вторую вкладки к прежнему виду
 QUEUE = {}
@@ -653,20 +653,182 @@ for _, rep in ipairs({ "спек 77", "четверо спек", "СПЕК!" }) 
 end
 check(#Q.autoMatchAll("спектр") == 0, "«спектр» не должно совпадать")
 -- {punishments} в триггере: список всё равно запрашивается и подставляется в ответ
-Q.autoTabs()[1].trigger = "наказ{punishments}"
+Q.autoTabs()[1].trigger = "наказ"
 Q.autoTabs()[1].answer = "Приветствую, ваши наказания: {punishments}"
 Q.autoTabs()[1].command = "none"
 Q.autoEnsure()
 NOW = NOW + 100
 A.perPid, A.rate = {}, {}
 QUEUE = {}
-check(Q.autoOnReport("Жалобщик", 28, "мои наказ плиз") == true, "«наказ{punishments}» не сработал")
+check(Q.autoOnReport("Жалобщик", 28, "мои наказ плиз") == true, "«наказ» с {punishments} в ответе не сработал")
 check(QUEUE[1] == "/getinfo 28", "запрос наказаний не ушёл: " .. tostring(QUEUE[1]))
 QUEUE = {}
 check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игрока", "OK", "",
     "Аккаунт Жалобщик[28]\nМут 60 минут") == true, "окно наказаний не спрятано")
 check(QUEUE[1] == "/ans 28 Приветствую, ваши наказания: Мут 60 минут",
     "список не подставился: " .. tostring(QUEUE[1]))
+
+-- ===== 9g. {punishments} в триггере: ответ только про наказания (v1.19.41) =====
+Q.autoTest = false
+Q.autoTabs()[1].trigger = "наказ{punishments}"
+Q.autoTabs()[1].answer = "этот текст не должен использоваться"
+Q.autoTabs()[1].command = "none"
+Q.autoEnsure()
+check(Q.autoPunInTrigger(Q.autoTabs()[1]) == true, "{punishments} в триггере не распознан")
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+check(Q.autoOnReport("Жалобщик", 70, "наказ") == true, "триггер «наказ{punishments}» не сработал")
+check(QUEUE[1] == "/getinfo 70", "запрос наказаний не ушёл: " .. tostring(QUEUE[1]))
+QUEUE = {}
+check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игрока", "OK", "",
+    "Аккаунт Жалобщик[70]\nМут 60 минут\nБан 3 дня") == true, "окно не спрятано")
+check(QUEUE[1] == "/ans 70 Приветствую, ваши активные наказания >> Мут 60 минут | Бан 3 дня",
+    "ответ не про наказания: " .. tostring(QUEUE[1]))
+-- ничего не найдено: фраза как у кнопки «Наказания игрока»
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+check(Q.autoOnReport("Чистый", 71, "наказ") == true, "репорт не принят")
+QUEUE = {}
+check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игрока", "OK", "", "Аккаунт Чистый[71]") == true,
+    "окно не спрятано")
+check(QUEUE[1] == "/ans 71 Приветствую, активных наказаний у вас нет.",
+    "нет ответа про отсутствие наказаний: " .. tostring(QUEUE[1]))
+-- окно не пришло: отвечаем, не молчим
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+check(Q.autoOnReport("Молчун", 72, "наказ") == true, "репорт не принят")
+QUEUE = {}
+NOW = NOW + 6
+Q.punPoll()
+check(QUEUE[1] == "/ans 72 Приветствую, ваши активные наказания >> нет данных о наказаниях",
+    "таймаут окна: не тот ответ: " .. tostring(QUEUE[1]))
+-- вкладка, где в триггере ТОЛЬКО переменная, отвечает на любой репорт
+Q.autoTabs()[1].trigger = "{punishments}"
+Q.autoTabs()[1].command = "none"
+Q.autoEnsure()
+check(Q.autoVarsOnly(Q.autoTabs()[1]) == true, "вкладка без слов не распознана")
+check(#Q.autoMatchAll("совершенно любой текст репорта") == 1,
+    "вкладка с одним {punishments} не отвечает на любой репорт")
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+check(Q.autoOnReport("Любой", 73, "абсолютно любой текст") == true,
+    "репорт с вкладкой «{punishments}» не обработан")
+check(QUEUE[1] == "/getinfo 73", "не запросил наказания: " .. tostring(QUEUE[1]))
+QUEUE = {}
+check(_G.grndQrPunOnDialog(10, 0, "Активные наказания игрока", "OK", "",
+    "Аккаунт Любой[73]\nМут 60 минут") == true, "окно не спрятано")
+check(QUEUE[1] == "/ans 73 Приветствую, ваши активные наказания >> Мут 60 минут",
+    "не тот ответ: " .. tostring(QUEUE[1]))
+-- и поле ответа в интерфейсе для такой вкладки не рисуется
+A.sel = 1                       -- ввод эмулируем в поле ПЕРВОЙ вкладки
+TYPE["##grnd_qr_auto_trigger"] = "{punishments}"
+drawAuto()
+check(Q.autoPunInTrigger(Q.autoTabs()[1]) == true, "поле не синхронизировалось с состоянием")
+local hasAnsField = false
+for i = 1, #MULTI do
+    if MULTI[i].id == "##grnd_qr_auto_answer" then hasAnsField = true end
+end
+check(hasAnsField == false, "поле «Ответ игроку» не спряталось при {punishments} в триггере: " .. texts())
+check(hasOne("Соберётся сам"), "нет пояснения вместо поля ответа: " .. textsOne())
+-- возвращаем вкладку 1 к обычному виду
+TYPE["##grnd_qr_auto_trigger"] = "Помогите"
+Q.autoTabs()[1].answer = "Приветствую, {ник}! Уже смотрю. {ид}"
+Q.autoTabs()[1].command = "goto"
+Q.autoEnsure()
+drawAuto()
+local ansBack = false
+for i = 1, #MULTI do
+    if MULTI[i].id == "##grnd_qr_auto_answer" then ansBack = true end
+end
+check(ansBack == true, "поле «Ответ игроку» не вернулось после смены триггера")
+check(not hasOne("Соберётся сам"), "пояснение про автоответ осталось на обычной вкладке")
+-- вкладка 2 возвращается к «дм»: ввод идёт буфером поля, поэтому через TYPE
+A.sel = 2
+TYPE["##grnd_qr_auto_trigger"] = "дм"
+Q.autoTabs()[2].trigger = "дм"
+drawAuto()
+check(Q.autoTabs()[2].trigger == "дм", "вкладка 2 не вернулась к «дм»")
+A.sel = 1
+drawAuto()
+HPRINT("{punishments} в триггере: ответ только про наказания, поле ответа скрыто, вкладка без слов отвечает на всё")
+
+-- ===== 9h. распознавание строки репорта (v1.19.41) =====
+-- В игре репорт приходил, а автопилот молчал: маркер «[К-во репорта: N]»
+-- искался только в одном написании, а где его нет вовсе — строка не доходила
+-- до автопилота. Теперь маркер понимается в любом виде, а строка
+-- «Ник[ID]: текст» отдаётся автопилоту и без маркера.
+check(_G.grndRepCountOf("Artyr[261]: помогите [К-во репорта: 25]") == 25,
+    "классический маркер не разобран")
+check(_G.grndRepCountOf("Artyr[261]: помогите [Кол-во репорта: 25]") == 25,
+    "маркер «Кол-во» не разобран")
+check(_G.grndRepCountOf("Artyr[261]: помогите [К-во репорта:25]") == 25,
+    "маркер без пробела не разобран")
+check(_G.grndRepCountOf("Artyr[261]: помогите [К-во репорта: ]") == 1,
+    "пустой номер репорта не разобран")
+check(_G.grndRepCountOf("Artyr[261]: привет") == nil, "болтовня принята за репорт")
+local lNick, lId, lMsg = _G.grndRepLaxParse("[ADM] Mixa_Grozz[25]: дм")
+check(lNick == "Mixa_Grozz" and tostring(lId) == "25" and lMsg == "дм",
+    "строка без маркера не разобрана: " .. tostring(lNick) .. " | " .. tostring(lId) .. " | " .. tostring(lMsg))
+check(_G.grndRepLaxParse("<ADM> (7) Nik_Name[261]: >>> Mixa_Grozz(25): дм") == nil,
+    "строка админ-бота попала в обычный разбор")
+check(_G.grndRepLaxParse("Admin[287] ответил Player[113]: текст") == nil,
+    "служебная строка «ответил» попала в разбор")
+check(_G.grndRepLaxParse("Admin[287] взял репорт Player[113]") == nil,
+    "служебная строка «взял репорт» попала в разбор")
+check(_G.grndRepLaxParse("просто текст без ника") == nil, "мусор попал в разбор")
+-- строки от отключённых игроков не считаем репортом
+_G.specConnected = function(id) return tonumber(id) ~= 999 end
+check(_G.grndRepLaxParse("Ghost[999]: дм") == nil, "строка от отключённого ID попала в разбор")
+check(_G.grndRepLaxParse("Alive[25]: дм") ~= nil, "живой игрок отсечён вместе с отключённым")
+_G.specConnected = nil
+-- такой репорт доходит до автопилота целиком
+Q.autoTabs()[1].trigger = "Помогите"
+Q.autoTabs()[1].answer = "Ответ"
+Q.autoTabs()[1].command = "none"
+Q.autoEnsure()
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+local rN, rP, rM = _G.grndRepLaxParse("Mixa_Grozz[88]: помогите")
+check(Q.autoOnReport(rN, rP, rM) == true, "репорт без маркера не сработал")
+check(QUEUE[1] == "/ans 88 Ответ", "не тот ответ: " .. tostring(QUEUE[1]))
+-- и репорт с маркером «Кол-во» — тоже
+NOW = NOW + 100
+A.perPid, A.rate = {}, {}
+QUEUE = {}
+check(Q.autoOnReport("Artyr", 89, "помогите") == true, "репорт не принят")
+check(QUEUE[1] == "/ans 89 Ответ", "не тот ответ: " .. tostring(QUEUE[1]))
+-- вкладка 1 возвращается к обычному виду
+Q.autoTabs()[1].trigger = "Помогите"
+Q.autoTabs()[1].answer = "Приветствую, {ник}! Уже смотрю. {ид}"
+Q.autoTabs()[1].command = "goto"
+Q.autoEnsure()
+HPRINT("распознавание репорта: маркер в любом написании, строка без маркера доходит до автопилота")
+
+-- ===== 9i. ручной ответ из окна репорта под проверкой тоже уходит в /n (v1.19.41) =====
+Q.autoTest = true
+QUEUE = {}
+check(grndRepAnswer(66, "Держитесь") == true, "ручной ответ не ушёл")
+check(QUEUE[1] == "/n /ans 66 Держитесь",
+    "ручной ответ не ушёл в /n: " .. tostring(QUEUE[1]))
+-- репорт от бота: ответ команда /pm — и она тоже под проверкой
+GRND_REP.replyCmd, GRND_REP.replyPid = "/pm 25", "25"
+QUEUE = {}
+check(grndRepAnswer(25, "текст") == true, "ответ по команде бота не ушёл")
+check(QUEUE[1] == "/n /pm 25 текст",
+    "ответ боту не ушёл в /n: " .. tostring(QUEUE[1]))
+GRND_REP.replyCmd, GRND_REP.replyPid = nil, nil
+-- боевой режим не испорчен
+Q.autoTest = false
+QUEUE = {}
+check(grndRepAnswer(66, "Держитесь") == true, "боевой ручной ответ не ушёл")
+check(QUEUE[1] == "/ans 66 Держитесь",
+    "боевой ручной ответ испорчен: " .. tostring(QUEUE[1]))
+HPRINT("ручной ответ из окна репорта: под проверкой «/n /ans ID текст»")
 
 -- ===== 12c. слежка определяется ПО ФАКТУ (v1.19.40) =====
 -- вкладка с командой: именно её слежка и должна останавливать

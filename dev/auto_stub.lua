@@ -6,6 +6,7 @@ function print(...) end
 CHAT, ANS, TOASTS, TXT, BTNS = {}, {}, {}, {}, {}
 INPUTS = {}        -- позиции полей ввода ImGui (id + x/y) для проверок вёрстки
 INVIS = {}         -- позиции InvisibleButton (id + x/y): селектор команд, вкладки и т.п.
+MULTI = {}         -- многострочные поля ввода (id + x/y): поле «Ответ игроку»
 -- v1.19.35: «сырой» клик мыши, как в игре (grndClickAlive + GRND_MOUSE).
 -- Нужен, чтобы проверить поведение списка команд при кликах по селектору.
 GRND_UIFRAME = 0
@@ -138,7 +139,13 @@ function grndRepAnswer(pid, text)
     pid = tostring(pid or "")
     if pid:match("^%d+$") == nil then return false end
     local enc = grndAnsiText(tostring(text))      -- UTF-8 → CP1251, как в игре
-    grndRepQueue("/ans " .. pid .. " " .. enc)
+    -- v1.19.41: строку ответа собирает сам скрипт (проверка /n — там же)
+    local Q = _G.GRND_QR
+    if type(Q) == "table" and type(Q.answerCmd) == "function" then
+        grndRepQueue(Q.answerCmd(pid, enc))
+    else
+        grndRepQueue("/ans " .. pid .. " " .. enc)
+    end
     return true
 end
 
@@ -199,6 +206,7 @@ function im.SetCursorPos(p) if type(p) == "table" then POS.cx, POS.cy = p.x, p.y
     function im.SetNextItemWidth() end
     function im.SetTooltip(t) TOOLTIP = tostring(t) end
     function im.InputTextMultiline(id, buf, cap, sz, x)
+        MULTI[#MULTI + 1] = { id = tostring(id), x = POS.cx or 0, y = POS.cy or 0 }
         if TYPE[id] then grndBinderWriteCBuf(buf, cap, TYPE[id]); TYPE[id] = nil end
         return false
     end

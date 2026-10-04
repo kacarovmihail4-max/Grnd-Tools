@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.40"
+GRND_SCRIPT_VERSION = "1.19.41"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -26988,8 +26988,9 @@ end
 --    * репорт без числового ID не трогаем — отвечать некому;
 --    * ответ и команда идут в ОДНУ очередь репорта: ответ уходит первым,
 --      сервер не получает две команды в одном кадре;
---    * репорт должен быть настоящим («… [К-во репорта: N]» или формат
---      админ-бота «Ник(ID): текст») — обычная болтовня в чате не считается;
+--    * репорт должен быть настоящим: «… [К-во репорта: N]» (маркер в любом
+--      написании), формат админ-бота «Ник(ID): текст» или просто строка
+--      «Ник[ID]: текст» с сервера, где маркера нет вовсе;
 --    * текст репорта должен быть ровно триггером — без других слов;
 --
 --  Конфиг — общий config.json, секция reportAuto (домен grnd_repauto в
@@ -27040,8 +27041,61 @@ do
     local function autoPlain(str)
         str = tostring(str or "")
         str = str:gsub("{%x%x%x%x%x%x%x%x}", ""):gsub("{%x%x%x%x%x%x}", "")
+        -- хвост «[К-во репорта: N]» (если строка дошла целиком) не мешает словам
+        str = str:gsub("%[К%-во репорта:%s*%d+%]", " ")
         str = str:gsub("[%c]", " ")
         return trim(str:gsub("%s+", " "))
+    end
+
+    -- ---------- распознавание строки репорта (v1.19.41) ----------
+
+    -- Маркер репорта. Серверы пишут его по-разному: «[К-во репорта: 25]»,
+    -- «[Кол-во репорта: 25]», «[К-во репорта:25]», иногда с пустым номером
+    -- («[К-во репорта: ]»). Раньше требовалось ровно «К-во репорта: N» — на
+    -- другом написании строка репорта не распознавалась вовсе, и автопилот
+    -- молчал (в стенде репорт подавался уже разобранным — там всё работало).
+    function QR.repCountOf(msg)
+        local pat = "%[[^%]]*[Рр]епорта%s*:%s*(%d*)%s*%]"
+        local low = autoLower(tostring(msg or ""))
+        local n = low:match(pat)
+        if n == nil then return nil end
+        return tonumber(n) or 1
+    end
+
+    -- Строка «Ник[ID]: текст» БЕЗ маркера «К-во репорта». Для окна «Репорты»
+    -- она не годится (маркер там — признак настоящей жалобы), а автопилоту её
+    -- отдаём: на части серверов маркера в строке нет вообще, и раньше такой
+    -- репорт до автопилота не доходил. Служебные строки чата отсекаем по
+    -- явным признакам. Возвращает ник, ID и текст жалобы.
+    function QR.repLaxParse(text)
+        local t = tostring(text or "")
+        if type(_G.grndToUtf) == "function" then t = _G.grndToUtf(t) end
+        t = t:gsub("{%x%x%x%x%x%x}", "")
+        if t == "" then return nil end
+        local skip = {
+            ">>>", "ответил", "не ответили", "ответить игроку", "взял",
+            "репорта",
+        }
+        local low = autoLower(t)
+        for i = 1, #skip do
+            if low:find(skip[i], 1, true) then return nil end
+        end
+        -- берём ПОСЛЕДНЕЕ «Ник[ID]:»: префикс админ-чата может содержать своё
+        local nick, pid, msg
+        for n, p, m in t:gmatch("([%w_%.%-]+)%[(%d+)%]%s*:%s*([^\n]*)") do
+            nick, pid, msg = n, p, m
+        end
+        if not nick then return nil end
+        local num = tonumber(pid)
+        if not num or num < 0 or num > 1003 or #nick > 32 then return nil end
+        -- строки от давно отключённых игроков (хвост чата) не считаем
+        if type(_G.specConnected) == "function" then
+            local okC, conn = pcall(_G.specConnected, num)
+            if okC and conn == false then return nil end
+        end
+        msg = autoPlain(msg)
+        if msg == "" then return nil end
+        return nick, pid, msg
     end
 
     -- ---------- конфиг автопилота ----------
@@ -27254,6 +27308,12 @@ do
             local hasID, hasAll, hasPun = QR.autoVarFlags(tabs[i])
             local anywhere = hasID or hasAll or hasPun
             local list = QR.autoTriggers(tabs[i])
+            if #list == 0 then
+                -- триггер состоял из одних переменных: отвечаем на любой репорт
+                if QR.autoVarsOnly(tabs[i]) then
+                    out[#out + 1] = { idx = i, trig = QR.autoTrigLabel(tabs[i]) }
+                end
+            end
             for k = 1, #list do
                 local trig = list[k]
                 local hit = anywhere and autoWordHit(low, trig) or (low == trig)
@@ -27277,9 +27337,10 @@ do
     function QR.autoReady()
         local tabs, ready = QR.autoTabs(), 0
         for i = 1, #tabs do
-            if #QR.autoTriggers(tabs[i]) > 0 and trim(tostring(tabs[i].answer or "")) ~= "" then
-                ready = ready + 1
-            end
+            local tab = tabs[i]
+            local hasWord = #QR.autoTriggers(tab) > 0
+            local hasAns = trim(tostring(tab.answer or "")) ~= "" or QR.autoPunInTrigger(tab)
+            if (hasWord or QR.autoVarsOnly(tab)) and hasAns then ready = ready + 1 end
         end
         return ready, #tabs
     end
@@ -27292,6 +27353,51 @@ do
         local id = QR.autoCmdId(tab and tab.command)
         if id == "none" then return nil end
         return "/" .. id .. " " .. pid
+    end
+
+    -- В триггере остались ТОЛЬКО переменные («{punishments}», «{ID}»)? Тогда
+    -- слова-триггера нет, и такая вкладка отвечает на ЛЮБОЙ репорт.
+    function QR.autoVarsOnly(tab)
+        local raw = tostring((tab and tab.trigger) or "")
+        if raw:find("%b{}") == nil then return false end
+        return #QR.autoTriggers(tab) == 0
+    end
+
+    -- {punishments} прямо в триггере: поле «Ответ игроку» не нужно — ответ
+    -- собирается сам, слово в слово как у кнопки «Наказания игрока».
+    function QR.autoPunInTrigger(tab)
+        local raw = autoLower(tostring((tab and tab.trigger) or ""))
+        return raw:find("{punishments}", 1, true) ~= nil
+    end
+
+    -- Как назвать такую вкладку в тостах и подсказке.
+    function QR.autoTrigLabel(tab)
+        local low = autoLower(tostring((tab and tab.trigger) or ""))
+        local v = low:match("{(%a+)}")
+        if v == "punishments" then return "наказания" end
+        if v == "id" then return "ID из репорта" end
+        return "любой репорт"
+    end
+
+    -- Строка ответа игроку так, как её отправил бы grndRepAnswer: та же
+    -- команда, тот же ID (у ботов-репортов ответ идёт не /ans, а /pm).
+    function QR.autoAnsCmd(pid, text)
+        pid = tostring(pid or "")
+        local R = _G.GRND_REP
+        local rc = R and R.replyCmd
+        if type(rc) == "string" and rc ~= "" and tostring(R.replyPid or "") == pid then
+            return (rc:gsub("%d+", pid)) .. " " .. tostring(text)
+        end
+        return "/ans " .. pid .. " " .. tostring(text)
+    end
+
+    -- Строка ответа игроку, которая уйдёт в чат: под проверкой (/n) — та же
+    -- самая строка с префиксом «/n», боевая — как есть. Этим пользуются и
+    -- автопилот, и ручной ответ из окна репорта — формат один.
+    function QR.answerCmd(pid, text)
+        local real = QR.autoAnsCmd(pid, text)
+        if QR.autoTest ~= false then return "/n " .. real end
+        return real
     end
 
     -- Итоговая команда вкладки после ответа: найденный в репорте ID важнее
@@ -27692,10 +27798,22 @@ do
         return table.concat(lines, " | ")
     end
 
+    -- «Ответ только про наказания»: тот же текст, что у кнопки
+    -- «Наказания игрока» — «Приветствую, ваши активные наказания >> …».
+    QR.autoPunWrap = function(txt)
+        local str = tostring(txt or "")
+        if str == "" or str == "нет активных наказаний" then
+            return "Приветствую, активных наказаний у вас нет."
+        end
+        return "Приветствую, ваши активные наказания >> " .. str
+    end
+
     -- Подстановка вместо {punishments}. Список приходит из окна сервера,
     -- поэтому заменяем через функцию: в нём могут быть «%».
     QR.autoPunFill = function(line, txt)
-        local str = tostring(line or ""):gsub("{punishments}", function() return tostring(txt or "") end)
+        local str = tostring(line or "")
+        if trim(str) == "{punishments}" then return QR.autoPunWrap(txt) end
+        str = str:gsub("{punishments}", function() return tostring(txt or "") end)
         return oneLine(trim(str))
     end
 
@@ -27840,6 +27958,7 @@ do
         local A = QR.auto
         nick, pid = tostring(nick or ""), tostring(pid or "")
         local text = autoPlain(msg)
+        A.lastReport = utf8Cut(tostring(nick) .. ": " .. text, 60)
         if not A.on then
             A.lastCheck = "выключен"
             return false, "выключен"
@@ -27920,15 +28039,25 @@ do
         for k = 1, #hits do
             local tab = QR.autoTab(hits[k].idx)
             local hasID, hasAll, hasPun = QR.autoVarFlags(tab)
-            local line = oneLine(QR.apply(tab.answer, rep))
-            if hasAll then
-                -- {all} — служебный: из текста ответа убираем
-                line = trim((line:gsub("{all}", "", 1)))
-                line = trim((line:gsub("%s+", " ")))
+            -- v1.19.41: {punishments} в ТРИГГЕРЕ — поле ответа не нужно,
+            -- отвечаем ровно как кнопка «Наказания игрока». Текст соберётся,
+            -- когда окно /getinfo придёт (маркер ниже).
+            local punOnly = QR.autoPunInTrigger(tab)
+            local line
+            if punOnly then
+                line = "{punishments}"
+            else
+                line = oneLine(QR.apply(tab.answer, rep))
+                if hasAll then
+                    -- {all} — служебный: из текста ответа убираем
+                    line = trim((line:gsub("{all}", "", 1)))
+                    line = trim((line:gsub("%s+", " ")))
+                end
             end
             local cmd = QR.autoTabCmd(id, tab, foundId)
             if line ~= "" or cmd then
-                plan[#plan + 1] = { idx = hits[k].idx, line = line, cmd = cmd, pun = hasPun }
+                plan[#plan + 1] = { idx = hits[k].idx, line = line, cmd = cmd,
+                    pun = (hasPun or punOnly) }
             end
         end
         if #plan == 0 then
@@ -27992,8 +28121,11 @@ do
                 local chunks = autoChunks(it.line)
                 for ci = 1, #chunks do
                     if test then
-                        -- проверка: вместо «/ans ID текст» — локальный «/n текст»
-                        if QR.queueCmd("/n " .. chunks[ci]) then sentAns = sentAns + 1 end
+                        -- проверка: та же строка, что ушла бы боевым режимом,
+                        -- но с префиксом /n — видно и команду, и ID: «/n /ans 25 …»
+                        if QR.queueCmd(QR.answerCmd(id, chunks[ci])) then
+                            sentAns = sentAns + 1
+                        end
                     elseif type(grndRepAnswer) == "function" then
                         -- grndRepAnswer сам переводит текст в CP1251 и ставит
                         -- «/ans ID …» в очередь репорта
@@ -28271,17 +28403,30 @@ do
         end
         yy = yy + 40
 
+        local selPun = QR.autoPunInTrigger(sel2)
         ctx.uiText(x, yy, "Ответ игроку", dim, 0.84)
         yy = yy + 17
-        local ansH = 92
-        local akey, aid = "autoAnswer" .. A.sel, "##grnd_qr_auto_answer"
-        field(ctx, aid, akey, 1024, x, yy, iw, ansH, "Приветствую, уже смотрю…", true, sel2.answer)
-        local ansVal = clampText(cleanText(bufText(akey)), MAX_TEXT)
-        if ansVal ~= sel2.answer then
-            sel2.answer = ansVal
-            A.dirtyAt = os.clock()
+        if selPun then
+            -- v1.19.41: {punishments} в триггере — поле ответа не нужно:
+            -- ответ собирается сам, как у кнопки «Наказания игрока»
+            local punNote = wrapW(
+                "Соберётся сам: «Приветствую, ваши активные наказания >> …» через /getinfo — как кнопка «Наказания игрока»",
+                iw, ctx.drawnW, tHintSc)
+            for li = 1, #punNote do
+                ctx.uiText(x, yy + (li - 1) * tHintStep, punNote[li], acC, tHintSc)
+            end
+            yy = yy + math.max(1, #punNote) * tHintStep + 12
+        else
+            local ansH = 92
+            local akey, aid = "autoAnswer" .. A.sel, "##grnd_qr_auto_answer"
+            field(ctx, aid, akey, 1024, x, yy, iw, ansH, "Приветствую, уже смотрю…", true, sel2.answer)
+            local ansVal = clampText(cleanText(bufText(akey)), MAX_TEXT)
+            if ansVal ~= sel2.answer then
+                sel2.answer = ansVal
+                A.dirtyAt = os.clock()
+            end
+            yy = yy + ansH + 12
         end
-        yy = yy + ansH + 12
 
         ctx.uiText(x, yy, "Команда после ответа", dim, 0.84)
         yy = yy + 17
@@ -28326,7 +28471,8 @@ do
         local repId = ""
         if type(_G.GRND_REP) == "table" then repId = tostring(_G.GRND_REP.playerId or "") end
         local sampleId = repId:match("^%d+$") or "25"
-        local sampleLine = oneLine(QR.apply(sel2.answer, { nick = "Ник", id = sampleId }))
+        local sampleLine = selPun and QR.autoPunWrap("Мут 60 минут")
+            or oneLine(QR.apply(sel2.answer, { nick = "Ник", id = sampleId }))
         local cmdLine = QR.autoCmdFor(sampleId, sel2)
         local prev
         if sampleLine == "" then
@@ -28356,6 +28502,19 @@ do
                 ctx.uiText(x, hy, lines[li], mut, hintSc)
                 hy = hy + hintStep
             end
+        end
+
+        -- v1.19.41: диагностика — что сделал последний репорт. Раньше при
+        -- «триггер не сработал» причину было не видно; теперь она в окне.
+        local dbgTxt = tostring(A.lastReport or "")
+        if dbgTxt == "" then dbgTxt = "репортов ещё не было" end
+        local dbgLines = wrapW(
+            "Репорт: " .. utf8Cut(dbgTxt, 44)
+                .. (A.lastCheck and A.lastCheck ~= "" and (" → " .. tostring(A.lastCheck)) or ""),
+            iw, ctx.drawnW, 0.74)
+        for li = 1, math.min(2, #dbgLines) do
+            ctx.uiText(x, hy, dbgLines[li], mut, 0.74)
+            hy = hy + lineH(ctx, 0.74) + 2
         end
 
         -- Список команд рисуем ПОСЛЕДНИМ: он ложится поверх полей и клики
@@ -28405,6 +28564,12 @@ do
         end
         return true
     end
+
+    -- Разбор строки репорта — вне модуля (там свои локальные лимиты), поэтому
+    -- отдаём обе функции наружу под именами скрипта.
+    _G.grndRepCountOf = QR.repCountOf
+    _G.grndRepLaxParse = QR.repLaxParse
+    _G.grndQrAnswerCmd = QR.answerCmd
 
     -- Глобальные обёртки: их зовут разбор репортов и основной цикл скрипта.
     _G.grndQrAutoOnReport = function(nick, pid, msg)
@@ -29598,18 +29763,23 @@ function grndMainBody()
     end
     -- Разбор строки репорта из чата:
     --   "Artyr_stalbekov[261]: {FFCD00}помогите  [К-во репорта: 25]"
+    -- v1.19.41: маркер репорта и разбор строки без маркера живут в модуле
+    -- QR.repCountOf / QR.repLaxParse — там же, где автопилот, и их видно
+    -- стендам (в этой части скрипта лимит локальных переменных).
     local function grndCatchParse(text)
         local t = grndRepUtf(text)
         t = t:gsub("{%x%x%x%x%x%x}", "")
         local nick, pid, msg = t:match("([%w_%.%-]+)%[(%d+)%]%s*:%s*(.+)$")
         if not nick then return nil end
-        local cnt = msg:match("%[К%-во репорта:%s*(%d+)%]")
+        local cnt = _G.grndRepCountOf(msg)
         if not cnt then return nil end -- не репорт, а обычная реплика
-        msg = msg:gsub("%[К%-во репорта:%s*%d+%]", "")
+        msg = msg:gsub("%[[^%]]*[Рр]епорта%s*:%s*%d*%s*%]", "")
+        msg = msg:gsub("%[%s*%]", "")
         msg = grndRepClean(msg)
         if msg == "" then msg = "текст репорта" end
-        return nick, pid, msg, tonumber(cnt)
+        return nick, pid, msg, cnt
     end
+
     -- Все сообщения репорта теперь также отображаются в родном чате
     function grndRepShouldHideChat(text)
         return false
@@ -29900,6 +30070,13 @@ function grndMainBody()
         if nick and type(_G.grndQrAutoOnReport) == "function" then
             pcall(_G.grndQrAutoOnReport, nick, pid, msg)
         end
+        if not nick and type(_G.grndQrAutoOnReport) == "function" then
+            -- v1.19.41: сервер может не присылать «К-во репорта» — тогда
+            -- «Ник[ID]: текст» до автопилота не доходила ВООБЩЕ. Отдаём её
+            -- автопилоту (в окно «Репорты» такие строки не попадают).
+            local lNick, lId, lMsg = _G.grndRepLaxParse(text)
+            if lNick then pcall(_G.grndQrAutoOnReport, lNick, lId, lMsg) end
+        end
         if not GRND_REPHUD.enabled then return end
         if not nick then return end
         grndRepHudAdd(nick, pid, msg, cnt)
@@ -30087,6 +30264,14 @@ function grndMainBody()
         pid = tostring(pid or "")
         if not pid:match("^%d+$") then return false end
         local enc = grndRepToAnsi(text)
+        -- v1.19.41: под проверкой (/n) ручной ответ уходит ровно так же, как
+        -- ответ автопилота: та же строка («/ans ID текст» или «/pm ID текст»
+        -- от бота) с префиксом «/n» — в чат, но никому не отправляется.
+        if type(_G.grndQrAnswerCmd) == "function" then
+            grndRepQueue(_G.grndQrAnswerCmd(pid, enc))
+            pcall(grndRepHudRemove, pid)
+            return true
+        end
         -- v1.18.00: если бот сообщил свою команду ответа («/pm ID»), отвечаем
         -- ею. Для всех остальных репортов путь прежний — /ans ID текст.
         local rc = GRND_REP.replyCmd
