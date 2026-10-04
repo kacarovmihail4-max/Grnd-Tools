@@ -1181,19 +1181,28 @@ HPRINT("пропуски: нет триггера, нет ID, пустая вк�
 -- ===== 11. темп, предохранитель и повторный репорт того же игрока =====
 -- v1.19.42: «этому игроку уже отвечали» больше нет. Ответ игроку — не повод
 -- пропускать его следующий репорт: написал ещё раз — отвечаем ещё раз. Темп
--- держат только пауза 2.5 с между срабатываниями и лимит 12 ответов в минуту.
+-- держат только пауза 1 с между срабатываниями и лимит 12 ответов в минуту.
 NOW = NOW + 10
 A.rate = {}
 Q.autoOnReport("Mixa_Grozz", 25, "Помогите")
+CHECKED_AT = NOW
+-- v1.19.48: пауза между срабатываниями — 1 с (было 2.5)
+NOW = CHECKED_AT + 0.5
+QUEUE = {}
+local okHalf, whyHalf = Q.autoOnReport("Mixa_Grozz", 25, " Помогите ")
+check(okHalf == false and whyHalf == "слишком часто",
+    "на полусекунде репорт не придержан: " .. tostring(whyHalf))
+check(#QUEUE == 0, "репорт в паузе всё равно ушёл")
+NOW = CHECKED_AT + 1.1
 QUEUE = {}
 local okGap, whyGap = Q.autoOnReport("Mixa_Grozz", 25, " Помогите ")
-check(okGap == false and whyGap == "слишком часто",
-    "нет паузы между срабатываниями: " .. tostring(whyGap))
-check(#QUEUE == 0, "пропущенный репорт всё равно ушёл")
-NOW = NOW + 3
+check(okGap == true,
+    "через 1.1 с репорт не ушёл (пауза длиннее секунды): " .. tostring(whyGap))
+check(#QUEUE == 2, "через 1.1 с ушло не 2 строки: " .. tostring(#QUEUE))
+NOW = CHECKED_AT + 2.2
 QUEUE = {}
 local okAgain, whyAgain = Q.autoOnReport("Mixa_Grozz", 25, " Помогите ")
-check(okAgain == true, "повторный репорт того же игрока пропущен: " .. tostring(whyAgain))
+check(okAgain == true, "повторный репорт через 1.1 с пропущен: " .. tostring(whyAgain))
 check(QUEUE[1] == "/ans 25 Приветствую! Уже смотрю.",
     "повторный ответ не ушёл: " .. tostring(QUEUE[1]))
 check(QUEUE[2] == "/goto 25", "команда повторного ответа не ушла: " .. tostring(QUEUE[2]))

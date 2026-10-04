@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.47"' in s, 'версия не 1.19.47')
+need('GRND_SCRIPT_VERSION = "1.19.48"' in s, 'версия не 1.19.48')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -503,8 +503,10 @@ need('QR.toast("Автопилот: пропуск — открыт чат ил�
 # предохранители: пауза между срабатываниями и лимит в минуту.
 # v1.19.42: антидубля по игроку НЕТ — ответ не повод пропускать его
 # следующий репорт, сколько раз написал, столько раз и отвечаем.
-need('local AUTO_GAP = 2.5' in s and 'local AUTO_PER_MIN = 12' in s,
-     'нет настроек предохранителей автопилота')
+need('local AUTO_GAP = 1 ' in s and 'local AUTO_PER_MIN = 12' in s,
+     'пауза между срабатываниями не 1 с (или нет настроек предохранителей)')
+need('if now - (A.lastAt or 0) < AUTO_GAP then return "слишком часто" end' in s,
+     'пауза между срабатываниями не применяется')
 need('AUTO_PER_PID' not in s and 'A.perPid' not in s
      and 'return "этому игроку уже отвечали"' not in s,
      'вернулся антидубль «этому игроку уже отвечали»')
