@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.45"
+GRND_SCRIPT_VERSION = "1.19.46"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -27005,6 +27005,10 @@ end
 --      ID из игры, а если числа в репорте не было — по нику, написанному в
 --      тексте (если такой игрок на сервере). Автор репорта доступен как
 --      {автор} — ему и уходит /ans;
+--    * если в репорте НЕТ ни номера, ни имени, называть некого: у вкладки с
+--      {ID} на слове уходит СВОЙ текст из «Ответ игроку» — без ника и ID;
+--    * несколько разных слов-триггеров в одном репорте — отвечает только
+--      ПЕРВОЕ (то, что раньше в тексте), остальные слова молчат;
 --
 --  Конфиг — общий config.json, секция reportAuto (домен grnd_repauto в
 --  GRND_CONFIG.sources): on / sel / t1_trigger / t1_answer / t1_command / …
@@ -27262,18 +27266,24 @@ do
     end
 
     -- Триггер — ЦЕЛОЕ слово в любом месте текста (режим {all}/{ID}).
-    local function autoWordHit(low, trig)
-        if trig == "" then return false end
+    -- Возвращает позицию первого такого слова (nil — не нашлось): по ней
+    -- выбирается, какое слово репорта «первое» (v1.19.46).
+    local function autoWordAt(low, trig)
+        if trig == "" then return nil end
         local from = 1
         while true do
             local s1, s2 = low:find(trig, from, true)
-            if not s1 then return false end
+            if not s1 then return nil end
             local before = autoLastChar(low:sub(1, s1 - 1))
             if not autoWordStart(before) and not autoWordStart(low:sub(s2 + 1)) then
-                return true
+                return s1
             end
             from = s1 + 1
         end
+    end
+
+    local function autoWordHit(low, trig)
+        return autoWordAt(low, trig) ~= nil
     end
 
     -- Строка ответа в куски по лимиту чата: длинный список наказаний в одно
@@ -27373,39 +27383,64 @@ do
             low:find("{punishments}", 1, true) ~= nil
     end
 
-    -- ВСЕ вкладки, чей триггер подошёл. Как искать — решает САМО СЛОВО
-    -- (v1.19.43): у слова с переменной («дм{ID}») — целое слово в любом месте
-    -- репорта («234 дм», «дм 234» — да, «дмх 234» — нет), у обычного слова —
-    -- репорт совпадает с ним ЦЕЛИКОМ («дм» — да, «дм 234» — нет). Переменная
-    -- действует ТОЛЬКО на то слово, на которое написана: в «дм{ID}, dm»
-    -- широко ищется «дм», а «dm» — как обычно. Пробелы вокруг не мешают:
-    -- «  дм  » — да. Совпасть может не одна вкладка (например, один и тот же
-    -- триггер стоит в двух) — тогда сработают все, по порядку вкладок.
-    -- Возвращает { {idx=, trig=}, … }.
+    -- Как искать — решает САМО СЛОВО (v1.19.43): у слова с переменной
+    -- («дм{ID}») — целое слово в любом месте репорта («234 дм», «дм 234» —
+    -- да, «дмх 234» — нет), у обычного слова — репорт совпадает с ним
+    -- ЦЕЛИКОМ («дм» — да, «дм 234» — нет). Переменная действует ТОЛЬКО на то
+    -- слово, на которое написана: в «дм{ID}, dm» широко ищется «дм», а «dm» —
+    -- как обычно.
+    --
+    -- v1.19.46: если в репорте подошло НЕСКОЛЬКО РАЗНЫХ слов, отвечает только
+    -- ПЕРВОЕ из них — то, что раньше в тексте: на «дм спек 234» ответит «дм», а
+    -- «спек» промолчит. Одно и то же слово в нескольких вкладках — по-прежнему
+    -- срабатывают все (v1.19.25), по порядку вкладок.
+    -- Возвращает { {idx=, trig=}, … } и строку с пропущенными словами.
     function QR.autoMatchAll(text)
         local low = trim(autoLower(autoPlain(text)))
         local out = {}
-        if low == "" then return out end
+        if low == "" then return out, "" end
         local tabs = QR.autoTabs()
+        local found, best, dropped = {}, nil, {}
         for i = 1, #tabs do
             local list = QR.autoTrigList(tabs[i])
-            if #list == 0 then
-                -- в триггере ни слова: так работает только голая
-                -- {punishments} — ответ про наказания собирается сам
-                if QR.autoBarePun(tabs[i]) then
-                    out[#out + 1] = { idx = i, trig = QR.autoTrigLabel(tabs[i]) }
-                end
-            end
+            -- своё ЛУЧШЕЕ (самое раннее) слово этой вкладки
+            local mine = nil
             for k = 1, #list do
                 local it = list[k]
-                local hit = it.wide and autoWordHit(low, it.word) or (low == it.word)
-                if hit then
-                    out[#out + 1] = { idx = i, trig = it.word }
-                    break
+                local pos
+                if it.wide then
+                    pos = autoWordAt(low, it.word)
+                elseif low == it.word then
+                    pos = 1          -- репорт совпал целиком: это начало строки
+                end
+                if pos and (not mine or pos < mine.pos) then
+                    mine = { pos = pos, word = it.word }
                 end
             end
+            if mine then
+                found[#found + 1] = { idx = i, trig = mine.word, pos = mine.pos }
+                if not best or mine.pos < best then best = mine.pos end
+            end
         end
-        return out
+        if #found > 0 then
+            for k = 1, #found do
+                if found[k].pos == best then
+                    out[#out + 1] = { idx = found[k].idx, trig = found[k].trig }
+                elseif not dropped[found[k].trig] then
+                    dropped[found[k].trig] = true
+                end
+            end
+            local names = {}
+            for w in pairs(dropped) do names[#names + 1] = w end
+            return out, table.concat(names, ", ")
+        end
+        -- слов не нашлось: работает вкладка с голой {punishments}
+        for i = 1, #tabs do
+            if QR.autoBarePun(tabs[i]) then
+                out[#out + 1] = { idx = i, trig = QR.autoTrigLabel(tabs[i]) }
+            end
+        end
+        return out, ""
     end
 
     -- Первая подошедшая вкладка (номер и триггер) — для подсказок и отладки.
@@ -27472,9 +27507,31 @@ do
         return raw:find("{id}", 1, true) ~= nil
     end
 
-    -- Готовый текст приветствия для отчёта ({nick=, id=, foundId=}).
+    -- Готовый текст приветствия. Собираем из частей: пустых «[]» и
+    -- незаменённых «{ник}» в чат не попадёт. Некого называть — вернётся "".
     function QR.autoGreet(rep)
-        return oneLine(QR.apply(QR.AUTO_GREET, rep))
+        rep = (type(rep) == "table") and rep or {}
+        local nick = tostring(rep.nick or "")
+        local id = tostring(rep.foundId or "")
+        if id == "" then id = tostring(rep.id or "") end
+        if nick == "" and id == "" then return "" end
+        local who = nick
+        if nick ~= "" and id ~= "" then who = nick .. "[" .. id .. "]"
+        elseif nick == "" then who = "[" .. id .. "]" end
+        return "Приветствую, слежу за игроком " .. who
+    end
+
+    -- v1.19.46: вычистить из готовой строки не подставившихся «кто»-переменных
+    -- ({ник}/{ID}/{ид}) и следы от них — цвета {RRGGBB} не трогаем.
+    function QR.autoWhoStrip(line)
+        line = tostring(line or "")
+        line = line:gsub("{ник}", ""):gsub("{nick}", "")
+        line = line:gsub("{ид}", ""):gsub("{id}", ""):gsub("{ID}", "")
+        line = line:gsub("%[%s*%]", "")
+        line = line:gsub("%s+", " ")
+        line = line:gsub("%s+([,%.!%?:;])", "%1")
+        line = line:gsub(",%s*([%.!%?:;])", "%1")
+        return trim(line)
     end
 
     -- Как назвать такую вкладку в тостах и подсказке.
@@ -28085,7 +28142,8 @@ do
             A.lastCheck = "пустой текст репорта"
             return false, "пусто"
         end
-        local hits = QR.autoMatchAll(text)
+        local hits, droppedTrig = QR.autoMatchAll(text)
+        A.lastDropped = droppedTrig or ""
         if #hits == 0 then
             if pause then
                 A.lastCheck = "пауза: " .. pause
@@ -28131,6 +28189,7 @@ do
         local hitTabsTxt = table.concat(hitTabs, ", ")
         -- v1.19.25: срабатывают все вкладки с этим триггером, по порядку
         A.lastCheck = "триггер «" .. hit .. "» найден: вкладки " .. hitTabsTxt
+            .. (droppedTrig ~= "" and (" · позже «" .. droppedTrig .. "» (пропущено)") or "")
         if type(grndIsTyping) == "function" then
             local okT, typing = pcall(grndIsTyping)
             if okT and typing then
@@ -28147,7 +28206,15 @@ do
 
         -- Что уйдёт игроку и на сервер: сначала собираем план по всем
         -- совпавшим вкладкам (пустые вкладки в план не попадают).
-        local rep = { nick = tNick or nick, author = nick, id = id, foundId = foundId }
+        -- v1.19.46: удалось ли назвать того, на кого пожаловались? Если в
+        -- репорте нет ни номера, ни имени — называть некого: в ответе не
+        -- должно быть ни ника, ни ID (ушёл бы ник автора или его ID).
+        -- кто-то назван, если в репорте есть номер («дм 234») или ник, который
+        -- нашёлся среди подключённых; иначе называть некого
+        local hasTarget = (foundId ~= nil and foundId ~= "") or (tNick ~= nil and tNick ~= "")
+        local rep = { nick = tNick or "", author = nick, id = id, foundId = foundId }
+        local repNone = { nick = "", author = nick, id = "", foundId = "" }
+        local repAns = hasTarget and rep or repNone
         local plan = {}
         for k = 1, #hits do
             local tab = QR.autoTab(hits[k].idx)
@@ -28163,12 +28230,18 @@ do
             if punOnly then
                 line = "{punishments}"
                 pun = true
-            elseif idAuto then
+            elseif idAuto and hasTarget then
                 line = QR.autoGreet(rep)
                 -- поле ответа не используется — и его {punishments} тоже
                 pun = false
+            elseif idAuto then
+                -- в репорте нет ни номера, ни имени: отвечаем своим текстом из
+                -- настроек, а {ник}/{ID} вычищаем — указывать некого
+                line = QR.autoWhoStrip(oneLine(QR.apply(tab.answer, repNone)))
+                pun = false
             else
-                line = oneLine(QR.apply(tab.answer, rep))
+                -- v1.19.46: нет ни номера, ни имени — ник и ID не подставляем
+                line = QR.autoWhoStrip(oneLine(QR.apply(tab.answer, repAns)))
                 if hasAll then
                     -- {all} — служебный: из текста ответа убираем
                     line = trim((line:gsub("{all}", "", 1)))
@@ -28274,7 +28347,8 @@ do
         A.lastCheck = sentOk
             and ((test and "проверка /n: " or "") .. "отправлено (вкладки " .. planTabsTxt
                 .. "), триггер «" .. tostring(hit) .. "»"
-                .. (tabsTxt ~= planTabsTxt and (" · план " .. tostring(tabsTxt)) or ""))
+                .. (tabsTxt ~= planTabsTxt and (" · план " .. tostring(tabsTxt)) or "")
+                .. (A.lastDropped ~= "" and (" · позже «" .. A.lastDropped .. "»") or ""))
             or "не удалось отправить"
         if sentOk then
             local cmds = table.concat(cmdTxt, " + ")
@@ -28528,15 +28602,12 @@ do
         local selID = (not selPun) and QR.autoIDInTrigger(sel2)
         ctx.uiText(x, yy, "Ответ игроку", dim, 0.84)
         yy = yy + 17
-        if selPun or selID then
+        if selPun then
             -- v1.19.41: {punishments} в триггере — поле ответа не нужно:
-            -- ответ собирается сам, как у кнопки «Наказания игрока».
-            -- v1.19.44: {ID} на слове в триггере — тоже: «Приветствую, слежу
-            -- за игроком Ник[ID]», что бы ни было в поле ответа.
-            local noteTxt = selPun
-                and "Соберётся сам: «Приветствую, ваши активные наказания >> …» через /getinfo — как кнопка «Наказания игрока»"
-                or "Соберётся сам: «Приветствую, слежу за игроком Ник[234]» — поле ответа не нужно"
-            local note = wrapW(noteTxt, iw, ctx.drawnW, tHintSc)
+            -- ответ собирается сам, как у кнопки «Наказания игрока»
+            local note = wrapW(
+                "Соберётся сам: «Приветствую, ваши активные наказания >> …» через /getinfo — как кнопка «Наказания игрока»",
+                iw, ctx.drawnW, tHintSc)
             for li = 1, #note do
                 ctx.uiText(x, yy + (li - 1) * tHintStep, note[li], acC, tHintSc)
             end
@@ -28550,7 +28621,20 @@ do
                 sel2.answer = ansVal
                 A.dirtyAt = os.clock()
             end
-            yy = yy + ansH + 12
+            yy = yy + ansH + 6
+            if selID then
+                -- v1.19.46: {ID} на слове в триггере — для репорта с номером
+                -- или именем ответ собирается сам; этот текст уходит, когда в
+                -- репорте ни номера, ни имени нет (без ника и ID).
+                local note = wrapW(
+                    "С именем или номером игрока в репорте ответ собирается сам: «Приветствую, слежу за игроком Ник[234]». Этот текст уйдёт, когда в репорте нет ни номера, ни имени.",
+                    iw, ctx.drawnW, tHintSc)
+                for li = 1, #note do
+                    ctx.uiText(x, yy + (li - 1) * tHintStep, note[li], warnC, tHintSc)
+                end
+                yy = yy + math.max(1, #note) * tHintStep
+            end
+            yy = yy + 12
         end
 
         ctx.uiText(x, yy, "Команда после ответа", dim, 0.84)
@@ -28621,11 +28705,12 @@ do
         -- диагностика остаются целиком, ничего не обрезается краем.
         local hintY = yy + lineH(ctx, 0.86) + 6
         local varHints = {
-            "Переменные {ID}, {all}, {punishments} пишутся в ответе или на слове в триггере («дм{ID}») — тогда слово ищется в любом месте репорта",
-            "{ID} — ID того, на кого пожаловались: в репорте («дм 234») или по написанному в нём нику; на слове в триггере («дм{ID}») ответ собирается сам: «Приветствую, слежу за игроком Ник[ID]»",
-            "После ответа автопилот сам зайдёт в слежку за этим игроком — даже если выбрана команда /goto",
-            "{all} — на слове в триггере («спек{all}»): сработает, даже если репорт из нескольких слов",
+            "Переменные {ID}, {all}, {punishments} — в ответе или на слове в триггере («дм{ID}»)",
+            "{ID} — тот, на кого пожаловались (номер или написанный ник); без них уходит ваш текст из «Ответ игроку»",
+            "После ответа автопилот сам зайдёт в слежку за игроком — даже при команде /goto",
+            "{all} — на слове в триггере («спек{all}»): репорт может быть из нескольких слов",
             "{punishments} — активные наказания игрока (как кнопка «Наказания игрока»)",
+            "Несколько слов-триггеров в репорте — отвечает то, что раньше",
         }
         -- v1.19.41: диагностика — что сделал последний репорт. Раньше при
         -- «триггер не сработал» причину было не видно; теперь она в окне.
@@ -28635,7 +28720,7 @@ do
             .. (A.lastCheck and A.lastCheck ~= "" and (" → " .. tostring(A.lastCheck)) or "")
         -- Подбираем кегль блока: подсказки (с переносами) + строка диагностики
         local hintSc, hintStep, hintLines = 0.72, 0, nil
-        local scales = { 0.72, 0.68, 0.64, 0.60, 0.56, 0.52, 0.48 }
+        local scales = { 0.72, 0.68, 0.64, 0.60, 0.56, 0.52, 0.48, 0.44 }
         for si = 1, #scales do
             local sc = scales[si]
             local step = lineH(ctx, sc) + 2

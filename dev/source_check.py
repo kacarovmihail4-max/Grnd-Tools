@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.45"' in s, 'версия не 1.19.45')
+need('GRND_SCRIPT_VERSION = "1.19.46"' in s, 'версия не 1.19.46')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -184,15 +184,15 @@ need('на паузе — слежка, вернётся сам' in auto_draw_sr
 need('на паузе — идёт мероприятие, вернётся сам' in auto_draw_src2,
      'пропало состояние паузы на мероприятии')
 # v1.19.36: внизу раздела — подсказки про переменные {ID} и {all}
-need('"{ID} — ID того, на кого пожаловались: в репорте («дм 234») или по написанному в нём нику; на слове в триггере («дм{ID}») ответ собирается сам: «Приветствую, слежу за игроком Ник[ID]»"' in auto_draw_src2,
+need('"{ID} — тот, на кого пожаловались (номер или написанный ник); без них уходит ваш текст из «Ответ игроку»"' in auto_draw_src2,
      'пропала подсказка про {ID}')
-need('"После ответа автопилот сам зайдёт в слежку за этим игроком — даже если выбрана команда /goto"'
+need('"После ответа автопилот сам зайдёт в слежку за игроком — даже при команде /goto"'
      in auto_draw_src2, 'пропала подсказка про автослежку за найденным ID')
-need('"{all} — на слове в триггере («спек{all}»): сработает, даже если репорт из нескольких слов"'
+need('"{all} — на слове в триггере («спек{all}»): репорт может быть из нескольких слов"'
      in auto_draw_src2, 'пропала подсказка про {all}')
 need('"{punishments} — активные наказания игрока (как кнопка «Наказания игрока»)"'
      in auto_draw_src2, 'пропала подсказка про {punishments}')
-need('Переменные {ID}, {all}, {punishments} пишутся в ответе или на слове в триггере («дм{ID}»)'
+need('Переменные {ID}, {all}, {punishments} — в ответе или на слове в триггере («дм{ID}»)'
      in auto_draw_src2, 'нет подсказки, что переменные можно писать на слове в триггере')
 absent("начинается с триггера", 'вернулась подсказка про систему «помогите»')
 # v1.19.33: вместо placeholder «напр. помогите» — подсказка про синонимы; её
@@ -221,7 +221,7 @@ need('ctx.uiText(cmdHintX, cmdHintTop + (li - 1) * cmdHintStep,' in s and
 # пауза решается ПОСЛЕ поиска триггера — иначе вкладку без команды не отличить
 onrep = s[s.index('function QR.autoOnReport(nick, pid, msg)'):]
 pause_idx = onrep.index('local pause = QR.autoPauseTick()')
-hits_idx = onrep.index('local hits = QR.autoMatchAll(text)')
+hits_idx = onrep.index('local hits, droppedTrig = QR.autoMatchAll(text)')
 need(pause_idx < hits_idx, 'порядок «пауза → триггер» сломан')
 need('A.lastCheck = "пауза: " .. pause' in s, 'нет пометки паузы в подсказке')
 need('"Можно ввести триггер и похожие слова к триггеру (через запятую), "' in s,
@@ -260,6 +260,23 @@ need('local function autoWordHit(low, trig)' in s,
      'нет поиска триггера целым словом в любом месте репорта')
 need('local function autoLastChar(t)' in s,
      'нет проверки границы слова слева')
+# v1.19.46: (1) без номера и имени в репорте уходит СВОЙ текст без ника и ID;
+#          (2) подошло несколько разных слов-триггеров — отвечает первое
+need('local function autoWordAt(low, trig)' in s and 'pos = autoWordAt(low, it.word)' in s and
+     'if found[k].pos == best then' in s,
+     'нет выбора «первое слово репорта» среди подошедших триггеров')
+need('local hasTarget = (foundId ~= nil and foundId ~= "") or (tNick ~= nil and tNick ~= "")' in s and
+     'local repNone = { nick = "", author = nick, id = "", foundId = "" }' in s and
+     'elseif idAuto then' in s and
+     'line = QR.autoWhoStrip(oneLine(QR.apply(tab.answer, repNone)))' in s,
+     'нет ответа своим текстом (без ника и ID), когда в репорте нет номера и имени')
+need('QR.autoGreet = function(rep)' in s or 'function QR.autoGreet(rep)' in s,
+     'нет сборки приветствия из частей (без пустых «[]»)')
+need('"Несколько слов-триггеров в репорте — отвечает то, что раньше"' in auto_draw_src2,
+     'нет подсказки про «первое слово»')
+need('A.lastDropped' in s and 'lastDropped = droppedTrig' in s,
+     'нет пометки о словах, которые промолчали')
+
 # v1.19.45: {ник}/{ID} — тот, НА КОГО пожаловались, а не автор строки репорта
 need('function QR.autoNickById(id)' in s and 'function QR.autoNickInText(text)' in s and
      'function QR.autoTargetOf(text, foundId)' in s,
@@ -267,7 +284,7 @@ need('function QR.autoNickById(id)' in s and 'function QR.autoNickInText(text)' 
 need('local tNick, tId = QR.autoTargetOf(text, foundId)' in s and
      'if tId and not foundId then foundId = tId end' in s,
      'цель жалобы не ищется в autoOnReport')
-need('local rep = { nick = tNick or nick, author = nick, id = id, foundId = foundId }' in s,
+need('local rep = { nick = tNick or "", author = nick, id = id, foundId = foundId }' in s,
      '{ник} в отчёте по-прежнему берётся у автора репорта')
 need('["{автор}"] = author, ["{reporter}"] = author' in s and
      'local target = tostring(rep.foundId or "") ~= "" and tostring(rep.foundId) or pid' in s,
@@ -280,18 +297,20 @@ need('QR.AUTO_GREET = "Приветствую, слежу за игроком {�
 need('local idAuto = (not punOnly) and QR.autoIDInTrigger(tab)' in s and
      'line = QR.autoGreet(rep)' in s,
      'план не собирает ответ сам при {ID} в триггере')
+# v1.19.46: у вкладки с {ID} поле ответа ВИДНО — оно уходит, когда в репорте нет
+# ни номера, ни имени; пропадает оно только при {punishments} в триггере
 need('local selID = (not selPun) and QR.autoIDInTrigger(sel2)' in s and
-     'if selPun or selID then' in s and
-     '«Приветствую, слежу за игроком Ник[234]» — поле ответа не нужно' in s,
-     'поле «Ответ игроку» не прячется при {ID} в триггере')
+     'if selPun then' in s and
+     '«Приветствую, слежу за игроком Ник[234]». Этот текст уйдёт, когда в репорте нет ни номера, ни имени.' in s,
+     'поле «Ответ игроку» у вкладки с {ID} пропало или нет пояснения, когда уходит свой текст')
 
 # v1.19.43: широкий поиск — только у слова, НА КОТОРОМ написана переменная
-need('local hit = it.wide and autoWordHit(low, it.word) or (low == it.word)' in s,
+need('if it.wide then' in s and 'pos = autoWordAt(low, it.word)' in s,
      'режим сопоставления не привязан к слову с переменной')
 need('local cmd = QR.autoTabCmd(id, tab, foundId)' in s and
      'if not QR.autoTabCmd(id, tab, foundId) then' in s,
      'итоговая команда вкладки не используется в плане и в паузе')
-need('out[#out + 1] = { idx = i, trig = it.word }' in s,
+need('out[#out + 1] = { idx = found[k].idx, trig = found[k].trig }' in s,
      'совпадение триггера потерялось')
 absent('low:find(list[k], 1, true)', 'вернулся поиск триггера подстрокой')
 need('local low = trim(autoLower(autoPlain(text)))' in s,
@@ -409,11 +428,17 @@ need('"Приветствую, уже смотрю…", true, sel2.answer' in s,
 auto_draw_src = s[s.index('_G.grndQrAutoDraw = function(ctx)'):s.index('_G.grndQrAutoOnReport = function')]
 need('{ник}' not in auto_draw_src, 'в разделе «Автопилот» снова подсказка с {ник}')
 # v1.19.36: подсказки про {ID}/{all} живут только внизу раздела
-need(auto_draw_src.count('{ID} — ID того, на кого пожаловались') == 1,
+need(auto_draw_src.count('{ID} — тот, на кого пожаловались') == 1,
      'подсказка про {ID} должна быть ровно одна (внизу раздела)')
 need('local tab = QR.autoTab(hits[k].idx)' in s, 'срабатывание не привязано к вкладке')
 need('return QR.autoCmdFor(pid, tab)' in s, 'команда берётся не из вкладки')
-need('line = oneLine(QR.apply(tab.answer, rep))' in s, 'ответ берётся не из вкладки')
+need('line = QR.autoWhoStrip(oneLine(QR.apply(tab.answer, repAns)))' in s, 'ответ берётся не из вкладки')
+# v1.19.46: нет номера и имени — {ник}/{ID}/{ид} не подставляются и у обычных
+# вкладок (иначе в ответе оказывались ник автора и его же ID)
+need('local repAns = hasTarget and rep or repNone' in s and
+     'line = QR.autoWhoStrip(oneLine(QR.apply(tab.answer, repAns)))' in s and
+     'function QR.autoWhoStrip(line)' in s,
+     'без номера и имени ник и ID всё ещё подставляются в ответ обычной вкладки')
 need('planTabsTxt' in s, 'в подсказке нет списка сработавших вкладок')
 # конфиг: вкладки как t<N>_trigger / t<N>_answer / t<N>_command
 need('"t" .. i .. "_trigger="' in s and '"t" .. i .. "_answer="' in s and '"t" .. i .. "_command="' in s,
