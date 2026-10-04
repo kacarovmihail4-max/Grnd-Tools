@@ -240,7 +240,7 @@ function im.SetCursorPos(p) if type(p) == "table" then POS.cx, POS.cy = p.x, p.y
     return {
         im = im, dl = dl,
         at = function(x, y) return im.ImVec2((POS.wx or 0) + x, (POS.wy or 0) + y) end,
-        x = 40, y = 40, w = 700, h = 420,
+        x = 40, y = 40, w = 700, h = 560,
         uiText = function(x, y, str, col, sc)
             TXT[#TXT + 1] = { x = x, y = y, str = tostring(str), sc = sc }
         end,

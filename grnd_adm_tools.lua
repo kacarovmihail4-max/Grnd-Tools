@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.49"
+GRND_SCRIPT_VERSION = "1.19.50"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -28291,7 +28291,8 @@ do
                 -- как и ответы, ничего не выполняется по-настоящему
                 local sent = test and ("/n " .. it.cmd) or it.cmd
                 if QR.queueCmd(sent) then sentCmd = sentCmd + 1 end
-                cmdTxt[#cmdTxt + 1] = sent
+                -- в тост идёт команда без служебного /n: он виден в чате
+                cmdTxt[#cmdTxt + 1] = it.cmd
             end
             planTabs[#planTabs + 1] = tostring(it.idx)
         end
@@ -28309,13 +28310,11 @@ do
             or "не удалось отправить"
         if sentOk then
             local cmds = table.concat(cmdTxt, " + ")
-            QR.toast(test and ("Автопилот (проверка /n): игроку " .. id
-                    .. (cmds ~= "" and (" · " .. cmds) or "")
+            -- v1.19.50: тост — всегда обычный; пометка «(проверка /n)» убрана
+            -- (сам слой /n, если включён, виден в чате и в строке диагностики)
+            QR.toast("Автопилот: /ans " .. id .. (cmds ~= "" and (" + " .. cmds) or "")
                     .. " · «" .. tostring(hit) .. "»"
-                    .. (#plan > 1 and (" · вкладок " .. tostring(#plan)) or ""))
-                or ("Автопилот: /ans " .. id .. (cmds ~= "" and (" + " .. cmds) or "")
-                    .. " · «" .. tostring(hit) .. "»"
-                    .. (#plan > 1 and (" · вкладок " .. tostring(#plan)) or "")),
+                    .. (#plan > 1 and (" · вкладок " .. tostring(#plan)) or ""),
                 "ok", 3.6)
         else
             QR.toast("Автопилот: отправить не удалось", "warn", 3)
@@ -28570,7 +28569,9 @@ do
             end
             yy = yy + math.max(1, #note) * tHintStep + 12
         else
-            local ansH = 92
+            -- v1.19.50: в невысоком окне поле ответа чуть ниже — иначе
+            -- нижний блок (подсказки про переменные + диагностика) не влезает
+            local ansH = (h >= 560) and 92 or 68
             local akey, aid = "autoAnswer" .. A.sel, "##grnd_qr_auto_answer"
             field(ctx, aid, akey, 1024, x, yy, iw, ansH, "Приветствую, уже смотрю…", true, sel2.answer)
             local ansVal = clampText(cleanText(bufText(akey)), MAX_TEXT)
@@ -28662,12 +28663,9 @@ do
         -- диагностика остаются целиком, ничего не обрезается краем.
         local hintY = yy + lineH(ctx, 0.86) + 6
         local varHints = {
-            "Переменные {ID}, {all}, {punishments} — в ответе или на слове в триггере («дм{ID}»)",
-            "{ID} — тот, на кого пожаловались (номер или написанный ник); без них уходит ваш текст из «Ответ игроку»",
-            "После ответа автопилот сам зайдёт в слежку за игроком — даже при команде /goto",
-            "{all} — на слове в триггере («спек{all}»): репорт может быть из нескольких слов",
-            "{punishments} — активные наказания игрока (как кнопка «Наказания игрока»)",
-            "Несколько слов-триггеров в репорте — отвечает то, что раньше",
+            "Переменные — в ответе или на слове в триггере: «дм{ID}», «спек{all}»",
+            "{ID} — тот, на кого пожаловались; {all} — репорт из нескольких слов; "
+                .. "{punishments} — наказания игрока",
         }
         -- v1.19.41: диагностика — что сделал последний репорт. Раньше при
         -- «триггер не сработал» причину было не видно; теперь она в окне.
@@ -28676,11 +28674,12 @@ do
         local dbgLine = "Репорт: " .. utf8Cut(dbgTxt, 44)
             .. (A.lastCheck and A.lastCheck ~= "" and (" → " .. tostring(A.lastCheck)) or "")
         -- Подбираем кегль блока: подсказки (с переносами) + строка диагностики
-        local hintSc, hintStep, hintLines = 0.72, 0, nil
-        local scales = { 0.72, 0.68, 0.64, 0.60, 0.56, 0.52, 0.48, 0.44 }
+        local hintSc, hintStep, hintLines = nil, 0, nil
+        local scales = { 0.72, 0.68, 0.64, 0.60, 0.56, 0.52, 0.48, 0.44, 0.40, 0.36 }
         for si = 1, #scales do
             local sc = scales[si]
-            local step = lineH(ctx, sc) + 2
+            -- шаг с запасом (+3): строки не должны налипать друг на друга
+            local step = lineH(ctx, sc) + 3
             local rows, packed = 1, {}          -- 1 — строка диагностики
             for hi = 1, #varHints do
                 local ls = wrapW(varHints[hi], iw, ctx.drawnW, sc)
@@ -28690,20 +28689,31 @@ do
             -- Высота блока — не «rows шагов», а шаги между строками плюс
             -- высота последней: иначе нижняя строка упиралась в край окна.
             local blockH = (rows - 1) * step + lineH(ctx, sc)
-            if si == #scales or hintY + blockH <= h - 6 then
+            if hintY + blockH <= h - 6 then
                 hintSc, hintStep, hintLines = sc, step, packed
                 break
             end
         end
-        local hy = hintY
-        for hi = 1, #hintLines do
-            local ls = hintLines[hi]
-            for li = 1, #ls do
-                ctx.uiText(x, hy, ls[li], mut, hintSc)
-                hy = hy + hintStep
+        -- v1.19.50: подсказки рисуем, только если блок помещается целиком —
+        -- в слишком низком окне лучше не показать их вовсе, чем наложить
+        -- строки друг на друга или выпустить их за край окна
+        if hintLines then
+            local hy = hintY
+            for hi = 1, #hintLines do
+                local ls = hintLines[hi]
+                for li = 1, #ls do
+                    ctx.uiText(x, hy, ls[li], mut, hintSc)
+                    hy = hy + hintStep
+                end
+            end
+            ctx.uiText(x, hy, fit(dbgLine, iw, ctx.drawnW, hintSc), mut, hintSc)
+        else
+            -- совсем мало места: оставляем только строку диагностики
+            local sc = scales[#scales]
+            if hintY + lineH(ctx, sc) <= h - 2 then
+                ctx.uiText(x, hintY, fit(dbgLine, iw, ctx.drawnW, sc), mut, sc)
             end
         end
-        ctx.uiText(x, hy, fit(dbgLine, iw, ctx.drawnW, hintSc), mut, hintSc)
 
         -- Список команд рисуем ПОСЛЕДНИМ: он ложится поверх полей и клики
         -- попадают в него, а не в поле под ним.
