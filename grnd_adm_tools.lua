@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.59"
+GRND_SCRIPT_VERSION = "1.19.60"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -11143,7 +11143,7 @@ end
 --      стоит, а сервер видит движение (у далёкой цели пед может не
 --      стримиться, тогда игра честно показывает 0);
 --   3) ни одного лишнего символа: «45 км/ч», «0 км/ч», «—».
-function grndSpeedDisplay(id, serverRaw)
+function grndSpeedDisplay(id, serverRaw, bare)
     local g = grndSpeedFromGame(id)                  -- число км/ч или nil
     local sNum = tonumber(tostring(serverRaw or ""):match("%-?%d+"))
     local kmh
@@ -11156,7 +11156,10 @@ function grndSpeedDisplay(id, serverRaw)
     if kmh == nil then return "—" end
     if kmh < 0 then kmh = 0 end
     if kmh > 999 then kmh = 999 end
-    return tostring(math.floor(kmh + 0.5)) .. " км/ч"
+    local out = tostring(math.floor(kmh + 0.5))
+    -- bare — значение для карточки: в образце единицы не пишутся (просто «45»)
+    if not bare then out = out .. " км/ч" end
+    return out
 end
 
 -- =====================================================================
@@ -35623,7 +35626,7 @@ function grndMainBody()
                                 barOn and c32(TH.accent) or col32(255, 255, 255, 55))
                             uiText(rcX + 34, rowY + 8, "Кнопки наказаний в карточке", c4(TH.textHi), 1.05)
                             uiText(rcX + 34, rowY + 27,
-                                "JAIL · BAN · MUTE и остальные — столбиком под сведениями · курсор — ПКМ",
+                                "JAIL · BAN · KICK · MUTE — столбиком под аватаром · курсор — ПКМ",
                                 c4(TH.textMuted), 0.88)
                             local tgX = rcX + rcW - 46 - 12
                             local tgY = rowY + (rowH - 24) / 2
@@ -38951,46 +38954,51 @@ function grndMainBody()
 
             local resX, resY = getScreenResolution()
             -- v1.11.9: компактное окно + перетаскивание за шапку
-            local W = math.floor(math.max(300, math.min(360, resX * 0.24)))
+            -- v1.19.60: карточка рекона — раскладка как в образце заказчика:
+            -- шапка «Ник [ID]» по центру, слева колонка с «моделью» и кнопками
+            -- наказаний (JAIL, BAN, KICK, MUTE), справа — единый список строк.
+            -- 3D-модель персонажа в ImGui нарисовать нельзя, поэтому на её
+            -- месте — буква ника; «Оружие», «Патроны» и «AFK» в карточку не
+            -- выводятся (просьба заказчика).
+            local W = math.floor(math.max(400, math.min(460, resX * 0.28)))
             local pad = 14
-            -- v1.19.58: карточка рекона — единый компактный список без
-            -- сворачиваемых разделов (образец заказчика): Пинг, Здоровье,
-            -- Броня, Скорость, Имя, Номер аккаунта, Уровень. «Оружие»,
-            -- «Патроны» и «AFK» в карточку не выводятся. Кнопки наказаний
-            -- живут ВНУТРИ карточки, столбиком под строками.
-            -- карточка сама загружает настройки наказаний (раньше это делала
-            -- отдельная панель): оттуда приходит и тумблер «кнопки в карточке»
-            if GRND_PUN and not GRND_PUN.loaded then pcall(GRND_PUN.load) end
-            local ROW_H = 26           -- высота строки сведений
-            local ROWS_N = 7           -- сколько строк в списке
-            local PUN_BH = 30          -- высота кнопки наказания
-            local PUN_BG = 6           -- зазор между кнопками
-            local PUN_PAD = 10         -- отступ блока кнопок
+            local HEAD = 34             -- шапка: «Ник [ID]» по центру
+            local BOT = 22              -- низ: треугольник «наверх» по центру
+            local LW = math.floor(W * 0.30)   -- левая колонка: модель и кнопки
+            local RX = pad + LW + 12    -- с этой линии — колонка строк
+            local RW = W - pad - 12 - RX      -- ширина колонки строк
+            local ROW_H = 24            -- высота строки сведений
+            local ROWS_N = 7            -- сколько строк в списке
+            local AV_H = 84             -- место «модели» (буква ника)
+            local PUN_BH = 30           -- высота кнопки наказания
+            local PUN_BG = 6            -- зазор между кнопками
             -- v1.19.59: в карточке — четыре кнопки наказаний, как просил
             -- заказчик (JAIL, BAN, KICK, MUTE — по списку из настроек).
             local PUN_TOP = 4
-            local LIST_TOP = 74        -- с этой линии начинается САМ СПИСОК
-            local SCROLL_STEP = ROW_H  -- один оборот колеса = одна строка
-            local H_MIN = 240          -- ниже карточка не сжимается
+            local LIST_TOP = HEAD + 2   -- с этой линии начинается САМ СПИСОК
+            local SCROLL_STEP = ROW_H   -- один оборот колеса = одна строка
+            local H_MIN = 200           -- ниже карточка не сжимается
+            -- карточка сама загружает настройки наказаний (раньше это делала
+            -- отдельная панель): оттуда приходит и тумблер «кнопки в карточке»
+            if GRND_PUN and not GRND_PUN.loaded then pcall(GRND_PUN.load) end
             local punItems = (GRND_PUN and GRND_PUN.barOn ~= false)
                 and GRND_PUN.list or nil
             local punCnt = (type(punItems) == "table") and #punItems or 0
             if punCnt > PUN_TOP then punCnt = PUN_TOP end
-            -- низ карточки: последняя кнопка + отступ 12 px (промежуток
-            -- PUN_BG есть только МЕЖДУ кнопками, поэтому он тут вычтен)
-            local contentH = 84 + ROWS_N * ROW_H
-                + (punCnt > 0 and (PUN_PAD - 2 + punCnt * PUN_BH
-                    + (punCnt - 1) * PUN_BG + 12) or 12)
+            local rowsH = ROWS_N * ROW_H
+            local leftH = AV_H + ((punCnt > 0)
+                and (punCnt * PUN_BH + (punCnt - 1) * PUN_BG + 8) or 0)
+            local contentH = HEAD + math.max(rowsH, leftH) + BOT + 6
             -- Высота окна ограничена ЭКРАНОМ, а не содержимым: всё, что не
             -- влезло, живёт в окне прокрутки (шапка при этом не уезжает).
             local H_MAX = math.max(H_MIN, math.min(560, resY - 42))
             local H = math.max(H_MIN, math.min(H_MAX, contentH))
-            local scrollMax = math.max(0, contentH - H)
+            local listTop = LIST_TOP
+            local listH = math.max(40, H - listTop - BOT - 4)
+            local scrollMax = math.max(0, rowsH - listH)
             local scroll = math.max(0, math.min(scrollMax,
                 tonumber(RC.scroll) or 0))
             RC.scroll = scroll
-            local listTop = LIST_TOP
-            local listH = math.max(60, H - listTop - 6)
             -- рисуем и нажимаем только те строки/кнопки, что видны ЦЕЛИКОМ
             -- (текст ImGui не режется нашей маской — половина строки,
             -- вылезшая за окно прокрутки, выглядела бы обрывком)
@@ -38998,38 +39006,45 @@ function grndMainBody()
                 return (y0 >= listTop - 0.5)
                     and (y0 + h0 <= listTop + listH + 0.5)
             end
+            -- правый край значений и короткая шкала ХП/брони под ними
+            local valueRight = W - pad - 12
+            local barW = math.max(40, math.floor(RW * 0.35))
+            local barX = valueRight - barW
             local px = resX - W - 24
             local py = math.max(22, math.floor((resY - H) / 2))
             if RC.posX and RC.posY then px, py = RC.posX, RC.posY end
-            -- перетаскивание за шапку. Доступно при включённом курсоре (ПКМ):
-            -- иначе ЛКМ-клик уходит в игру (выстрел) — тащить было бы нельзя.
-            local headRect = { x = px, y = py, w = W, h = 60 }
-            local copyRect = { x = px + W - pad - 104, y = py + 24, w = 104, h = 30 }
+            -- перетаскивание за шапку; короткий клик по ней — «копировать ник»
+            -- (отдельной кнопки в образце нет). Доступно при включённом
+            -- курсоре (ПКМ): иначе ЛКМ-клик уходит в игру (выстрел).
+            local headRect = { x = px, y = py, w = W, h = HEAD }
+            local headClick = false
             if RC.cursor and GRND_MOUSE.down then
-                if not RC.dragging and grndMouseInside(headRect)
-                    and not grndMouseInside(copyRect) then
+                if not RC.dragging and grndMouseInside(headRect) then
                     RC.dragging = true
                     RC.dragDX = GRND_MOUSE.x - px
                     RC.dragDY = GRND_MOUSE.y - py
+                    RC.dragMoved = false
                 end
             elseif RC.dragging then
                 RC.dragging = false
                 pcall(grndCamCfgSave)   -- запомнили позицию окна
+                if not RC.dragMoved then headClick = true end
             end
             if RC.dragging then
-                px = math.max(0, math.min(resX - W, GRND_MOUSE.x - (RC.dragDX or 0)))
-                py = math.max(0, math.min(resY - H, GRND_MOUSE.y - (RC.dragDY or 0)))
+                local nx = math.max(0, math.min(resX - W, GRND_MOUSE.x - (RC.dragDX or 0)))
+                local ny = math.max(0, math.min(resY - H, GRND_MOUSE.y - (RC.dragDY or 0)))
+                if math.abs(nx - px) > 3 or math.abs(ny - py) > 3 then RC.dragMoved = true end
+                px, py = nx, ny
                 RC.posX, RC.posY = px, py
             end
-            local valueX = math.floor(W * 0.51)
-            local valueW = W - pad - valueX
             RC.activeTab = "overview"
             -- Курсор включается только правой кнопкой мыши.
             if RC.cursor == nil then RC.cursor = false end
             RC.windowPos = { x = px, y = py }
             RC.windowSize = { w = W, h = H }
             -- v1.19.59: колесо мыши над этим прямоугольником листает список
-            RC.scrollRect = { x = px, y = py + listTop, w = W, h = listH }
+            RC.scrollRect = { x = px + RX - 6, y = py + listTop,
+                w = RW + 18, h = listH }
             RC.scrollStep = SCROLL_STEP   -- шаг прокрутки (его читает обработчик колеса)
 
             local function textValue(key, fallback)
@@ -39074,20 +39089,22 @@ function grndMainBody()
             -- устоявшееся значение, чтобы цифра не дрожала
             local pingStable = grndParamNum(id, "ping",
                 pingNum or (tonumber(tostring(textValue("ping", "")):match("%d+")) or nil))
-            local ping = pingStable and (tostring(math.floor(pingStable + 0.5)) .. " ms")
-                or textValue("ping", "—")
+            -- в образце единицы не пишутся: пинг — просто число
+            local ping = pingStable and tostring(math.floor(pingStable + 0.5))
+                or tostring(textValue("ping", "—")):match("%d+") or "—"
             -- v1.11.80: значения проходят через сглаживание — серверный
             -- TextDraw и память игры дают близкие, но разные числа, из-за
             -- чего ХП/броня «тряслись» (99.6 / 100.0 туда-сюда).
+            -- В образце ХП и броня — с одним знаком: «100.0», «40.0».
             local hpNum = grndParamNum(id, "hp", numberValue("hp", getPlayerHealth(id)))
             local armNum = grndParamNum(id, "arm", numberValue("arm", getPlayerArmor(id)))
-            local hpText = hpNum and tostring(math.floor(hpNum + 0.5)) or "—"
-            local armText = armNum and tostring(math.floor(armNum + 0.5)) or "—"
+            local hpText = hpNum and string.format("%.1f", hpNum) or "—"
+            local armText = armNum and string.format("%.1f", armNum) or "—"
             -- v1.11.83: серверная скорость сглаживается окном ПО КАДРАМ
             -- (прошлая версия считала окно по os.clock — в игре это
             -- процессорное время, окно растянулось и показывало 0), а если
             -- сервер молчит или показывает 0, скорость берём у игры (км/ч)
-            local speed = grndSpeedDisplay(id, textValue("speed", ""))
+            local speed = grndSpeedDisplay(id, textValue("speed", ""), true)
             -- «Уровень» — только число уровня: если отдельного поля нет,
             -- берём его из «Уровень (EXP)» («18 (12345)» → «18»)
             local lvlRaw = textValue("rc_level", "")
@@ -39104,7 +39121,9 @@ function grndMainBody()
             if grndPushCol(im.Col and im.Col.WindowBg, rgba(0, 0, 0, 0)) then colorN = colorN + 1 end
             if grndPushCol(im.Col and im.Col.Border, rgba(0, 0, 0, 0)) then colorN = colorN + 1 end
 
-            -- Без NoInputs: заголовки разделов и кнопка копирования должны быть кликабельны.
+            -- Без NoInputs: шапка (клик — копировать ник) и кнопки должны
+            -- быть кликабельны. NoScrollWithMouse: карточка листается своим
+            -- колесом (см. RC.scrollRect), а не колесом ImGui.
             local flags = wf("NoTitleBar", "NoResize", "NoMove", "NoScrollbar",
                 "NoCollapse", "NoFocusOnAppearing", "NoBringToFrontOnFocus",
                 "NoScrollWithMouse")
@@ -39159,40 +39178,70 @@ function grndMainBody()
                 frame(0.5, 0.5, W - 1, H - 1, col32(255, 255, 255, 25), 13)
                 -- # v1.19.09: акцентная полоска у верхней кромки убрана (просьба заказчика)
 
-                -- Шапка: без «не в стриме», большая кнопка копирования справа.
-                local avatar = nick:match("^[%z\1-\127\194-\244][\128-\191]*") or "?"
-                avatar = string.upper(avatar)
-                dl:AddCircleFilled(at(pad + 22, 39), 21,
-                    col32(TH.accent[1], TH.accent[2], TH.accent[3], 36), 24)
-                if dl.AddCircle then
-                    pcall(dl.AddCircle, dl, at(pad + 22, 39), 21,
-                        col32(TH.accent[1], TH.accent[2], TH.accent[3], 150), 24, 1.2)
+                -- Шапка (образец): «Ник [ID]» по центру. Отдельной кнопки
+                -- копирования нет — короткий клик по шапке копирует ник.
+                local title = shortValue(nick, 20) .. " [" .. tostring(id) .. "]"
+                local titleW = drawnW(title, 1.0)
+                local headHover = RC.cursor and grndMouseInside(headRect) or false
+                if headHover then
+                    fill(4, 3, W - 8, HEAD - 3,
+                        col32(TH.accent[1], TH.accent[2], TH.accent[3], 16), 10)
                 end
-                put(pad + 22 - grndTextW(avatar) * 0.42, 29, avatar, c4(TH.accent), 0.84)
-                put(pad + 54, 16, shortValue(nick, 16), c4(TH.textHi), 1.0)
-                label(pad + 54, 40, "ID " .. tostring(id) .. "  ·  слежка", 0.78)
-
-                local copyX, copyY, copyW, copyH = W - pad - 104, 24, 104, 30
-                im.SetCursorPos(im.ImVec2(copyX, copyY))
-                local copyClick = im.InvisibleButton("##grnd_recon_copy", im.ImVec2(copyW, copyH))
-                local copyHover = im.IsItemHovered and im.IsItemHovered() or false
-                fill(copyX, copyY, copyW, copyH,
-                    copyHover and col32(TH.accent[1], TH.accent[2], TH.accent[3], 45)
-                        or col32(255, 255, 255, 10), 8)
-                frame(copyX, copyY, copyW, copyH,
-                    copyHover and col32(TH.accent[1], TH.accent[2], TH.accent[3], 150)
-                        or col32(255, 255, 255, 28), 8)
-                put(copyX + 10, copyY + 7, "Копировать ник", c4(copyHover and TH.accent or TH.text), 0.78)
-                if copyClick and notify and notify.add then
+                put(math.floor((W - titleW) / 2), 9, title, c4(TH.textHi), 1.0)
+                if headClick and notify and notify.add then
                     local copied = reconCopyNickname(nick)
-                    pcall(notify.add, copied and "Ник скопирован в буфер" or "Не удалось скопировать ник",
+                    pcall(notify.add,
+                        copied and "Ник скопирован в буфер" or "Не удалось скопировать ник",
                         copied and "ok" or "warn", 2)
                 end
-                dl:AddRectFilled(at(12, 71), at(W - 12, 72), col32(255, 255, 255, 16))
 
+                -- Левая колонка: на месте 3D-модели (её ImGui не умеет) —
+                -- крупная буква ника в акцентном круге.
+                local avatar = string.upper(nick:match("^[%z\1-\127\194-\244][\128-\191]*") or "?")
+                local avX = pad + math.floor(LW / 2)
+                local avY = HEAD + math.floor(AV_H / 2)
+                dl:AddCircleFilled(at(avX, avY), 30,
+                    col32(TH.accent[1], TH.accent[2], TH.accent[3], 26), 40)
+                if dl.AddCircle then
+                    pcall(dl.AddCircle, dl, at(avX, avY), 30,
+                        col32(TH.accent[1], TH.accent[2], TH.accent[3], 120), 40, 1.2)
+                end
+                put(avX - grndTextW(avatar) * 0.6, avY - 14, avatar, c4(TH.accent), 1.6)
+
+                -- Кнопки наказаний: столбиком в левой колонке под «моделью»
+                -- (в образце они именно там). Тумблер GRND_PUN.barOn прячет
+                -- и показывает весь блок.
+                for i = 1, punCnt do
+                    local itm = punItems[i]
+                    local btnLabel = tostring((itm and itm.id) or "")
+                    local bw2 = LW - 12
+                    local bxx = pad + 6
+                    local byy = HEAD + AV_H + (i - 1) * (PUN_BH + PUN_BG)
+                    im.SetCursorPos(im.ImVec2(bxx, byy))
+                    local clicked = im.InvisibleButton("##rcb_p_" .. btnLabel,
+                        im.ImVec2(bw2, PUN_BH))
+                    local hov = (im.IsItemHovered and im.IsItemHovered()) or false
+                    local act = (im.IsItemActive and im.IsItemActive()) or false
+                    fill(bxx, byy, bw2, PUN_BH,
+                        act and col32(TH.accent[1], TH.accent[2], TH.accent[3], 55)
+                            or (hov and col32(TH.accent[1], TH.accent[2], TH.accent[3], 30)
+                                or col32(255, 255, 255, 9)), 8)
+                    frame(bxx + 0.5, byy + 0.5, bw2 - 1, PUN_BH - 1,
+                        (hov or act)
+                            and col32(TH.accent[1], TH.accent[2], TH.accent[3], 120)
+                            or col32(255, 255, 255, 20), 8)
+                    put(bxx + (bw2 - drawnW(btnLabel, 0.9)) / 2, byy + (PUN_BH - 14) / 2,
+                        btnLabel, hov and c4(TH.textHi) or c4(TH.text), 0.9)
+                    if clicked and notify and notify.add then
+                        pcall(notify.add, "Наказание " .. btnLabel
+                            .. ": команда подключится позже", "info", 2.2)
+                    end
+                end
+
+                -- Строки: метка слева, значение справа (как в образце).
                 -- v1.19.59: список может не влезть в окно — тогда он едет
                 -- вверх/вниз по прокрутке (колесо мыши, см. RC.scrollRect).
-                local y = 84 - scroll
+                local y = listTop - scroll
                 local rowN = 0
                 local function row(name, value, color, numeric, maxValue, height)
                     height = height or ROW_H
@@ -39200,91 +39249,64 @@ function grndMainBody()
                     local ry = y
                     y = y + height
                     if not inList(ry, height) then return end
-                    local bg = (rowN % 2 == 0)
-                        and col32(255, 255, 255, 6) or col32(255, 255, 255, 2)
-                    fill(11, ry - 2, W - 22, height, bg, 4)
-                    label(pad, ry + 3, name, 0.78)
+                    label(RX, ry + 3, name, 0.80)
                     local s = shortValue(value, 26)
                     local scale = 0.84
                     local tw = drawnW(s, scale)
-                    put(W - pad - tw, ry + 2, s, color or c4(TH.text), scale)
+                    put(valueRight - tw, ry + 2, s, color or c4(TH.text), scale)
                     if maxValue then
                         -- v1.11.80: шкала 100 = полная линия; ширина заливки
                         -- округляется до пикселя, чтобы полоска не «дышала»
                         local maxV = tonumber(maxValue) or 100
                         if maxV <= 0 then maxV = 100 end
                         local pct = clamp(numeric, 0, maxV) / maxV
-                        fill(valueX, ry + height - 5, valueW, 2, col32(255, 255, 255, 15), 1)
+                        fill(barX, ry + height - 6, barW, 2, col32(255, 255, 255, 15), 1)
                         if pct > 0 then
-                            local wFill = valueW * pct
-                            if pct >= 1 then wFill = valueW
+                            local wFill = barW * pct
+                            if pct >= 1 then wFill = barW
                             elseif wFill < 2 then wFill = 2 end
-                            fill(valueX, ry + height - 5, wFill, 2,
+                            fill(barX, ry + height - 6, wFill, 2,
                                 col32(TH.accent[1], TH.accent[2], TH.accent[3], 220), 1)
                         end
                     end
                 end
 
-                -- v1.19.58: единый список без сворачиваемых разделов. Порядок
-                -- строк — как в образце заказчика; «Оружие»/«Патроны» и «AFK»
-                -- в карточку не выводятся.
+                -- v1.19.60: порядок строк — как в образце; «Оружие»,
+                -- «Патроны» и «AFK» в карточку не выводятся.
                 row("Пинг", ping, c4(TH.text), nil, nil, ROW_H)
                 row("Здоровье", hpText, c4(TH.accent), hpNum, grndParamScale(hpNum), ROW_H)
                 row("Броня", armText, c4(TH.accent2), armNum, grndParamScale(armNum), ROW_H)
                 row("Скорость", speed, c4(TH.text), nil, nil, ROW_H)
-                row("Имя", nick, c4(TH.textHi), nil, nil, ROW_H)
-                row("Номер аккаунта", textValue("rc_account", "—"), c4(TH.text), nil, nil, ROW_H)
-                row("Уровень", lvlRaw, c4(TH.text), nil, nil, ROW_H)
+                row("Имя:", nick, c4(TH.textHi), nil, nil, ROW_H)
+                row("Номер аккаунта:", textValue("rc_account", "—"), c4(TH.text), nil, nil, ROW_H)
+                row("Уровень:", lvlRaw, c4(TH.text), nil, nil, ROW_H)
 
-                -- v1.19.58: кнопки наказаний переехали ВНУТРЬ карточки — они
-                -- стоят столбиком сразу под строками (как в образце заказчика).
-                -- Тумблер GRND_PUN.barOn по-прежнему прячет/показывает их.
-                if punCnt > 0 then
-                    y = y + PUN_PAD - 2
-                    for i = 1, punCnt do
-                        local itm = punItems[i]
-                        local btnLabel = tostring((itm and itm.id) or "")
-                        local bw2, bh2 = W - pad * 2, PUN_BH
-                        local byy = y
-                        y = y + bh2 + PUN_BG
-                        -- кнопка ниже окна прокрутки — не рисуем и не ловим
-                        -- клик: иначе по невидимой кнопке можно было попасть
-                        if inList(byy, bh2) then
-                            im.SetCursorPos(im.ImVec2(pad, byy))
-                            local clicked = im.InvisibleButton("##rcb_p_" .. btnLabel,
-                                im.ImVec2(bw2, bh2))
-                            local hov = (im.IsItemHovered and im.IsItemHovered()) or false
-                            local act = (im.IsItemActive and im.IsItemActive()) or false
-                            fill(pad, byy, bw2, bh2,
-                                act and col32(TH.accent[1], TH.accent[2], TH.accent[3], 55)
-                                    or (hov and col32(TH.accent[1], TH.accent[2], TH.accent[3], 30)
-                                        or col32(255, 255, 255, 9)), 8)
-                            frame(pad + 0.5, byy + 0.5, bw2 - 1, bh2 - 1,
-                                (hov or act)
-                                    and col32(TH.accent[1], TH.accent[2], TH.accent[3], 120)
-                                    or col32(255, 255, 255, 20), 8)
-                            put(pad + (bw2 - drawnW(btnLabel, 0.9)) / 2, byy + (bh2 - 14) / 2,
-                                btnLabel, hov and c4(TH.textHi) or c4(TH.text), 0.9)
-                            if clicked and notify and notify.add then
-                                pcall(notify.add, "Наказание " .. btnLabel
-                                    .. ": команда подключится позже", "info", 2.2)
-                            end
-                        end
-                    end
-                end
-
-                -- v1.19.59: полоса прокрутки справа от списка (появляется
+                -- v1.19.59: полоса прокрутки у правого края (появляется
                 -- только когда список длиннее окна). Ведём и мышью, а
                 -- основное — колесо мыши (см. RC.scrollRect).
                 if scrollMax > 0 then
-                    local trX = W - 7
+                    local trX = W - pad + 2
                     roundRect(dl, at(trX, listTop), at(trX + 3, listTop + listH),
                         col32(255, 255, 255, 14), 2)
-                    local barH = math.max(26, listH * (H / contentH))
+                    local barH = math.max(26, listH * (listH / rowsH))
                     local barY = listTop + (scroll / scrollMax) * (listH - barH)
                     roundRect(dl, at(trX, barY), at(trX + 3, barY + barH),
-                        col32(TH.accent[1], TH.accent[2], TH.accent[3], 200), 2)
+                        col32(255, 255, 255, 120), 2)
                 end
+                -- Треугольник внизу по центру (как в образце): клик — список
+                -- наверх. Пока список и так наверху, он приглушён.
+                im.SetCursorPos(im.ImVec2(math.floor(W / 2) - 12, H - BOT + 1))
+                local topClick = im.InvisibleButton("##grnd_recon_top", im.ImVec2(24, 18))
+                local topHover = (im.IsItemHovered and im.IsItemHovered()) or false
+                local cx2 = math.floor(W / 2)
+                local cy2 = H - BOT / 2 + 1
+                local triA = (scroll > 1) and 200 or (topHover and 120 or 60)
+                if dl.AddTriangleFilled then
+                    pcall(dl.AddTriangleFilled, dl,
+                        at(cx2 - 5, cy2 + 3), at(cx2, cy2 - 3), at(cx2 + 5, cy2 + 3),
+                        col32(TH.accent[1], TH.accent[2], TH.accent[3], triA))
+                end
+                if topClick and scroll > 1 then RC.scroll = 0 end
             end
             if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
             grndPopCol(colorN)

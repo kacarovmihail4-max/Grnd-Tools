@@ -29,6 +29,13 @@ check(call(104, "0", 3) == "0 км/ч", "стоит на месте -> «0 км/
 SPEC.car, SAMP_CAR, SPEC.ped = nil, nil, nil
 check(call(105, "40 км/ч", 3) == "40 км/ч", "сервер видит движение -> «40 км/ч»")
 
+-- 5b) карточка просит значение без единиц (как в образце: просто «40»)
+SPEC.car, SAMP_CAR, CARSPEED, IN_CAR = 42, 7, 12.5, false
+local bare = nil
+for _ = 1, 3 do bare = grndSpeedDisplay(109, "", true) end
+check(bare == "45", "bare-режим для карточки -> «45» без единиц")
+SPEC.car, SAMP_CAR = nil, nil
+
 -- 6) вместо замера пришёл мусор (выброс) — показываем «—», а не ерунду
 SPEC.car, SAMP_CAR, CARSPEED = 42, 7, 4000
 check(call(106, "", 3) == "—", "выброс замера (4000 м/с) -> «—»")

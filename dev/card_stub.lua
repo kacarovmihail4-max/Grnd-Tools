@@ -99,12 +99,17 @@ function getPlayerArmor(id) return 80 end
 function grndParamNum(id, key, raw) return tonumber(raw) end
 function grndParamStr(id, key, raw) return tostring(raw or '') end
 function grndParamScale(v) local n = tonumber(v) or 100 if n < 100 then return 100 end return n end
-function grndSpeedDisplay(id, raw) return "45 км/ч" end
+function grndSpeedDisplay(id, raw, bare)
+    if bare then return "45" end
+    return "45 км/ч"
+end
 function grndParamLabel(id, key, raw) return tostring(raw or '') end
 
 notify = { add = function(text, kind, sec) TOASTS[#TOASTS + 1] = tostring(text) end }
 
 -- ---- состояние рекона (обычно его держит игра) ----
+-- в игре id цели — локальная переменная кадра рекона
+id = 77
 RC = {
     show = true, cursor = true, id = 77, nick = "Test_Player",
     live = { hp = "100", arm = "80", ping = "30", speed = "45",
@@ -122,15 +127,19 @@ GRND_PUN = {
 function GRND_PUN.load() end
 
 -- ---- удобные разборы кадра ----
+local ROW_LABELS = {
+    ["Пинг"] = true, ["Здоровье"] = true, ["Броня"] = true, ["Скорость"] = true,
+    ["Имя:"] = true, ["Номер аккаунта:"] = true, ["Уровень:"] = true,
+}
 function drawnRows()
     local out = {}
     for _, d in ipairs(DRAWN) do
-        if d.kind == 'text' and d.x == 14 and (d.name == 'Пинг' or d.name == 'Здоровье'
-            or d.name == 'Броня' or d.name == 'Скорость' or d.name == 'Имя'
-            or d.name == 'Номер аккаунта' or d.name == 'Уровень') then
-            out[#out + 1] = { name = d.name, y = d.y }
+        if d.kind == 'text' and ROW_LABELS[d.name] then
+            out[#out + 1] = { name = d.name, y = d.y, x = d.x }
         end
     end
+    -- порядок как на экране: сверху вниз
+    table.sort(out, function(a, b) return a.y < b.y end)
     return out
 end
 function drawnPunButtons()

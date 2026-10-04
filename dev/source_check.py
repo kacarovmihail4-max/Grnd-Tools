@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.59"' in s, 'версия не 1.19.59')
+need('GRND_SCRIPT_VERSION = "1.19.60"' in s, 'версия не 1.19.60')
 
 # v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
 # 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
@@ -108,113 +108,90 @@ need('function klScanCandidates(limit, maxBytes, timeLimit)' in s and
      'KL.scanStat = "перебор прерван по времени — продолжаю позже"' in s,
      'авто-перебор памяти килл-листа снова читает мегабайты в одном тике')
 
-# v1.19.58: карточка рекона — единый компактный список (образец заказчика):
-# Пинг, Здоровье, Броня, Скорость, Имя, Номер аккаунта, Уровень.
-# Сворачиваемых разделов «Параметры игрока»/«Сведения игрока» больше нет.
-need('local ROWS_N = 7' in s and 'local contentH = 84 + ROWS_N * ROW_H' in s,
-     'карточка рекона снова считает высоту по сворачиваемым разделам')
-need('row("Пинг", ping, c4(TH.text), nil, nil, ROW_H)' in s and
-     'row("Здоровье", hpText, c4(TH.accent), hpNum, grndParamScale(hpNum), ROW_H)' in s and
-     'row("Броня", armText, c4(TH.accent2), armNum, grndParamScale(armNum), ROW_H)' in s and
-     'row("Скорость", speed, c4(TH.text), nil, nil, ROW_H)' in s and
-     'row("Имя", nick, c4(TH.textHi), nil, nil, ROW_H)' in s and
-     'textValue("rc_account", "—"), c4(TH.text), nil, nil, ROW_H)' in s and
-     'row("Уровень", lvlRaw, c4(TH.text), nil, nil, ROW_H)' in s,
-     'в карточке нет единого списка строк из образца (Пинг…Уровень)')
+# v1.19.60: карточка рекона — раскладка как в образце заказчика:
+# слева колонка с «моделью» и кнопками наказаний, справа единый список строк,
+# шапка «Ник [ID]» по центру, низ — треугольник «наверх».
+need('local W = math.floor(math.max(400, math.min(460, resX * 0.28)))' in s,
+     'карточка рекона снова узкая (в образце две колонки, ~430 px)')
+need('local LW = math.floor(W * 0.30)' in s and 'local RX = pad + LW + 12' in s,
+     'в карточке нет левой колонки под «модель» и кнопки наказаний')
+# шапка
+need('local title = shortValue(nick, 20) .. " [" .. tostring(id) .. "]"' in s and
+     'put(math.floor((W - titleW) / 2), 9, title, c4(TH.textHi), 1.0)' in s,
+     'в шапке нет «Ник [ID]» по центру (как в образце)')
+need('if not RC.dragMoved then headClick = true end' in s and
+     'local copied = reconCopyNickname(nick)' in s,
+     'короткий клик по шапке не копирует ник (кнопки копирования в образце нет)')
+# единый список строк, ровно семь, в колонке справа
+need('local ROW_H = 24' in s and 'local ROWS_N = 7' in s,
+     'у карточки снова не семь строк по 24 px')
+need('label(RX, ry + 3, name, 0.80)' in s and 'put(valueRight - tw, ry + 2, s' in s,
+     'строки рисуются не в колонке (метка слева, значение справа)')
+need('local valueRight = W - pad - 12' in s and 'local barW = math.max(40, math.floor(RW * 0.35))' in s,
+     'правое выравнивание значений и шкалы ХП/брони потеряны')
+for _row in ('row("Пинг", ping, c4(TH.text), nil, nil, ROW_H)',
+             'row("Здоровье", hpText, c4(TH.accent), hpNum, grndParamScale(hpNum), ROW_H)',
+             'row("Броня", armText, c4(TH.accent2), armNum, grndParamScale(armNum), ROW_H)',
+             'row("Скорость", speed, c4(TH.text), nil, nil, ROW_H)',
+             'row("Имя:", nick, c4(TH.textHi), nil, nil, ROW_H)',
+             'row("Номер аккаунта:", textValue("rc_account", "—"), c4(TH.text), nil, nil, ROW_H)',
+             'row("Уровень:", lvlRaw, c4(TH.text), nil, nil, ROW_H)'):
+    need(_row in s, 'в карточке нет строки образца: ' + _row)
 absent('row("AFK"', '«AFK» вернулся в карточку рекона')
 absent('row("Оружие"', '«Оружие» вернулось в карточку рекона')
 absent('row("Патроны"', '«Патроны» вернулись в карточку рекона')
 absent('local function section(title, open, key)',
        'в карточке снова сворачиваемые разделы')
 absent('"##grnd_recon_section_"', 'вернулись заголовки-кнопки сворачиваемых разделов')
-# «Уровень» — только число: отдельное поле rc_level, иначе из «Уровень (EXP)»
-need('local lvlRaw = textValue("rc_level", "")' in s and
-     'gsub("%s*%b()", "")' in s,
+# значения как в образце: пинг без « ms», ХП/броня с одним знаком, скорость без «км/ч»
+need('local ping = pingStable and tostring(math.floor(pingStable + 0.5))' in s,
+     'пинг снова с « ms» (в образце просто число)')
+need('local hpText = hpNum and string.format("%.1f", hpNum) or "—"' in s and
+     'local armText = armNum and string.format("%.1f", armNum) or "—"' in s,
+     'ХП/броня не с одним знаком после запятой (в образце «100.0», «40.0»)')
+need('local speed = grndSpeedDisplay(id, textValue("speed", ""), true)' in s,
+     'скорость в карточке снова с единицами (в образце — просто число)')
+need('local lvlRaw = textValue("rc_level", "")' in s and 'gsub("%s*%b()", "")' in s,
      '«Уровень» снова показывает «18 (12345)» вместо числа')
-# кнопки наказаний — ВНУТРИ карточки, столбиком под строками
-need('local punCnt = (type(punItems) == "table") and #punItems or 0' in s and
-     'local punItems = (GRND_PUN and GRND_PUN.barOn ~= false)' in s,
-     'карточка не собирает список кнопок наказаний')
-need('"" ##rcb_p_""' in s if False else 'im.InvisibleButton("##rcb_p_" .. btnLabel' in s,
-     'кнопки наказаний не рисуются внутри карточки')
+# кнопки наказаний — в левой колонке, четыре
+need('local PUN_TOP = 4' in s and 'if punCnt > PUN_TOP then punCnt = PUN_TOP end' in s,
+     'в карточке снова не четыре кнопки наказаний')
+need('local byy = HEAD + AV_H + (i - 1) * (PUN_BH + PUN_BG)' in s and
+     'im.InvisibleButton("##rcb_p_" .. btnLabel' in s,
+     'кнопки наказаний не в левой колонке карточки')
 need('if GRND_PUN and not GRND_PUN.loaded then pcall(GRND_PUN.load) end' in s,
      'карточка не подгружает настройки наказаний (кнопки исчезнут)')
 absent('"##grnd_recon_bar"', 'вернулось отдельное окно панели наказаний')
-# тумблер в меню говорит про карточку, а не про потерянную панель
 need('"Кнопки наказаний в карточке"' in s and
-     'JAIL · BAN · MUTE и остальные — столбиком под сведениями · курсор — ПКМ' in s,
+     'JAIL · BAN · KICK · MUTE — столбиком под аватаром · курсор — ПКМ' in s,
      'описание тумблера наказаний не соответствует карточке')
-# геометрия: строк ровно семь, кнопки наказаний — ВНУТРИ окна карточки
-card_start = s.index('if grndBegin("##grnd_recon_card", flags) then')
-card_end = s.index('if endDepth > 0 then endDepth = endDepth - 1', card_start)
-card = s[card_start:card_end]
-need(card.count(', ROW_H)') == 7,
-     'в карточке не семь строк единого списка (найдено %d)' % card.count(', ROW_H)'))
-need('##rcb_p_' in card,
-     'кнопки наказаний рисуются вне окна карточки (обрежутся его краем)')
-
-# v1.19.59: карточка прокручивается, а скорость — чистое число в км/ч
-need('local SCROLL_STEP = ROW_H' in s and 'local H_MIN = 240' in s,
+# 3D-модель нарисовать нельзя — на её месте буква ника
+need('dl:AddCircleFilled(at(avX, avY), 30,' in s and
+     'put(avX - grndTextW(avatar) * 0.6, avY - 14, avatar, c4(TH.accent), 1.6)' in s,
+     'на месте 3D-модели нет буквы ника (пустая колонка)')
+# прокрутка: только строки, шапка и кнопки на месте
+need('local SCROLL_STEP = ROW_H' in s and 'local H_MIN = 200' in s,
      'у карточки нет прокрутки (окно снова режет низ карточки)')
-need('local scrollMax = math.max(0, contentH - H)' in s and
+need('local rowsH = ROWS_N * ROW_H' in s and
+     'local scrollMax = math.max(0, rowsH - listH)' in s and
      'local function inList(y0, h0)' in s,
      'высота карточки снова считается только по содержимому')
-need('local y = 84 - scroll' in s and
-     'if not inList(ry, height) then return end' in s and
-     'if inList(byy, bh2) then' in s,
-     'строки и кнопки не прячутся за границей окна прокрутки (обрывки текста)')
-need('local barH = math.max(26, listH * (H / contentH))' in s,
+need('local y = listTop - scroll' in s and
+     'if not inList(ry, height) then return end' in s,
+     'строки не прячутся за границей окна прокрутки (обрывки текста)')
+need('local barH = math.max(26, listH * (listH / rowsH))' in s and
+     'roundRect(dl, at(trX, barY), at(trX + 3, barY + barH),' in s,
      'нет полосы прокрутки у списка карточки')
-need('RC.scrollRect = { x = px, y = py + listTop, w = W, h = listH }' in s and
+need('RC.scrollRect = { x = px + RX - 6, y = py + listTop,' in s and
      'and GRND_RC.scrollRect and grndMouseInside(GRND_RC.scrollRect) then' in s and
      '(GRND_RC.scroll or 0) - notch * step' in s and
      'local step = tonumber(GRND_RC.scrollStep) or 26' in s,
      'колесо мыши над карточкой не листает её список')
-need('"NoScrollWithMouse"' in card or 'NoScrollWithMouse' in s,
+need('"NoScrollWithMouse"' in s,
      'ImGui снова может крутить содержимое карточки своим колесом')
-# кнопок наказаний в карточке — ровно четыре (образец заказчика)
-need('local PUN_TOP = 4' in s and 'if punCnt > PUN_TOP then punCnt = PUN_TOP end' in s,
-     'в карточке снова не четыре кнопки наказаний')
-# скорость: только число в км/ч, сырые серверные строки в карточку не идут
-need('local g = grndSpeedFromGame(id)' in s and
-     'if kmh < 3 and sNum and sNum > kmh then kmh = sNum end' in s and
-     'return tostring(math.floor(kmh + 0.5)) .. " км/ч"' in s,
-     'строка «Скорость» снова берёт сырой текст сервера')
-absent('if num and num > 0 then return txt end', 'вернулся возврат сырой серверной строки скорости')
-absent('local txt = grndParamLabel(id, "speed", serverRaw)', 'grndSpeedDisplay снова показывает серверный текст')
-need('if ms ~= ms or ms < 0 or ms > 300 then return nil end' in s,
-     'замер скорости не отбрасывает мусорные значения (NaN/выбросы)')
-need('ms * 3.6' in s and 'скорость в м/с' in s,
-     'перевод м/с -> км/ч потерян (getCarSpeed/getCharSpeed дают м/с)')
-
-# геометрия карточки без прокрутки: на обычном экране семь строк и четыре
-# кнопки должны влезать в окно целиком — проверяем прямо по числам из файла
-import re as _re
-def _num(pat):
-    hits = _re.findall(pat, s)
-    return int(hits[0]) if len(hits) == 1 else None
-_ROW_H = _num(r'local ROW_H = (\d+)')
-_ROWS_N = _num(r'local ROWS_N = (\d+)')
-_PUN_BH = _num(r'local PUN_BH = (\d+)')
-_PUN_BG = _num(r'local PUN_BG = (\d+)')
-_PUN_PAD = _num(r'local PUN_PAD = (\d+)')
-_PUN_TOP = _num(r'local PUN_TOP = (\d+)')
-_LIST_TOP = _num(r'local LIST_TOP = (\d+)')
-need(None not in (_ROW_H, _ROWS_N, _PUN_BH, _PUN_BG, _PUN_PAD, _PUN_TOP, _LIST_TOP),
-     'не разобрать числа раскладки карточки (ROW_H…LIST_TOP)')
-if None not in (_ROW_H, _ROWS_N, _PUN_BH, _PUN_BG, _PUN_PAD, _PUN_TOP, _LIST_TOP):
-    _content = (84 + _ROWS_N * _ROW_H
-                + (_PUN_PAD - 2 + _PUN_TOP * _PUN_BH + (_PUN_TOP - 1) * _PUN_BG + 12))
-    _H = min(560, 768 - 42)
-    need(_content <= _H,
-         'карточка «%dpx» не влезает в окно «%dpx» на обычном экране (768 строк)' % (_content, _H))
-    _listH = _H - _LIST_TOP - 6
-    _rowsBottom = 84 + _ROWS_N * _ROW_H
-    _punBottom = 84 + _ROWS_N * _ROW_H + _PUN_PAD - 2 + (_PUN_TOP - 1) * (_PUN_BH + _PUN_BG) + _PUN_BH
-    need(_rowsBottom <= _LIST_TOP + _listH,
-         'последняя строка карточки не видна без прокрутки')
-    need(_punBottom <= _LIST_TOP + _listH,
-         'последняя кнопка наказания не видна без прокрутки')
+need('im.InvisibleButton("##grnd_recon_top"' in s and
+     'if topClick and scroll > 1 then RC.scroll = 0 end' in s,
+     'внизу карточки нет треугольника «наверх» (как в образце)')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
