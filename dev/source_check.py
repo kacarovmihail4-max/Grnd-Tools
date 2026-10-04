@@ -67,7 +67,7 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.42"' in s, 'версия не 1.19.42')
+need('GRND_SCRIPT_VERSION = "1.19.43"' in s, 'версия не 1.19.43')
 
 # верхняя акцентная полоска убрана во ВСЕХ окнах (v1.19.09)
 top_strips = []
@@ -188,12 +188,12 @@ need('"{ID} — найдёт ID в репорте («дм 234», «234 дм») �
      'пропала подсказка про {ID}')
 need('"После ответа автопилот сам зайдёт в слежку за этим игроком — даже если выбрана команда /goto"'
      in auto_draw_src2, 'пропала подсказка про автослежку за найденным ID')
-need('"{all} — триггер сработает, даже если репорт состоит из нескольких слов"' in auto_draw_src2,
-     'пропала подсказка про {all}')
+need('"{all} — на слове в триггере («спек{all}»): сработает, даже если репорт из нескольких слов"'
+     in auto_draw_src2, 'пропала подсказка про {all}')
 need('"{punishments} — активные наказания игрока (как кнопка «Наказания игрока»)"'
      in auto_draw_src2, 'пропала подсказка про {punishments}')
-need('"Переменные {ID}, {all}, {punishments} пишутся в ответе — или прямо в триггере («дм{ID}»)"'
-     in auto_draw_src2, 'нет подсказки, что переменные можно писать в триггере')
+need('Переменные {ID}, {all}, {punishments} пишутся в ответе или на слове в триггере («дм{ID}»)'
+     in auto_draw_src2, 'нет подсказки, что переменные можно писать на слове в триггере')
 absent("начинается с триггера", 'вернулась подсказка про систему «помогите»')
 # v1.19.33: вместо placeholder «напр. помогите» — подсказка про синонимы; её
 # длинная фраза переносится по словам (wrapW), чтобы помещалась целиком
@@ -260,14 +260,13 @@ need('local function autoWordHit(low, trig)' in s,
      'нет поиска триггера целым словом в любом месте репорта')
 need('local function autoLastChar(t)' in s,
      'нет проверки границы слова слева')
-need('local hit = anywhere and autoWordHit(low, trig) or (low == trig)' in s,
-     'режим сопоставления выбирается не из ответа вкладки')
-need('local hasID, hasAll, hasPun = QR.autoVarFlags(tabs[i])' in s,
-     'вкладки не проверяются на {ID}/{all}/{punishments} при сопоставлении')
+# v1.19.43: широкий поиск — только у слова, НА КОТОРОМ написана переменная
+need('local hit = it.wide and autoWordHit(low, it.word) or (low == it.word)' in s,
+     'режим сопоставления не привязан к слову с переменной')
 need('local cmd = QR.autoTabCmd(id, tab, foundId)' in s and
      'if not QR.autoTabCmd(id, tab, foundId) then' in s,
      'итоговая команда вкладки не используется в плане и в паузе')
-need('out[#out + 1] = { idx = i, trig = trig }' in s,
+need('out[#out + 1] = { idx = i, trig = it.word }' in s,
      'совпадение триггера потерялось')
 absent('low:find(list[k], 1, true)', 'вернулся поиск триггера подстрокой')
 need('local low = trim(autoLower(autoPlain(text)))' in s,
@@ -348,9 +347,9 @@ need('local selPun = QR.autoPunInTrigger(sel2)' in s and 'if selPun then' in s a
      '"Соберётся сам:' in s,
      'поле «Ответ игроку» не скрывается при {punishments} в триггере')
 # вкладка без слов (только переменные) отвечает на любой репорт
-need('function QR.autoVarsOnly(tab)' in s and 'function QR.autoTrigLabel(tab)' in s and
-     'if QR.autoVarsOnly(tabs[i]) then' in s,
-     'вкладка с одним {punishments}/{ID} без слова не срабатывает')
+need('function QR.autoBarePun(tab)' in s and 'function QR.autoTrigLabel(tab)' in s and
+     'if QR.autoBarePun(tabs[i]) then' in s and 'function QR.autoVarsOnly(tab)' in s,
+     'голая {punishments} без слова не отвечает на любой репорт')
 # диагностика «почему не сработал» прямо в окне
 need('A.lastReport = utf8Cut(tostring(nick) .. ": " .. text, 60)' in s and
      '"Репорт: " .. utf8Cut(dbgTxt, 44)' in s,

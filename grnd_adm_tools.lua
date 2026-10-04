@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.42"
+GRND_SCRIPT_VERSION = "1.19.43"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -26991,7 +26991,9 @@ end
 --    * репорт должен быть настоящим: «… [К-во репорта: N]» (маркер в любом
 --      написании), формат админ-бота «Ник(ID): текст» или просто строка
 --      «Ник[ID]: текст» с сервера, где маркера нет вовсе;
---    * текст репорта должен быть ровно триггером — без других слов;
+--    * слово триггера ищется по правилу САМОГО слова: написали переменную на
+--      слове («дм{ID}») — слово ищется в любом месте репорта, обычное слово —
+--      только точное совпадение; переменная действует ровно на одно слово;
 --
 --  Конфиг — общий config.json, секция reportAuto (домен grnd_repauto в
 --  GRND_CONFIG.sources): on / sel / t1_trigger / t1_answer / t1_command / …
@@ -27204,14 +27206,28 @@ do
     -- v1.19.40: служебные {…} из триггера вычищаются при разборе — «дм{ID}»,
     -- «спек{all}», «наказ{punishments}» читаются как «дм», «спек», «наказ»,
     -- а сами переменные включают режим вкладки (см. autoVarFlags).
-    function QR.autoTriggers(tab)
+    -- Триггеры вкладки: { { word = "дм", wide = true }, … }.
+    -- wide — переменная написана ПРЯМО НА ЭТОМ слове («дм{ID}»): только тогда
+    -- слово ищется как отдельное слово в ЛЮБОМ месте репорта. Соседние слова
+    -- без переменной («дм{ID}, dm») ищутся как обычно — репорт должен
+    -- совпасть с ними целиком. Переменная в поле «Ответ» поиск НЕ расширяет:
+    -- она только подставляет значение в текст ответа.
+    function QR.autoTrigList(tab)
         tab = tab or QR.autoTab()
         local raw = tostring(tab and tab.trigger or "")
         local out = {}
         for piece in (raw .. ","):gmatch("([^,;\n]*)[,;\n]") do
+            local wide = piece:find("%b{}") ~= nil
             local w = trim(autoLower(autoPlain((piece:gsub("%b{}", " ")))))
-            if w ~= "" then out[#out + 1] = w end
+            if w ~= "" then out[#out + 1] = { word = w, wide = wide } end
         end
+        return out
+    end
+
+    -- Только слова (для счётчиков и проверок).
+    function QR.autoTriggers(tab)
+        local list, out = QR.autoTrigList(tab), {}
+        for i = 1, #list do out[i] = list[i].word end
         return out
     end
 
@@ -27290,34 +27306,34 @@ do
             low:find("{punishments}", 1, true) ~= nil
     end
 
-    -- ВСЕ вкладки, чей триггер подошёл. Как искать — решает ответ вкладки:
-    --   * обычный ответ — репорт совпадает с триггером ЦЕЛИКОМ («дм» — да,
-    --     «дм 234» — нет);
-    --   * ответ с {all}, {ID} или {punishments} — триггер ищется ЦЕЛЫМ СЛОВОМ
-    --     в любом месте репорта («234 дм», «дм 234» — да, «дмх 234» — нет).
-    -- Пробелы вокруг не мешают: «  дм  » — да. Совпасть может не одна вкладка
-    -- (например, один и тот же триггер стоит в двух) — тогда сработают все, по
-    -- порядку вкладок. Возвращает { {idx=, trig=}, … }.
+    -- ВСЕ вкладки, чей триггер подошёл. Как искать — решает САМО СЛОВО
+    -- (v1.19.43): у слова с переменной («дм{ID}») — целое слово в любом месте
+    -- репорта («234 дм», «дм 234» — да, «дмх 234» — нет), у обычного слова —
+    -- репорт совпадает с ним ЦЕЛИКОМ («дм» — да, «дм 234» — нет). Переменная
+    -- действует ТОЛЬКО на то слово, на которое написана: в «дм{ID}, dm»
+    -- широко ищется «дм», а «dm» — как обычно. Пробелы вокруг не мешают:
+    -- «  дм  » — да. Совпасть может не одна вкладка (например, один и тот же
+    -- триггер стоит в двух) — тогда сработают все, по порядку вкладок.
+    -- Возвращает { {idx=, trig=}, … }.
     function QR.autoMatchAll(text)
         local low = trim(autoLower(autoPlain(text)))
         local out = {}
         if low == "" then return out end
         local tabs = QR.autoTabs()
         for i = 1, #tabs do
-            local hasID, hasAll, hasPun = QR.autoVarFlags(tabs[i])
-            local anywhere = hasID or hasAll or hasPun
-            local list = QR.autoTriggers(tabs[i])
+            local list = QR.autoTrigList(tabs[i])
             if #list == 0 then
-                -- триггер состоял из одних переменных: отвечаем на любой репорт
-                if QR.autoVarsOnly(tabs[i]) then
+                -- в триггере ни слова: так работает только голая
+                -- {punishments} — ответ про наказания собирается сам
+                if QR.autoBarePun(tabs[i]) then
                     out[#out + 1] = { idx = i, trig = QR.autoTrigLabel(tabs[i]) }
                 end
             end
             for k = 1, #list do
-                local trig = list[k]
-                local hit = anywhere and autoWordHit(low, trig) or (low == trig)
+                local it = list[k]
+                local hit = it.wide and autoWordHit(low, it.word) or (low == it.word)
                 if hit then
-                    out[#out + 1] = { idx = i, trig = trig }
+                    out[#out + 1] = { idx = i, trig = it.word }
                     break
                 end
             end
@@ -27339,7 +27355,7 @@ do
             local tab = tabs[i]
             local hasWord = #QR.autoTriggers(tab) > 0
             local hasAns = trim(tostring(tab.answer or "")) ~= "" or QR.autoPunInTrigger(tab)
-            if (hasWord or QR.autoVarsOnly(tab)) and hasAns then ready = ready + 1 end
+            if (hasWord or QR.autoBarePun(tab)) and hasAns then ready = ready + 1 end
         end
         return ready, #tabs
     end
@@ -27354,12 +27370,20 @@ do
         return "/" .. id .. " " .. pid
     end
 
-    -- В триггере остались ТОЛЬКО переменные («{punishments}», «{ID}»)? Тогда
-    -- слова-триггера нет, и такая вкладка отвечает на ЛЮБОЙ репорт.
+    -- В триггере ТОЛЬКО переменная {punishments} — без слов («{punishments}»,
+    -- «, {punishments},»)? Тогда вкладка отвечает на ЛЮБОЙ репорт: слово ей не
+    -- нужно, ответ про наказания собирается сам. Голые «{ID}» и «{all}» так НЕ
+    -- работают — переменная действует только на то слово, на которое написана.
+    function QR.autoBarePun(tab)
+        local raw = autoLower(tostring((tab and tab.trigger) or ""))
+        if raw:find("{punishments}", 1, true) == nil then return false end
+        return trim((raw:gsub("%b{}", " ")):gsub("[,;]", " ")) == ""
+    end
+
+    -- Вкладка-«наказания»: {punishments} написан в триггере (и на слове, и
+    -- голым) — поле «Ответ игроку» ей не нужно.
     function QR.autoVarsOnly(tab)
-        local raw = tostring((tab and tab.trigger) or "")
-        if raw:find("%b{}") == nil then return false end
-        return #QR.autoTriggers(tab) == 0
+        return #QR.autoTriggers(tab) == 0 and QR.autoBarePun(tab)
     end
 
     -- {punishments} прямо в триггере: поле «Ответ игроку» не нужно — ответ
@@ -28490,10 +28514,10 @@ do
         -- диагностика остаются целиком, ничего не обрезается краем.
         local hintY = yy + lineH(ctx, 0.86) + 6
         local varHints = {
-            "Переменные {ID}, {all}, {punishments} пишутся в ответе — или прямо в триггере («дм{ID}»)",
+            "Переменные {ID}, {all}, {punishments} пишутся в ответе или на слове в триггере («дм{ID}») — тогда слово ищется в любом месте репорта",
             "{ID} — найдёт ID в репорте («дм 234», «234 дм») и подставит его в ответ",
             "После ответа автопилот сам зайдёт в слежку за этим игроком — даже если выбрана команда /goto",
-            "{all} — триггер сработает, даже если репорт состоит из нескольких слов",
+            "{all} — на слове в триггере («спек{all}»): сработает, даже если репорт из нескольких слов",
             "{punishments} — активные наказания игрока (как кнопка «Наказания игрока»)",
         }
         -- v1.19.41: диагностика — что сделал последний репорт. Раньше при
