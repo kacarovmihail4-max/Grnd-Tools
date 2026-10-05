@@ -192,6 +192,54 @@ SENT = {}
 gameFrame()
 check(#SENT == 0, "вне рекона скрипт статистику не запрашивает")
 
+-- 12) v1.19.72: дозапрос статистики для табличек нового WH
+-- Такой /stats отправляет сам скрипт (src=wh), его окно тоже прячется, но
+-- данные идут ТОЛЬКО в кэш по ID игрока — карточка слежки не наполняется.
+advance(30)
+GRND_STATS.waiting = false
+GRND_STATS.ownPending = false
+GRND_STATS.manualHold = false
+GRND_STATS.manualAt = -999
+openRecon(77)
+GRND_RC.statsCache = nil
+GRND_RC.live = { rc_level = "18", rc_account = "54" }
+SENT = {}
+check(_G.grndStatsBusy() == false, "статистика свободна — очередь WH может спросить")
+check(_G.grndStatsRequest(88, "wh") == true, "WH отправляет свой /stats 88")
+check(SENT[1] == "/stats 88", "команда ушла: " .. tostring(SENT[1]))
+check(GRND_STATS.src == "wh", "запрос помечен как WH (src=wh)")
+check(_G.grndStatsBusy() == true, "пока ждём ответ — статистика занята")
+check(serverDialogText("Уровень: 5\nСемья: [SB] STRELKI\nСтатистика игрока Greshnik[88]") == true,
+    "ответ на WH-запрос скрывается (это окно нашего запроса)")
+local cell = GRND_RC.statsCache and GRND_RC.statsCache[88]
+check(type(cell) == "table", "данные WH легли в кэш по ID игрока")
+check(cell and cell.rc_family == "[SB] STRELKI", "семья из окна попала в кэш WH")
+check(cell and tostring(cell.rc_level):find("5") ~= nil, "уровень из окна попал в кэш WH")
+check(GRND_RC.live.rc_family == nil, "карточка слежки чужой статистикой НЕ наполняется")
+check(GRND_RC.live.rc_level == "18", "карточка слежки осталась со своими данными")
+check(GRND_STATS.targetId == 88 or GRND_STATS.lastTarget == 88,
+    "цель разбора — тот, кого спросил WH")
+
+-- WH-запрос по игроку, за которым СЛЕДИМ: данные идут и в карточку
+advance(30)
+SENT = {}
+GRND_STATS.waiting = false
+GRND_STATS.ownPending = false
+check(_G.grndStatsRequest(77, "wh") == true, "WH спрашивает того же игрока, что и слежка")
+check(serverDialogText("Уровень: 20\nСемья: [TM] TAMBOV\nСтатистика игрока Test_Player[77]") == true,
+    "окно такого ответа тоже прячется")
+check(GRND_RC.live.rc_family == "[TM] TAMBOV",
+    "карточка слежки получила данные по СВОЕЙ цели")
+
+-- 13) чужие/ручные окна WH не разбирает
+advance(30)
+SENT = {}
+userStats("/stats 91")
+check(serverDialogText("Уровень: 5\nСемья: [SB] STRELKI\nСтатистика игрока Greshnik[91]") == nil,
+    "ручное окно администратора по-прежнему не прячется")
+check(GRND_RC.statsCache and GRND_RC.statsCache[91] == nil,
+    "ручное окно в кэш WH не попадает")
+
 if FAILS == 0 then
     return 'ALL STATS SCENARIOS PASSED'
 end

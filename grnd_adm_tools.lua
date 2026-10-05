@@ -1,7 +1,7 @@
 script_name("grnd_adm_tools")
 -- Версия лежит и в переменной: её показывает диагностика /mp diag, а сама
 -- переменная одна на весь файл — не нужно искать строки по коду.
-GRND_SCRIPT_VERSION = "1.19.71"
+GRND_SCRIPT_VERSION = "1.19.72"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -1771,7 +1771,7 @@ function grndMouseFrameBegin()
     M.clicked, M.rclicked, M.mclicked = false, false, false
     M.clickedBtn, M.rclickedBtn, M.mclickedBtn = nil, nil, nil
 end
--- v1.19.71: чекеры рисуются ПОД окнами (окно закрывает их там, где стоит),
+-- v1.19.72: чекеры рисуются ПОД окнами (окно закрывает их там, где стоит),
 -- поэтому клик, который пришёлся на окно поверх чекера, чекеру НЕ принадлежит:
 -- иначе он «украл» бы нажатие у карточки рекона (её тянут мышью), у оверлея
 -- репортов (у него свои кнопки) и у окна статистики игрока. Окна, которые
@@ -1818,7 +1818,7 @@ function grndCheckerCovers()
         if RC.statsPop and grndCheckerRectOk(RC.statsPopRect) then
             out[#out + 1] = RC.statsPopRect
         end
-        -- v1.19.71: компактная полоса действий — тоже окно поверх чекеров:
+        -- v1.19.72: компактная полоса действий — тоже окно поверх чекеров:
         -- клик по ней строкам килл-листа и «Админов» не принадлежит
         if RC.actionsWinOpen and grndCheckerRectOk(RC.actionsWinRect) then
             out[#out + 1] = RC.actionsWinRect
@@ -2846,6 +2846,9 @@ end
 
 -- 1.14.51: streamed-player administrative overlay; never alters server streaming.
 GRND_WH={enabled=false,distance=300,skeleton=false,expanded=false,
+    -- v1.19.72: НОВЫЙ WH — таблички над игроками: ник, семья из /stats,
+    -- полоски HP и брони, ID и LVL. Галочка в настройках переключает вид.
+    newwh=false,autoStats=true,
     players={},scanAt=-999,dirtyAt=nil}
 do
     local W=GRND_WH
@@ -2876,6 +2879,8 @@ do
     end
     function W.load(k,v)
         if k=='enabled' or k=='skeleton' then W[k]=v=='1'
+        elseif k=='new' then W.newwh=(v=='1')
+        elseif k=='stats' then W.autoStats=(v=='1')
         elseif k=='distance' then
             local n=tonumber(v)
             if n and n==n then W.distance=math.max(10,math.min(800,n)) end
@@ -2988,11 +2993,16 @@ do
         if current.wall==saved.applied.wall then pcall(w8,ptr+47,saved.original.wall,false) end
         if current.tags==saved.applied.tags then pcall(w8,ptr+56,saved.original.tags,false) end
     end
+    -- v1.19.72: штатные ники SA:MP нужны ТОЛЬКО в старом режиме WH. В новом
+    -- режиме ник (и всё остальное) рисует сам скрипт — иначе над игроком
+    -- висели бы два ника.
+    function W.nativeTagsWanted() return W.newwh and 0 or 1 end
     function W.nativeTick()
         if not W.enabled then W.restoreNative();return end
         local now=W.clock()
         if W.nativeAt and now>=W.nativeAt and now-W.nativeAt<0.2
-            and W.native and W.native.applied.distance==W.distance then return end
+            and W.native and W.native.applied.distance==W.distance
+            and W.native.applied.tags==W.nativeTagsWanted() then return end
         W.nativeAt=now
         local ptr,mem,r8,w8=nativeContext()
         if not ptr then
@@ -3012,18 +3022,21 @@ do
             end
         end
         local d=math.max(10,math.min(800,W.distance))
+        local tags=W.nativeTagsWanted()
         local okD,okW,okT=true,true,true
         if current.distance~=d then okD=pcall(mem.setfloat,ptr+39,d,false) end
         if current.wall~=0 then okW=pcall(w8,ptr+47,0,false) end
-        if current.tags~=1 then okT=pcall(w8,ptr+56,1,false) end
+        if current.tags~=tags then okT=pcall(w8,ptr+56,tags,false) end
         -- Track attempted writes too so a partially applied change can be undone.
-        saved.applied={distance=d,wall=0,tags=1}
+        saved.applied={distance=d,wall=0,tags=tags}
         local actual=readNative(ptr,mem,r8)
         W.nativeActual=actual
         W.nativeVerified=(okD and okW and okT and actual
-            and math.abs(actual.distance-d)<0.05 and actual.wall==0 and actual.tags==1) and true or false
+            and math.abs(actual.distance-d)<0.05 and actual.wall==0 and actual.tags==tags) and true or false
         if W.nativeVerified then
-            W.nativeStatus=string.format('SA:MP: %.0f м; сквозь стены — да.',actual.distance)
+            W.nativeStatus=(tags==1)
+                and string.format('SA:MP: %.0f м; сквозь стены — да.',actual.distance)
+                or string.format('Новый WH: %.0f м; штатные ники скрыты.',actual.distance)
         elseif actual then
             W.nativeStatus=string.format('Не применилось: %.0f м; LOS=%d, tags=%d.',actual.distance,actual.wall,actual.tags)
         else
@@ -3130,6 +3143,367 @@ do
             if a and b then renderDrawLine(a[1],a[2],b[1],b[2],1,0xDEFFFFFF) end
         end
     end
+
+    -- ------------------------------------------------------------------
+    --  v1.19.72: НОВЫЙ WH — таблички над игроками
+    --  Вид (как в образце): ник, ниже семья в тёмной рамке, под ней полоски
+    --  HP и брони, снизу ID в тёмном квадрате и LVL в жёлтой рамке.
+    --  Семья и уровень берутся из ТОГО ЖЕ окна статистики, что наполняет
+    --  карточку слежки (/stats <ID>) — значения кэшируются по ID игрока в
+    --  RC.statsCache. Ничего нового не выдумываем: те же поля rc_family и
+    --  rc_level, что и в карточке.
+    -- ------------------------------------------------------------------
+    local WH_C = {
+        nick      = 0xFFFFFFFF,        -- ник: белый с тенью
+        textShadow= 0xCC000000,
+        dark      = 0xF21A1512,        -- тёмная «рамка» семьи и ID
+        boxShadow = 0x8C000000,
+        famText   = 0xFFFFFFFF,
+        dimText   = 0xFF9AA0A6,        -- «Без семьи» — приглушённый
+        noFam     = 'Без семьи',
+        noData    = 'нет данных',
+        barBg     = 0xC0000000,
+        hp        = 0xFFE8342A,        -- красная полоса здоровья
+        armor     = 0xFFC3CBD8,        -- полоска брони
+        idText    = 0xFFFFFFFF,
+        lvlBg     = 0xFFF5C518,        -- жёлтая рамка уровня
+        lvlText   = 0xFF1A1512,
+        lvlDim    = 0xB31A1512,
+        noLvl     = '— LVL',
+    }
+    W.colors = WH_C
+
+    -- Масштаб табличек под разрешение экрана (базовые размеры — для 1080p).
+    local function whScale()
+        local sh = 1080
+        if type(getScreenResolution) == 'function' then
+            local ok, _, y = pcall(getScreenResolution)
+            if ok and tonumber(y) then sh = tonumber(y) end
+        end
+        local k = sh / 1080
+        if k < 0.85 then k = 0.85 elseif k > 1.5 then k = 1.5 end
+        return k
+    end
+    W.scale = whScale
+
+    -- Шрифт нужного кегля (Tahoma, кириллица). Кэш по кеглю — как в DX-слое
+    -- отчётов, чтобы не создавать шрифты каждый кадр.
+    local function whFont(px)
+        local F = W.fonts
+        if not F then F = {} W.fonts = F end
+        px = math.max(9, math.min(30, math.floor(px + 0.5)))
+        local f = F[px]
+        if f then return f end
+        if type(renderCreateFont) ~= 'function' then return nil end
+        local ok, font = pcall(renderCreateFont, 'Tahoma', -px, 1, 204)
+        if not ok or not font then ok, font = pcall(renderCreateFont, 'Tahoma', -px, 1) end
+        if not ok or not font then return nil end
+        F[px] = font
+        return font
+    end
+
+    local function whAnsi(raw)
+        local str = tostring(raw or '')
+        if type(_G.grndAnsiText) == 'function' then
+            local ok, out = pcall(_G.grndAnsiText, str)
+            if ok and type(out) == 'string' then return out end
+        end
+        return str
+    end
+
+    local function whMeasure(px, txt)
+        local str = whAnsi(txt)
+        local C = W.mw
+        if not C then C = {} W.mw = C end
+        local byPx = C[px]
+        if not byPx then byPx = {} C[px] = byPx end
+        local cached = byPx[str]
+        if cached then return cached end
+        local w
+        local f = whFont(px)
+        if f and type(renderGetFontDrawTextLength) == 'function' then
+            local ok, v = pcall(renderGetFontDrawTextLength, f, str)
+            if ok and type(v) == 'number' and v >= 0 then w = v end
+        end
+        if not w then w = #str * px * 0.55 end
+        if (W.mwN or 0) > 800 then W.mw = {} W.mwN = 0 C = W.mw byPx = {}
+            C[px] = byPx end
+        W.mwN = (W.mwN or 0) + 1
+        byPx[str] = w
+        return w
+    end
+
+    -- Чистая раскладка таблички: что и где рисуем. Возвращает список
+    -- операций и высоту. Стенд и превью проверяют её без игры.
+    --   d = {nick, family, lvl, id, hp, armor, scale}
+    --   measure(px, text) -> ширина (в игре — настоящий DX-шрифт)
+    function W.labelLayout(cx, top, d, measure)
+        d = d or {}
+        local k = tonumber(d.scale) or 1
+        local m = measure or function(px, txt) return #tostring(txt) * px * 0.55 end
+        local pxN   = math.floor(15 * k + 0.5)                  -- ник
+        local pxF   = math.floor(13 * k + 0.5)                  -- семья
+        local pxB   = math.floor(14 * k + 0.5)                  -- ID и LVL
+        local padX  = math.max(4, math.floor(7 * k + 0.5))
+        local nameH = pxN + math.max(2, math.floor(3 * k + 0.5))
+        local famH  = pxF + math.max(6, math.floor(9 * k + 0.5))
+        local barH  = math.max(3, math.floor(4 * k + 0.5))       -- HP
+        local armH  = math.max(2, math.floor(3 * k + 0.5))       -- броня
+        local gap   = math.max(2, math.floor(3 * k + 0.5))
+        local boxH  = famH
+        local nick  = tostring(d.nick or '')
+        local fam   = (d.family ~= nil and d.family ~= '') and tostring(d.family) or nil
+        local lvl   = tonumber(d.lvl)
+        local id    = tostring(d.id or '')
+        local hp    = tonumber(d.hp) or 0
+        local armor = tonumber(d.armor) or 0
+        local ops   = {}
+        local function box(x, y, w, h, c) ops[#ops+1] = {kind='box', x=x, y=y, w=w, h=h, col=c} end
+        local function txt(t, x, y, px, c, sh)
+            ops[#ops+1] = {kind='text', s=t, x=x, y=y, px=px, col=c, shadow=sh and true or false}
+        end
+        local y = top
+        -- 1) ник — сверху, белый, с тенью, по центру
+        local nw = m(pxN, nick)
+        txt(nick, cx - nw / 2, y, pxN, WH_C.nick, true)
+        y = y + nameH
+        -- 2) семья — тёмная рамка, белый текст
+        local famTxt = fam or (d.known and WH_C.noFam or WH_C.noData)
+        local famW = math.max(m(pxF, famTxt) + padX * 2, math.floor(96 * k + 0.5))
+        local famX = cx - famW / 2
+        box(famX + 1, y + 1, famW, famH, WH_C.boxShadow)
+        box(famX, y, famW, famH, WH_C.dark)
+        -- текст семьи — по центру плашки (в образце он стоит ровно посередине)
+        txt(famTxt, famX + (famW - m(pxF, famTxt)) / 2, y + (famH - pxF) / 2 - 1, pxF,
+            fam and WH_C.famText or WH_C.dimText, false)
+        y = y + famH + gap
+        -- 3) HP — красная полоса (в образце та самая красная линия)
+        local hpFrac = hp / 100
+        if hpFrac < 0 then hpFrac = 0 elseif hpFrac > 1 then hpFrac = 1 end
+        box(famX, y, famW, barH, WH_C.barBg)
+        if hpFrac > 0 then box(famX, y, math.max(1, math.floor(famW * hpFrac + 0.5)), barH, WH_C.hp) end
+        y = y + barH
+        -- 4) броня — серая полоса: только когда броня есть
+        if armor > 0 then
+            y = y + math.max(1, math.floor(2 * k))
+            local aFrac = armor / 100
+            if aFrac < 0 then aFrac = 0 elseif aFrac > 1 then aFrac = 1 end
+            box(famX, y, famW, armH, WH_C.barBg)
+            box(famX, y, math.max(1, math.floor(famW * aFrac + 0.5)), armH, WH_C.armor)
+            y = y + armH
+        end
+        y = y + gap
+        -- 5) ID (тёмный квадрат) и LVL (жёлтая рамка)
+        local lvlTxt = lvl and (tostring(lvl) .. ' LVL') or WH_C.noLvl
+        local idW  = boxH
+        local lvlW = math.max(m(pxB, lvlTxt) + padX * 2, idW + math.floor(14 * k + 0.5))
+        local rowW = idW + gap + lvlW
+        local rx   = cx - rowW / 2
+        box(rx + 1, y + 1, idW, boxH, WH_C.boxShadow)
+        box(rx, y, idW, boxH, WH_C.dark)
+        txt(id, rx + (idW - m(pxB, id)) / 2, y + (boxH - pxB) / 2 - 1, pxB, WH_C.idText, false)
+        local lx = rx + idW + gap
+        box(lx + 1, y + 1, lvlW, boxH, WH_C.boxShadow)
+        box(lx, y, lvlW, boxH, WH_C.lvlBg)
+        txt(lvlTxt, lx + (lvlW - m(pxB, lvlTxt)) / 2, y + (boxH - pxB) / 2 - 1, pxB,
+            lvl and WH_C.lvlText or WH_C.lvlDim, false)
+        y = y + boxH
+        return ops, (y - top)
+    end
+
+    -- Высота таблички (без ширины текста — от неё не зависит). Нужна, чтобы
+    -- поставить табличку НАД головой игрока.
+    function W.labelHeight(d)
+        local _, h = W.labelLayout(0, 0, d or {})
+        return h or 0
+    end
+
+    -- Проекция точки над головой игрока: (sx, sy) или nil, если за экраном.
+    function W.headPoint(x, y, z, sw, sh)
+        local sx, sy = project(x, y, z + 0.9, sw, sh)
+        if not sx then return nil end
+        return sx, sy
+    end
+
+    -- Данные игрока из кэша статистики: то же, что показывает карточка.
+    local function whCell(id)
+        local RC = _G.GRND_RC
+        if type(RC) ~= 'table' then return nil end
+        if tonumber(RC.id) == tonumber(id) and type(RC.live) == 'table'
+           and (RC.live.rc_family or RC.live.rc_level or RC.live.rc_level_exp) then
+            return RC.live
+        end
+        local cache = RC.statsCache
+        if type(cache) == 'table' and type(cache[id]) == 'table' then return cache[id] end
+        return nil
+    end
+    local function whFamily(cell)
+        local f = cell and tostring(cell.rc_family or '') or ''
+        f = f:gsub('^%s+', ''):gsub('%s+$', '')
+        if f == '' or f == 'Нет' or f == '—' or f == '-' or f == 'нет' then return nil end
+        return f
+    end
+    -- «Уровень» из окна статистики: «5 (12345)» -> 5
+    local function whLevel(cell)
+        local raw = cell and (cell.rc_level_exp or cell.rc_level) or nil
+        if not raw then return nil end
+        local n = tostring(raw):match('(%d+)')
+        return n and tonumber(n) or nil
+    end
+    W.familyOf, W.levelOf = whFamily, whLevel
+
+    -- --- очередь дозапроса /stats: один игрок за раз, не чаще 2.5 с -------
+    W.statQueue, W.statAsked, W.statNextAt = {}, {}, -999
+    local WH_STAT_GAP   = 2.5    -- пауза между запросами
+    local WH_STAT_RETRY = 600    -- про одного игрока — не чаще раза в 10 минут
+    local WH_STAT_RANGE = 45     -- ближе 45 м — иначе не спрашиваем
+
+    function W.wantStats(id, dist)
+        id = tonumber(id)
+        if not id or not W.autoStats then return end
+        local cell = whCell(id)
+        if cell and (whFamily(cell) or whLevel(cell)) then return end
+        local RC = _G.GRND_RC
+        if type(RC) == 'table' and tonumber(RC.id) == id then return end  -- цель слежки
+        if dist and dist > WH_STAT_RANGE then return end
+        local now = W.clock()
+        local at = W.statAsked[id]
+        if at and now - at < WH_STAT_RETRY then return end
+        for i = 1, #W.statQueue do
+            if W.statQueue[i] == id then return end
+        end
+        W.statQueue[#W.statQueue+1] = id
+    end
+
+    function W.statsTick()
+        if not W.enabled or not W.newwh or not W.autoStats then
+            if #W.statQueue > 0 then W.statQueue = {} end
+            return
+        end
+        if #W.statQueue == 0 then return end
+        local now = W.clock()
+        if now - W.statNextAt < WH_STAT_GAP then return end
+        if type(_G.grndStatsRequest) ~= 'function' then return end
+        if type(_G.grndStatsIsManual) == 'function' and _G.grndStatsIsManual() then return end
+        -- Свой запрос не перебивает чужой/ручной и не идёт, пока ждём ответ
+        if type(_G.grndStatsBusy) == 'function' and _G.grndStatsBusy() then return end
+        if type(grndIsSpawnedSafe) == 'function' and not grndIsSpawnedSafe() then return end
+        if type(grndIsTyping) == 'function' and grndIsTyping() then return end
+        local id = table.remove(W.statQueue, 1)
+        if not id then return end
+        -- повторная проверка на отправке: если про игрока уже спрашивали
+        -- недавно — не спрашиваем снова (очередь могла устареть)
+        local was = W.statAsked[id]
+        if was and now - was < WH_STAT_RETRY then return end
+        W.statAsked[id] = now
+        W.statNextAt = now
+        pcall(_G.grndStatsRequest, id, 'wh')
+    end
+
+    -- Табличка не рисуется под окнами ImGui: окна всегда сверху.
+    local function whCovered(covers, x, y, w, h)
+        if type(covers) ~= 'table' then return false end
+        for i = 1, #covers do
+            local r = covers[i]
+            local rx, ry = tonumber(r and r.x), tonumber(r and r.y)
+            local rw, rh = tonumber(r and r.w), tonumber(r and r.h)
+            if rx and ry and rw and rh
+               and x < rx + rw and rx < x + w and y < ry + rh and ry < y + h then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- Нарисовать одну табличку. Возвращает false, если её закрыло окно.
+    function W.drawLabel(cx, top, d, covers)
+        if type(renderDrawBox) ~= 'function' or type(renderFontDrawText) ~= 'function' then
+            return false
+        end
+        local ops, height = W.labelLayout(cx, top, d, whMeasure)
+        local minX, maxX, minY, maxY = cx, cx, top, top + (height or 0)
+        for i = 1, #ops do
+            local o = ops[i]
+            if o.x < minX then minX = o.x end
+            if o.y < minY then minY = o.y end
+            if o.w and (o.x + o.w) > maxX then maxX = o.x + o.w end
+            if o.h and (o.y + o.h) > maxY then maxY = o.y + o.h end
+            if o.kind == 'text' then
+                local tw = whMeasure(o.px, o.s)
+                if (o.x + tw) > maxX then maxX = o.x + tw end
+            end
+        end
+        if whCovered(covers, minX - 2, minY - 2, (maxX - minX) + 4, (maxY - minY) + 4) then
+            return false
+        end
+        for i = 1, #ops do
+            local o = ops[i]
+            if o.kind == 'box' then
+                pcall(renderDrawBox, o.x, o.y, o.w, o.h, o.col)
+            else
+                local f = whFont(o.px)
+                if f then
+                    local str = whAnsi(o.s)
+                    if o.shadow then pcall(renderFontDrawText, f, str, o.x + 1, o.y + 1, WH_C.textShadow) end
+                    pcall(renderFontDrawText, f, str, o.x, o.y, o.col)
+                end
+            end
+        end
+        W.drawnAt = W.clock()
+        return true
+    end
+
+    -- Пройтись по игрокам в стриме и нарисовать их таблички.
+    function W.labels(now, cx, cy, cz, sw, sh, covers, selfId)
+        if not W.newwh then return end
+        -- большие окна ImGui (меню, табло, репорт, лог, формы, диалог сервера)
+        -- перекрывают экран целиком — под ними таблички не рисуем
+        if _G.GRND_BIGUI_UP then W.labelsDrawn = false return end
+        local ok
+        for _, e in ipairs(W.players) do
+            if e.id ~= selfId and pedFor(e.id) == e.ped then
+                local good, x, y, z = pcall(getCharCoordinates, e.ped)
+                if good and valid(x, y, z) then
+                    local dist2 = (x - cx) ^ 2 + (y - cy) ^ 2 + (z - cz) ^ 2
+                    if dist2 <= W.distance ^ 2 then
+                        local dist = math.sqrt(dist2)
+                        local sx, sy = W.headPoint(x, y, z, sw, sh)
+                        if sx then
+                            local cell = whCell(e.id)
+                            local nick = e.nick
+                            if (not nick or nick == '') and now - (e.nickAt or -999) > 5 then
+                                nick = call(sampGetPlayerNickname, e.id)
+                                e.nick, e.nickAt = nick, now
+                            end
+                            if not nick or nick == '' then nick = 'ID ' .. tostring(e.id) end
+                            if W.autoStats and (not cell or (not whFamily(cell) and not whLevel(cell))) then
+                                W.wantStats(e.id, dist)
+                            end
+                            local hp, armor = 0, 0
+                            if type(getCharHealth) == 'function' then
+                                local okH, v = pcall(getCharHealth, e.ped)
+                                if okH and tonumber(v) then hp = tonumber(v) end
+                            end
+                            if type(getCharArmor) == 'function' then
+                                local okA, v = pcall(getCharArmor, e.ped)
+                                if okA and tonumber(v) then armor = tonumber(v) or 0 end
+                            end
+                            local d = {
+                                nick = nick, family = whFamily(cell), lvl = whLevel(cell),
+                                id = e.id, hp = hp, armor = armor,
+                                known = (cell ~= nil), scale = whScale(),
+                            }
+                            if W.drawLabel(sx, sy - W.labelHeight(d), d, covers) then
+                                ok = true
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        W.labelsDrawn = ok and true or false
+    end
+
     function W.frame()
         if W.dirtyAt and os.clock()-W.dirtyAt>0.4 then
             W.dirtyAt=nil;pcall(grndCamCfgSave)
@@ -3137,15 +3511,17 @@ do
         W.nativeTick()
         -- Inspect the live client during the first minute, or while settings are open.
         if (W.diagCount or 0)<60 or W.expanded then pcall(W.diagnose) end
-        -- Native SA:MP renders all tags/bars; our DX pass is ONLY the skeleton.
-        if not W.enabled or not W.skeleton then
+        -- v1.19.72: в новом режиме скелет не обязателен — таблички рисуются
+        -- и без него (и наоборот).
+        if not W.enabled or (not W.skeleton and not W.newwh) then
             if #W.players>0 then W.players={};W.scanAt=-999 end
             return
         end
         if type(isSampAvailable)=='function' and not isSampAvailable() then W.players={};W.scanAt=-999;return end
         if type(isPauseMenuActive)=='function' and isPauseMenuActive() then return end
-        if type(getCharCoordinates)~='function' or type(convert3DCoordsToScreenEx)~='function'
-            or type(renderDrawLine)~='function' then return end
+        if type(getCharCoordinates)~='function' or type(convert3DCoordsToScreenEx)~='function' then return end
+        if W.skeleton and type(renderDrawLine)~='function' then return end
+        if W.newwh and (type(renderDrawBox)~='function' or type(renderFontDrawText)~='function') then return end
         local now=W.clock()
         if now<W.scanAt then W.scanAt=-999 end
         if now-W.scanAt>=0.5 then
@@ -3165,6 +3541,17 @@ do
         local ok,cx,cy,cz=pcall(getActiveCameraCoordinates)
         if not ok or not valid(cx,cy,cz) then return end
         local sw,sh=getScreenResolution()
+        -- v1.19.72: окна ImGui всегда сверху — под ними таблички не рисуем
+        local covers=nil
+        if W.newwh and type(grndCheckerCovers)=='function' then
+            local okC,c=pcall(grndCheckerCovers)
+            if okC then covers=c end
+        end
+        local selfId=nil
+        if type(sampGetPlayerIdByCharHandle)=='function' and PLAYER_PED then
+            local okS,a,b=pcall(sampGetPlayerIdByCharHandle,PLAYER_PED)
+            if okS then selfId=tonumber(type(a)=='boolean' and b or a) end
+        end
         for _,e in ipairs(W.players) do
             if pedFor(e.id)==e.ped then
                 local good,x,y,z=pcall(getCharCoordinates,e.ped)
@@ -3174,6 +3561,8 @@ do
                 end
             end
         end
+        if W.newwh then pcall(W.labels,now,cx,cy,cz,sw,sh,covers,selfId) end
+        pcall(W.statsTick)
     end
     function W.ui(C)
         local im,dl,at=C.im,C.dl,C.at
@@ -3193,7 +3582,7 @@ do
         text(x+w-34,y+14,W.expanded and 'v' or '>',hi,1.1)
         if not W.expanded then return end
         local sw,sh=getScreenResolution()
-        local sizeW=math.min(430,sw-16);local sizeH=190
+        local sizeW=math.min(430,sw-16);local sizeH=244
         local pos=at(x+w-sizeW,y+52)
         im.SetNextWindowPos(im.ImVec2(math.max(8,math.min(sw-sizeW-8,pos.x)),
             math.max(8,math.min(sh-sizeH-8,pos.y))),C.cond)
@@ -3233,11 +3622,34 @@ do
                 wd:AddLine(pt(23,102),pt(31,91),col(0,214,170,255),2)
             end
             text(44,89,'Скелет',hi,0.96)
-            text(14,122,'До 800 м; только игроки в стриме клиента.',dim,0.79)
-            text(14,142,(W.skeleton and W.boneAttempt and not W.bone)
+            -- v1.19.72: новый WH — таблички над игроками
+            im.SetCursorPos(im.ImVec2(14,140))
+            if im.InvisibleButton('##wh_new',im.ImVec2(sizeW-28,27)) then
+                W.newwh=not W.newwh;W.nativeAt=-999;W.dirtyAt=os.clock();W.statQueue={}
+                if W.nativeTick then pcall(W.nativeTick) end
+            end
+            rect(wd,pt(14,141),pt(34,161),col(255,255,255,35),4)
+            if W.newwh then
+                wd:AddLine(pt(18,151),pt(23,156),col(0,214,170,255),2)
+                wd:AddLine(pt(23,156),pt(31,145),col(0,214,170,255),2)
+            end
+            text(44,143,'Новый WH — таблички над игроками',hi,0.96)
+            im.SetCursorPos(im.ImVec2(14,172))
+            if im.InvisibleButton('##wh_stats',im.ImVec2(sizeW-28,27)) then
+                W.autoStats=not W.autoStats;W.dirtyAt=os.clock();W.statQueue={}
+            end
+            rect(wd,pt(14,173),pt(34,193),col(255,255,255,35),4)
+            if W.autoStats then
+                wd:AddLine(pt(18,183),pt(23,188),col(0,214,170,255),2)
+                wd:AddLine(pt(23,188),pt(31,177),col(0,214,170,255),2)
+            end
+            text(44,175,'Подтягивать /stats (семья и LVL)',hi,0.96)
+            text(14,204,(W.newwh and W.autoStats)
+                and 'Семья и уровень — из окна статистики (/stats).'
+                or 'До 800 м; только игроки в стриме клиента.',dim,0.76)
+            text(14,222,(W.skeleton and W.boneAttempt and not W.bone)
                 and 'Кости недоступны в этой сборке.'
-                or (W.nativeStatus or 'Ожидание проверки SA:MP...'),dim,0.79)
-            text(14,162,W.nativeStreamInfo or 'Проверка загруженных игроков...',dim,0.79)
+                or (W.nativeStatus or 'Ожидание проверки SA:MP...'),dim,0.76)
         end
         im.End()
     end
@@ -5486,6 +5898,8 @@ function grndCamCfgSave()
     f:write("bulkDelay=" .. tostring(GRND_BULK.delay) .. "\n")
     f:write("wh_enabled=" .. (GRND_WH.enabled and "1" or "0") .. "\n")
     f:write("wh_skeleton=" .. (GRND_WH.skeleton and "1" or "0") .. "\n")
+    f:write("wh_new=" .. (GRND_WH.newwh and "1" or "0") .. "\n")
+    f:write("wh_stats=" .. (GRND_WH.autoStats and "1" or "0") .. "\n")
     f:write("wh_distance=" .. tostring(GRND_WH.distance) .. "\n")
     for k, v in pairs(GRND_TRACER.cfg) do
         local value = type(v) == "boolean" and (v and "1" or "0") or tostring(v)
@@ -11903,32 +12317,48 @@ do
         return false
     end
 
-    local function stPushToRecon()
-        local RC = _G.GRND_RC
-        if type(RC) ~= "table" then return false end
-        RC.live = RC.live or {}
-        for k, v in pairs(ST.fields) do
-            RC.live[k] = grndToUtf(v)
-        end
+    -- Один и тот же «пакет полей» уходит и в карточку слежки, и в кэш по ID
+    -- (v1.19.72: по кэшу рисуются таблички нового WH).
+    local function stPack()
+        local out = {}
+        for k, v in pairs(ST.fields) do out[k] = grndToUtf(v) end
         if ST.fields.rc_level or ST.fields.rc_exp then
             local lv = ST.fields.rc_level
             if lv and ST.fields.rc_exp then
-                RC.live.rc_level_exp = grndToUtf(lv .. " (" .. ST.fields.rc_exp .. ")")
+                out.rc_level_exp = grndToUtf(lv .. " (" .. ST.fields.rc_exp .. ")")
             else
-                RC.live.rc_level_exp = grndToUtf(lv or ST.fields.rc_exp)
+                out.rc_level_exp = grndToUtf(lv or ST.fields.rc_exp)
             end
         end
-        if ST.fields.rc_today then
-            RC.live.today = grndToUtf(ST.fields.rc_today)
-        end
+        if ST.fields.rc_today then out.today = grndToUtf(ST.fields.rc_today) end
         if ST.fields.rc_org then
             local org = ST.fields.rc_org
             local rk = ST.fields.rc_rank
             if rk and rk ~= "—" and org ~= "Нет" then
-                RC.live.rc_org = grndToUtf(org .. " (" .. rk .. ")")
+                out.rc_org = grndToUtf(org .. " (" .. rk .. ")")
             end
         end
-        if ST.statsAt then RC.live.rc_stats_at = ST.statsAt end
+        if ST.statsAt then out.rc_stats_at = ST.statsAt end
+        return out
+    end
+
+    local function stPushToRecon()
+        local RC = _G.GRND_RC
+        if type(RC) ~= "table" then return false end
+        local pid = tonumber(ST.targetId or ST.lastTarget or 0)
+        local pack = stPack()
+        -- v1.19.72: ответ на «дозапрос» самого WH (src == "wh") кладём ТОЛЬКО
+        -- в кэш по ID игрока: карточка слежки чужой статистикой не наполняется,
+        -- её окно не продлевается, цель слежки не подменяется.
+        if ST.src == "wh" and pid > 0 and pid ~= tonumber(RC.id or 0) then
+            RC.statsCache = RC.statsCache or {}
+            local cell = RC.statsCache[pid]
+            if type(cell) ~= "table" then cell = {} RC.statsCache[pid] = cell end
+            for k, v in pairs(pack) do cell[k] = v end
+            return true
+        end
+        RC.live = RC.live or {}
+        for k, v in pairs(pack) do RC.live[k] = v end
         -- v1.11.77: пока приходят данные по свежему запросу — карточка
         -- остаётся открытой (старые/чужие ответы её не продлевают)
         if type(RC.statsView) == "table" then
@@ -11944,7 +12374,7 @@ do
         end
         -- v1.11.77: статистика сохраняется по ID игрока — карточка каждого
         -- игрока показывает свои данные, а не последние полученные
-        local cid = tonumber(ST.targetId or ST.lastTarget or 0)
+        local cid = pid
         if cid and cid > 0 then
             RC.statsCache = RC.statsCache or {}
             RC.statsCache[cid] = grndStatsCopy(RC.live)
@@ -12220,6 +12650,12 @@ do
     -- v1.11.77: наружу — запрос статистики (кнопка «Статистика» зовёт его)
     _G.grndStatsRequest = stRequest
 
+    -- v1.19.72: очередь WH спрашивает только тогда, когда модуль статистики
+    -- свободен: свой запрос не должен перебивать чужой/ручной и ждать ответ.
+    _G.grndStatsBusy = function()
+        return stOursAwaiting() and true or false
+    end
+
     -- тик из основного цикла: команды, таймаут, автозапрос при реконе
     _G.grndStatsTick = function()
         local now = os.clock()
@@ -12298,7 +12734,7 @@ end
 -- =====================================================================
 --  МОДУЛЬ 11 (v1.5.1, сборка 2): GRND KILL LIST — кастомный килл-лист (чекер №1).
 --  ------------------------------------------------------------------
---  v1.19.71: чекеры (килл-лист и «Админы в сети») рисуются ПЕРВЫМИ — ПОД
+--  v1.19.72: чекеры (килл-лист и «Админы в сети») рисуются ПЕРВЫМИ — ПОД
 --  всеми окнами: любое окно (карточка рекона, оверлей репортов, окно
 --  статистики) закрывает их там, где стоит, и «сквозь окно» чекер не видно.
 --  Целиком они прячутся только под большими окнами, которые и раньше их
@@ -18248,12 +18684,12 @@ function _G.grndHandleActionBtn(cleanLabel, tid, tNick, targetPed)
     end
 
     if cleanLabel == "Выдать ХП" then
-        -- v1.19.71: повторное нажатие значка убирает подпанель
+        -- v1.19.72: повторное нажатие значка убирает подпанель
         -- (старая запись `and nil or` не работала: nil или "key" всегда даёт "key")
         if RC.actSubPopup == "hp" then RC.actSubPopup = nil else RC.actSubPopup = "hp" end
         RC.actHpVal = grndRcClampHp(RC.actHpVal)
     elseif cleanLabel == "Выдать броню" then
-        -- v1.19.71: повторное нажатие значка убирает подпанель
+        -- v1.19.72: повторное нажатие значка убирает подпанель
         -- (старая запись `and nil or` не работала: nil или "key" всегда даёт "key")
         if RC.actSubPopup == "arm" then RC.actSubPopup = nil else RC.actSubPopup = "arm" end
         RC.actArmVal = RC.actArmVal or 100
@@ -18282,7 +18718,7 @@ function _G.grndHandleActionBtn(cleanLabel, tid, tNick, targetPed)
         sampSendChat("/flip " .. tostring(tid))
         if notify and notify.add then notify.add("Перевёрнуто т/с игрока " .. tNick .. " (/flip " .. tid .. ")", "ok", 2) end
     elseif cleanLabel == "Заправить т/с" then
-        -- v1.19.71: повторное нажатие значка убирает подпанель
+        -- v1.19.72: повторное нажатие значка убирает подпанель
         -- (старая запись `and nil or` не работала: nil или "key" всегда даёт "key")
         if RC.actSubPopup == "fuel" then RC.actSubPopup = nil else RC.actSubPopup = "fuel" end
         local curV = _G.grndGetTargetVehId(tid, targetPed)
@@ -18340,7 +18776,7 @@ function _G.grndHandleActionBtn(cleanLabel, tid, tNick, targetPed)
         RC.actSubPopup = nil
         sampSendChat("/alic " .. tostring(tid))
     elseif cleanLabel == "Сообщить в /a" then
-        -- v1.19.71: повторное нажатие значка убирает подпанель
+        -- v1.19.72: повторное нажатие значка убирает подпанель
         -- (старая запись `and nil or` не работала: nil или "key" всегда даёт "key")
         if RC.actSubPopup == "report_a" then RC.actSubPopup = nil else RC.actSubPopup = "report_a" end
     else
@@ -18352,7 +18788,7 @@ function _G.grndHandleActionBtn(cleanLabel, tid, tNick, targetPed)
 end
 
 -- =====================================================================
---  v1.19.71: ЗНАЧКИ ПАНЕЛИ ДЕЙСТВИЙ (компактная полоса вместо окна)
+--  v1.19.72: ЗНАЧКИ ПАНЕЛИ ДЕЙСТВИЙ (компактная полоса вместо окна)
 --  ---------------------------------------------------------------------
 --  Панель «Действия» стала компактной: подписи убраны, вместо них —
 --  линейные значки в стиле игрового интерфейса (как в образце заказчика).
@@ -18444,7 +18880,7 @@ end
 function grndActLayout(items, maxW)
     local n = #items
     maxW = tonumber(maxW) or 880
-    -- v1.19.71: внутри группы значки стоят ровно (8 px), а на границе групп
+    -- v1.19.72: внутри группы значки стоят ровно (8 px), а на границе групп
     -- промежуток шире (24 px) — разделитель рисуется посередине и получает
     -- по 12 px воздуха с каждой стороны, вплотную к кнопкам он не прилипает.
     local GAP, PAD, BOUND = 8, 12, 24
@@ -18459,7 +18895,7 @@ function grndActLayout(items, maxW)
         end
         return w
     end
-    -- v1.19.71: значки крупнее (полоса стала толще): 36 px вместо 32
+    -- v1.19.72: значки крупнее (полоса стала толще): 36 px вместо 32
     local BTN = 36
     while BTN > 26 and widthFor(BTN, 1, n) > maxW do BTN = BTN - 1 end
     -- Ряды набираем жадно, по одному значку: ряд закрывается, как только
@@ -22261,7 +22697,7 @@ function grndAdminSettingsDraw(C)
 
         -- WH parameters are inline, not a separate floating subwindow.
         local W=GRND_WH
-        local whHeight=W.expanded and 176 or 64
+        local whHeight=W.expanded and 236 or 64
         surface(y,whHeight)
         text(x+16,y+10,'WH на игроков',TH.textHi,1.02)
         text(x+16,y+35,'Ники, здоровье и броня игроков',TH.textMuted,0.84)
@@ -22282,6 +22718,21 @@ function grndAdminSettingsDraw(C)
             if toggle(x+w-62,y+118,W.skeleton,'wh_skeleton') then
                 W.skeleton=not W.skeleton;W.dirtyAt=os.clock()
                 if W.skeleton and W.initBones then pcall(W.initBones) end;save()
+            end
+            -- v1.19.72: новый WH — таблички над игроками (ник, семья, HP,
+            -- ID и LVL). Семья и уровень подтягиваются из окна /stats.
+            text(x+16,y+152,'Новый WH',TH.textHi,0.92)
+            text(x+16,y+172,'Таблички над игроками: ник, семья, HP, ID, LVL',TH.textMuted,0.78)
+            if toggle(x+w-62,y+146,W.newwh,'wh_new') then
+                W.newwh=not W.newwh;W.nativeAt=-999;W.dirtyAt=os.clock()
+                W.statQueue={}
+                if W.nativeTick then pcall(W.nativeTick) end
+                save()
+            end
+            text(x+16,y+196,'Подтягивать /stats',TH.textHi,0.92)
+            text(x+16,y+216,'Семья и уровень — из того же окна, что карточка',TH.textMuted,0.78)
+            if toggle(x+w-62,y+190,W.autoStats,'wh_stats') then
+                W.autoStats=not W.autoStats;W.dirtyAt=os.clock();W.statQueue={};save()
             end
         end
         y=y+whHeight+12
@@ -33507,7 +33958,7 @@ function grndMainBody()
             local mx, my
             if doInteract then
                 mx, my = klMousePos()
-                -- v1.19.71: под окном (карточка рекона, оверлей репортов,
+                -- v1.19.72: под окном (карточка рекона, оверлей репортов,
                 -- окно статистики) строки чекера не нажимаются — клик там
                 -- принадлежит окну
                 if mx and tonumber(my) and type(grndCheckerPointTaken) == "function"
@@ -33543,7 +33994,7 @@ function grndMainBody()
             -- ImGui, закрыл бы надписи. Скругления в DX-режиме нет — фон
             -- по умолчанию выключен, включённый становится прямым.
             if dxf and KL.bg then
-                -- v1.19.71: DX-плашка ложится поверх ВСЕХ окон ImGui, поэтому
+                -- v1.19.72: DX-плашка ложится поверх ВСЕХ окон ImGui, поэтому
                 -- под окном её не рисуем — разрезаем по габаритам окна
                 local pieces = grndCheckerClipRect(KL.x, KL.y, W, H)
                 if pieces then
@@ -33593,7 +34044,7 @@ function grndMainBody()
                     local twPx = klTextPx(txt)
                     if dxf then
                         local ax, ay = KL.x + x, KL.y + y
-                        -- v1.19.71: надпись GDI рисуется поверх всех окон —
+                        -- v1.19.72: надпись GDI рисуется поверх всех окон —
                         -- под окном её просто НЕ рисуем (иначе чекер был бы
                         -- виден сквозь карточку рекона и оверлей репортов)
                         if not grndCheckerBandTaken(ax, ay, ax + twPx, ay + fpx + 6) then
@@ -34014,7 +34465,7 @@ function grndMainBody()
                     end
                 end
                 if not mx then mx, my = klMousePos() end
-                -- v1.19.71: под окном строки не нажимаются (см. килл-лист)
+                -- v1.19.72: под окном строки не нажимаются (см. килл-лист)
                 if mx and tonumber(my) and type(grndCheckerPointTaken) == "function"
                    and grndCheckerPointTaken(mx, my) then
                     mx, my = nil, nil
@@ -34054,7 +34505,7 @@ function grndMainBody()
                 local sal = shA
                 if dxf then
                     local ax, ay = AO.x + x, AO.y + y
-                    -- v1.19.71: GDI-надпись поверх всех окон — под окном её
+                    -- v1.19.72: GDI-надпись поверх всех окон — под окном её
                     -- не рисуем (см. килл-лист)
                     if not grndCheckerBandTaken(ax, ay, ax + aoTextPx(txt), ay + fpx + 6) then
                         if sal > 0 then
@@ -34075,7 +34526,7 @@ function grndMainBody()
                 x, y, w, h = math.floor(x), math.floor(y), math.floor(w), math.floor(h)
                 if w < 1 or h < 1 then return end
                 if type(renderDrawBox) == "function" then
-                    -- v1.19.71: DX-плашка поверх всех окон — под окном не
+                    -- v1.19.72: DX-плашка поверх всех окон — под окном не
                     -- рисуем (режем по габаритам окна)
                     local pieces = grndCheckerClipRect(AO.x + x, AO.y + y, w, h)
                     if pieces then
@@ -38416,7 +38867,7 @@ function grndMainBody()
             local fx = math.floor((resX - FW) / 2)
             local fy = math.max(20, math.floor((resY - FH) / 2) - 30)
 
-            -- v1.19.71: габариты окна нужны чекерам — под ним строки не
+            -- v1.19.72: габариты окна нужны чекерам — под ним строки не
             -- нажимаются (клик принадлежит этому окну, а не чекеру)
             if RC then RC.statsPopRect = { x = fx, y = fy, w = FW, h = FH } end
             im.SetNextWindowPos(im.ImVec2(fx, fy), COND_ALWAYS)
@@ -40391,7 +40842,7 @@ function grndMainBody()
                 local hoveredCandidate = nil
                 local bestDist = 99999999
 
-                -- v1.19.71: пока открыта панель действий, следим ТОЛЬКО за своим
+                -- v1.19.72: пока открыта панель действий, следим ТОЛЬКО за своим
                 -- игроком — белая кнопка остаётся на месте и повторное нажатие
                 -- по ней закрывает панель (см. ниже).
                 local actTargetHold = false
@@ -40451,7 +40902,7 @@ function grndMainBody()
 
                 local nowTime = os.clock()
                 if RC.actionsWinOpen then
-                    -- v1.19.71: панель открыта — кнопка взаимодействия остаётся
+                    -- v1.19.72: панель открыта — кнопка взаимодействия остаётся
                     -- видимой (по ней же панель и закрывается), но «прилипает»
                     -- только к тому игроку, для которого панель открыта.
                     if hoveredCandidate then
@@ -40476,7 +40927,7 @@ function grndMainBody()
                 -- Отрисовка белой круглой кнопки при наведении на персонажа
                 local curTarget = RC.hoverTarget
 
-                -- v1.19.71: кнопка взаимодействия рисуется и при открытой панели
+                -- v1.19.72: кнопка взаимодействия рисуется и при открытой панели
                 -- действий — повторный клик по ней эту панель закрывает.
                 if RC.interactHover and curTarget and curTarget.csx and RC.cursor and not (menu and menu.open) then
                     local csx = curTarget.csx
@@ -40587,7 +41038,7 @@ function grndMainBody()
 
                         -- АКТИВАЦИЯ: ТОЛЬКО при нажатии на эту кнопку!
                         if btnClicked and RC.actionsWinOpen then
-                            -- v1.19.71: повторное нажатие кнопки закрывает панель
+                            -- v1.19.72: повторное нажатие кнопки закрывает панель
                             RC.actionsWinOpen = false
                             RC.actSubPopup = nil
                             RC.actDragging = false
@@ -40601,7 +41052,7 @@ function grndMainBody()
                             RC.actTargetPed = curTarget.ped
                             RC.actSubPopup = nil
 
-                            -- v1.19.71: панель значков встаёт рядом с кнопкой
+                            -- v1.19.72: панель значков встаёт рядом с кнопкой
                             -- взаимодействия (см. отрисовку панели). Точку «якоря»
                             -- и время открытия запоминаем: первое — для позиции,
                             -- второе — чтобы клик, которым панель открыли, не
@@ -40622,7 +41073,7 @@ function grndMainBody()
                 end
 
                 -- =====================================================
-                --  ПАНЕЛЬ ДЕЙСТВИЙ (v1.19.71) — компактная полоса значков
+                --  ПАНЕЛЬ ДЕЙСТВИЙ (v1.19.72) — компактная полоса значков
                 --  ------------------------------------------------------------------
                 --  Вместо большого окна с подписями — узкая «таблетка» со
                 --  значками, как в образце заказчика: без заголовка «Действия»,
@@ -40634,7 +41085,7 @@ function grndMainBody()
                 --  Значки сгруппированы по смыслу, между группами — тонкая
                 --  линия; над наведённым значком показывается его название.
                 -- =====================================================
-                -- v1.19.71: если цель слежки сменилась (например, администратор
+                -- v1.19.72: если цель слежки сменилась (например, администратор
                 -- кликнул по чекеру), панель действий закрываем: она открыта
                 -- для конкретного игрока и не должна «переезжать» на другого.
                 if RC.actionsWinOpen and RC.id ~= nil
@@ -40812,7 +41263,7 @@ function grndMainBody()
                             afill(row.x, ry, row.w, A.pillH, col32(10, 14, 20, 236), 12)
                             aframe(row.x + 0.5, ry + 0.5, row.w - 1, A.pillH - 1,
                                 col32(255, 255, 255, 24), 12)
-                            -- v1.19.71: разделители заметнее (ярче и выше):
+                            -- v1.19.72: разделители заметнее (ярче и выше):
                             -- тонкая светлая черта ровно в зазоре между группами
                             for k = 1, #row.divs do
                                 pcall(adl.AddLine, adl, aat(row.divs[k], ry + 8),
@@ -40830,7 +41281,7 @@ function grndMainBody()
                                 local bAct = (im.IsItemActive and im.IsItemActive()) or false
                                 local isSub = (subKey ~= nil and RC.actSubPopup == subKey)
                                 local hot = isSub or bHov or bAct
-                                -- v1.19.71: кнопки «качественнее» — мягкая тень,
+                                -- v1.19.72: кнопки «качественнее» — мягкая тень,
                                 -- объёмная заливка, рамка и верхний блик: в покое
                                 -- кнопка читается, при наведении подсвечивается.
                                 afill(bx + 1, by + 2, A.lo.btn, A.lo.btn, col32(0, 0, 0, 70), 9)
@@ -41097,7 +41548,7 @@ function grndMainBody()
                 end
             end
             local wantCursor = false
-            -- v1.19.71: чекеры (килл-лист и «Админы в сети») рисуются ПЕРВЫМИ,
+            -- v1.19.72: чекеры (килл-лист и «Админы в сети») рисуются ПЕРВЫМИ,
             -- под всеми окнами: любое окно закрывает их там, где стоит, — и
             -- «сквозь окно» чекер больше не видно. При этом в слежке (карточка
             -- рекона открыта постоянно) чекеры НЕ пропадают: их видно рядом с
@@ -41140,10 +41591,16 @@ function grndMainBody()
                     if list[i] then checkersHidden = true; break end
                 end
             end
+            -- v1.19.72: тот же признак «большие окна открыты» нужен табличкам
+            -- нового WH: DX-текст рисуется ПОВЕРХ окон ImGui, поэтому под
+            -- меню, табло, репортом, логом, формами и диалогом сервера
+            -- таблички не рисуются вовсе (в слежке карточка — не «большое
+            -- окно», там таблички видны)
+            _G.GRND_BIGUI_UP = checkersHidden and true or false
             -- МОДУЛЬ 11 (v1.5): килл-лист (чекер №1). Рисуется, пока чекер
             -- включён (или пока панель «в руке» при перемещении); под большими
             -- окнами прячется целиком, под остальными его закрывает само окно
-            -- (чекеры рисуются ПЕРВЫМИ — см. v1.19.71 выше).
+            -- (чекеры рисуются ПЕРВЫМИ — см. v1.19.72 выше).
             if not gated and GRND_KL and not checkersHidden then
                 local ok, e = pcall(drawKillList, dt)
                 if not ok then logRenderErr("killlist", e)

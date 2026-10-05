@@ -99,3 +99,6 @@ end
 function serverDialog()
     return _G.grndStatsOnDialog(1, 0, DIALOG_TITLE, "Ок", "", DIALOG_TEXT)
 end
+function serverDialogText(text)
+    return _G.grndStatsOnDialog(1, 0, DIALOG_TITLE, "Ок", "", tostring(text))
+end

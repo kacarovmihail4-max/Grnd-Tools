@@ -2,15 +2,18 @@
 """Мутации скрипта для source_check (r69): каждая ломает одну вещь из r69,
 source_check обязан это заметить. Молчаливый проход = слабая проверка.
 """
-import io, os, subprocess, sys
+import io, os, re, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', 'grnd_adm_tools.lua')
 base = io.open(SRC, encoding='utf-8').read()
 
+_ver = re.search(r'GRND_SCRIPT_VERSION = "([0-9.]+)"', base)
+_ver = _ver.group(1) if _ver else "0.0.0"
+
 MUTATIONS = [
     ("версия осталась прежней",
-     'GRND_SCRIPT_VERSION = "1.19.71"', 'GRND_SCRIPT_VERSION = "1.19.69"'),
+     'GRND_SCRIPT_VERSION = "%s"' % _ver, 'GRND_SCRIPT_VERSION = "1.19.1"'),
     ("в панель вернули крестик",
      '                        -- Подсказка над наведённым значком',
      '                        im.InvisibleButton("##act_close_btn", im.ImVec2(1, 1))\n'
@@ -102,6 +105,33 @@ MUTATIONS = [
     ("повторное нажатие значка не убирает подпанель",
      '        if RC.actSubPopup == "hp" then RC.actSubPopup = nil else RC.actSubPopup = "hp" end',
      '        RC.actSubPopup = (RC.actSubPopup == "hp") and nil or "hp"'),
+    # ---- v1.19.72: новый WH (таблички над игроками) ----
+    ("новый WH выпал из конфига (ключ wh_new потерян)",
+     'f:write("wh_new=" .. (GRND_WH.newwh and "1" or "0") .. "\\n")',
+     'f:write("newwh=" .. (GRND_WH.newwh and "1" or "0") .. "\\n")'),
+    ("ключ wh_* больше не доходит до модуля WH",
+     'GRND_WH.load(k:sub(4), v)', 'GRND_WH.load(k, v)'),
+    ("уровень перестал читаться из окна статистики",
+     'local raw = cell and (cell.rc_level_exp or cell.rc_level) or nil', 'local raw = nil'),
+    ("табличка снова привязана к груди игрока, а не над головой",
+     'local sx, sy = project(x, y, z + 0.9, sw, sh)', 'local sx, sy = project(x, y, z, sw, sh)'),
+    ("ответ WH наполняет карточку слежки",
+     'if ST.src == "wh" and pid > 0 and pid ~= tonumber(RC.id or 0) then', 'if false then'),
+    ("новый режим не скрывает штатные ники",
+     'function W.nativeTagsWanted() return W.newwh and 0 or 1 end',
+     'function W.nativeTagsWanted() return 1 end'),
+    ("дозапрос WH уходит без пометки wh",
+     "pcall(_G.grndStatsRequest, id, 'wh')", "pcall(_G.grndStatsRequest, id, 'auto')"),
+    ("таблички не рисуются из кадра",
+     'if W.newwh then pcall(W.labels,now,cx,cy,cz,sw,sh,covers,selfId) end', 'if false then end'),
+    ("текст семьи прижат к левому краю плашки",
+     'famX + (famW - m(pxF, famTxt)) / 2', 'famX + padX'),
+    ("таблички нового WH рисуются поверх больших окон",
+     'if _G.GRND_BIGUI_UP then W.labelsDrawn = false return end',
+     'if false then W.labelsDrawn = false return end'),
+    ("галочка нового WH выпала из настроек админки",
+     "if toggle(x+w-62,y+146,W.newwh,'wh_new') then",
+     "if toggle(x+w-62,y+146,W.newwh,'wh_old') then"),
 ]
 
 bad = 0

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Проверка исходника: кнопки видны без наведения, наведение из одного источника,
 снятие стилей один-в-один, «песочница» панели, диагностика, отсутствие голых im."""
+import re
 import io, sys, re
 SRC = sys.argv[1] if len(sys.argv) > 1 else '/home/user/Grnd-Tools/grnd_adm_tools.lua'
 s = io.open(SRC, encoding='utf-8').read()
@@ -67,7 +68,20 @@ need('local function mpDiag()' in s, 'нет функции mpDiag')
 need('grnd_diag.log' in s, 'диагностика не пишет отчёт в файл')
 need('MP.blockError' in s, 'диагностика не сообщает о сбоях блоков')
 need('MP.drawFrames = (MP.drawFrames or 0) + 1' in s, 'drawInner не считает кадры')
-need('GRND_SCRIPT_VERSION = "1.19.71"' in s, 'версия не 1.19.71')
+# версия: объявлена один раз, выводится в игру и не откатывается назад
+_m = re.search(r'GRND_SCRIPT_VERSION = "([0-9.]+)"', s)
+need(_m is not None, 'версия скрипта не объявлена')
+if _m:
+    _ver = _m.group(1)
+    need(s.count('GRND_SCRIPT_VERSION = "') == 1, 'версия скрипта объявлена не один раз')
+    need('script_version(GRND_SCRIPT_VERSION)' in s, 'версия скрипта не выводится в игру')
+    def _vnum(v):
+        local = [int(x) for x in v.split('.')]
+        while len(local) < 3:
+            local.append(0)
+        return tuple(local[:3])
+    need(_vnum(_ver) >= (1, 19, 60), 'версия скрипта откатилась назад: ' + _ver)
+    need(('v%s' % _ver) in s, 'в тексте скрипта нет упоминания текущей версии ' + _ver)
 
 # v1.19.57: производительность слежки — «зашёл в слежку и всё зависло»
 # 1) бюджет чтений памяти: любой проход по структурам samp.dll ограничен
@@ -1081,10 +1095,10 @@ need('RC.windowPos, RC.windowSize' in s or ('RC.windowPos' in s and 'RC.windowSi
      'карточка рекона не отдаёт свои габариты')
 need('grndCheckerRectOk(RC.statsPopRect)' in s, 'окно статистики не отдаёт свои габариты')
 need('grndCheckerRectOk(R.rect)' in s, 'оверлей репортов не отдаёт свои габариты')
-_kl_guard = s[s.index('-- v1.19.71: под окном (карточка рекона'):]
+_kl_guard = s[s.index('под окном (карточка рекона'):]
 _kl_guard = _kl_guard[:_kl_guard.index('if mx and tonumber(my) and KL.x')]
 need('grndCheckerPointTaken(mx, my)' in _kl_guard, 'килл-лист игнорирует окна поверх себя')
-_ao_guard = s[s.index('-- v1.19.71: под окном строки не нажимаются (см. килл-лист)'):]
+_ao_guard = s[s.index('под окном строки не нажимаются (см. килл-лист)'):]
 _ao_guard = _ao_guard[:_ao_guard.index('if mx and tonumber(my) and AO.x')]
 need('grndCheckerPointTaken(mx, my)' in _ao_guard, '«Админы в сети» игнорируют окна поверх себя')
 need('RC.statsPopRect = { x = fx, y = fy, w = FW, h = FH }' in s,
@@ -1274,6 +1288,83 @@ for _k in ('hp', 'arm', 'fuel', 'report_a'):
          % (_k, _k) in s, 'повторное нажатие значка не убирает подпанель ' + _k)
     need('(RC.actSubPopup == "%s") and nil or' % _k not in s,
          'осталась нерабочая запись `and nil or` в переключателе подпанели ' + _k)
+
+# ---------------------------------------------------------------------------
+# v1.19.72: новый WH — таблички над игроками (ник, семья, HP, ID, LVL)
+# ---------------------------------------------------------------------------
+need('local WH_C = {' in s, 'нет цветовой схемы табличек нового WH')
+need("nick      = 0xFFFFFFFF," in s, 'ник таблички не белый')
+need("lvlBg     = 0xFFF5C518," in s, 'плашка уровня не жёлтая')
+need('function W.labelLayout(cx, top, d, measure)' in s, 'нет раскладки таблички')
+need('function W.labelHeight(d)' in s, 'нет высоты таблички')
+need('function W.headPoint(x, y, z, sw, sh)' in s, 'нет точки над головой')
+need('local sx, sy = project(x, y, z + 0.9, sw, sh)' in s,
+     'табличка привязана не к точке над головой')
+need('function W.drawLabel(cx, top, d, covers)' in s, 'нет отрисовки таблички')
+need('if whCovered(covers, minX - 2, minY - 2, (maxX - minX) + 4, (maxY - minY) + 4) then' in s,
+     'табличка не проверяет, не закрыта ли она окном')
+need('local k = sh / 1080' in s, 'таблички не масштабируются под разрешение')
+need('famX + (famW - m(pxF, famTxt)) / 2' in s, 'текст семьи не по центру плашки')
+need('if W.drawLabel(sx, sy - W.labelHeight(d), d, covers) then' in s,
+     'табличка не поднимается над головой на свою высоту')
+
+# семья и уровень — из ТОГО ЖЕ окна статистики, что наполняет карточку слежки
+need('local function whFamily(cell)' in s, 'нет чтения семьи из окна статистики')
+need("cell.rc_family" in s, 'семья берётся не из поля rc_family')
+need("if f == '' or f == 'Нет' or f == '—' or f == '-' or f == 'нет' then return nil end" in s,
+     '«Нет»/прочерк не считаются отсутствием семьи')
+need('local function whLevel(cell)' in s, 'нет чтения уровня из окна статистики')
+need('local raw = cell and (cell.rc_level_exp or cell.rc_level) or nil' in s,
+     'уровень берётся не из того же окна статистики')
+need("local n = tostring(raw):match('(%d+)')" in s, 'уровень не разбирается из «5 (12345)»')
+need('W.familyOf, W.levelOf = whFamily, whLevel' in s, 'семья/уровень не доступны стенду')
+need("local famTxt = fam or (d.known and WH_C.noFam or WH_C.noData)" in s,
+     'нет подписи «Без семьи»/«нет данных»')
+need("lvl and (tostring(lvl) .. ' LVL') or WH_C.noLvl" in s, 'уровень не подписывается «N LVL»')
+
+# очередь дозапроса /stats: один игрок за раз, только когда статистика свободна
+need('local WH_STAT_GAP   = 2.5' in s and 'local WH_STAT_RETRY = 600' in s
+     and 'local WH_STAT_RANGE = 45' in s, 'нет порогов очереди дозапроса WH')
+need("pcall(_G.grndStatsRequest, id, 'wh')" in s, 'дозапрос WH уходит без пометки wh')
+need("if type(_G.grndStatsIsManual) == 'function' and _G.grndStatsIsManual() then return end" in s,
+     'автозапрос WH перебивает ручной /stats')
+need("if type(_G.grndStatsBusy) == 'function' and _G.grndStatsBusy() then return end" in s,
+     'автозапрос WH не ждёт, пока статистика занята')
+need('if not W.enabled or not W.newwh or not W.autoStats then' in s,
+     'очередь дозапроса не выключается галочками')
+# ответ на запрос WH — ТОЛЬКО в кэш по ID (карточку слежки не трогаем)
+need('if ST.src == "wh" and pid > 0 and pid ~= tonumber(RC.id or 0) then' in s,
+     'ответ на WH-запрос кладётся в карточку слежки, а не в кэш')
+need('RC.statsCache[pid] = cell' in s, 'нет ячейки кэша WH по ID игрока')
+need('_G.grndStatsBusy = function()' in s, 'нет признака «статистика занята»')
+
+# переключение режима: галочки, конфиг, штатные ники
+need('function W.nativeTagsWanted() return W.newwh and 0 or 1 end' in s,
+     'новый режим не скрывает штатные ники')
+need(s.count('W.newwh=not W.newwh;W.nativeAt=-999') >= 2,
+     'галочки нового WH не сбрасывают кэш штатных ников')
+need("f:write(\"wh_new=\" .. (GRND_WH.newwh and \"1\" or \"0\")" in s, 'ключ wh_new не сохраняется')
+need("f:write(\"wh_stats=\" .. (GRND_WH.autoStats and \"1\" or \"0\")" in s, 'ключ wh_stats не сохраняется')
+need('elseif k:sub(1, 3) == "wh_" then' in s and 'GRND_WH.load(k:sub(4), v)' in s,
+     'ключи wh_* не читаются из конфига')
+need("W.autoStats=(v=='1')" in s, 'галочка «Подтягивать /stats» не читается из конфига')
+need("if toggle(x+w-62,y+146,W.newwh,'wh_new') then" in s, 'галочки нового WH нет в настройках админки')
+need("if toggle(x+w-62,y+190,W.autoStats,'wh_stats') then" in s,
+     'галочки «Подтягивать /stats» нет в настройках админки')
+need("im.InvisibleButton('##wh_new',im.ImVec2(sizeW-28,27))" in s,
+     'галочки нового WH нет во встроенном окне WH')
+need("im.InvisibleButton('##wh_stats',im.ImVec2(sizeW-28,27))" in s,
+     'галочки «Подтягивать /stats» нет во встроенном окне WH')
+need('if not W.newwh then return end' in s, 'таблички рисуются и в старом режиме')
+need('if not W.enabled or (not W.skeleton and not W.newwh) then' in s,
+     'таблички не рисуются без скелета (или ломают старый режим)')
+need('if W.newwh then pcall(W.labels,now,cx,cy,cz,sw,sh,covers,selfId) end' in s,
+     'таблички не рисуются из кадра WH')
+need('pcall(W.statsTick)' in s, 'очередь дозапроса не тикает из кадра')
+need('_G.GRND_BIGUI_UP = checkersHidden and true or false' in s,
+     'признак «большие окна открыты» не выставляется')
+need('if _G.GRND_BIGUI_UP then W.labelsDrawn = false return end' in s,
+     'таблички рисуются поверх больших окон ImGui')
 
 if fails:
     for f in fails:
