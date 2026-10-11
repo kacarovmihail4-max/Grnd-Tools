@@ -1,6 +1,14 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.204"
+GRND_SCRIPT_VERSION = "1.19.205"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.205 — правки по замечаниям:
+--   1) Автоскриншот выдачи снимает САМ СКРИПТ (D3D9: задний буфер -> системная
+--      поверхность -> PNG штатной d3dx9). Доустанавливать ничего не нужно:
+--      Screenshot.asi перестал быть обязательным, а кадр ложится точно по
+--      указанному пути — поэтому его появление честно проверяется по файлу.
+--   2) Порядок способов: свой кадр -> плагин Screenshot.asi -> штатная F8
+--      (кадр ищется в папке скриншотов SA-MP). В чат и журнал уходит только то,
+--      что реально найдено на диске, с указанием способа.
 -- v1.19.204 — правки по замечаниям:
 --   1) Автоскриншот выдачи: «сохранён» пишется в чат и журнал только тогда,
 --      когда файл кадра реально найден. Плагин Screenshot.asi вызывается и
@@ -36236,14 +36244,251 @@ do
         return false
     end
 
-    -- Запросить кадр. Возвращает:
-    --   true, план  — запрос отправлен, файл ищем по плану (paths/dirs);
-    --   false, почему — запрос даже не ушёл.
-    -- ВНИМАНИЕ: PA.shot — тумблер (bool), поэтому функция зовётся shotTake.
-    function PA.shotTake(nick)
-        if PA.shot == false then return false, "выключено" end
+    -- ---------- свой кадр через D3D9 (v1.19.205) ----------
+    -- Зачем: Screenshot.asi может быть не установлен, а штатная F8 у SA-MP
+    -- сохраняет кадр не всегда и всегда в свою папку. Тогда в чат честно уходит
+    -- «не сохранён», но кадра от этого не появляется. Поэтому скрипт умеет
+    -- снимать кадр САМ — доустанавливать ничего не нужно.
+    --
+    -- Как: берём задний буфер устройства (это ровно то, что видно в окне игры в
+    -- этом кадре), копируем его в системную поверхность (GetRenderTargetData) и
+    -- сжимаем в PNG штатной библиотекой D3DX — библиотека d3dx9_*.dll уже есть
+    -- в системе, её требует сама GTA. Файл ложится ровно по тому пути, который
+    -- задан в настройках, поэтому его появление можно честно проверить.
+    --
+    -- Где: кадр снимается в обработчике onD3DPresent. Устройство D3D9 нельзя
+    -- трогать из чужого потока, а этот обработчик работает в потоке отрисовки.
+    -- Основной Lua-поток только ставит задачу и потом читает результат.
+    local SHOT_D3DX, SHOT_D3DX_TRIED, SHOT_D3DX_NAME = nil, false, nil
+    local SHOT_D3DX_LIST = {
+        "d3dx9_43", "d3dx9_42", "d3dx9_41", "d3dx9_40", "d3dx9_39", "d3dx9_38",
+        "d3dx9_37", "d3dx9_36", "d3dx9_35", "d3dx9_34", "d3dx9_33", "d3dx9_32",
+        "d3dx9_31", "d3dx9_30", "d3dx9_29", "d3dx9_28", "d3dx9_27", "d3dx9_26",
+        "d3dx9_25", "d3dx9_24",
+    }
+    local D3D_POOL_SYSTEMMEM = 2   -- D3DPOOL_SYSTEMMEM
+    local D3D_MONO = 0             -- D3DBACKBUFFER_TYPE_MONO
+    local D3D_A8R8G8B8 = 21        -- D3DFMT_A8R8G8B8
+    local D3DXIFF_PNG = 3          -- D3DXIMAGE_FILEFORMAT
+    local SHOT_JOB_WAIT = 1.5      -- сколько ждём поток отрисовки, затем запасной путь
+
+    local function paShotLibs()
+        local okF, ffi = pcall(require, "ffi")
+        if okF and type(ffi) == "table" then return ffi end
+        return nil
+    end
+
+    -- Библиотека D3DX: годится любая d3dx9_*.dll — функции в них одни и те же,
+    -- а какой именно версии файл лежит в системе, зависит от сборки DirectX.
+    local function paShotD3dx()
+        if SHOT_D3DX_TRIED then return SHOT_D3DX end
+        SHOT_D3DX_TRIED = true
+        local ffi = paShotLibs()
+        if not ffi then return nil end
+        local okD = pcall(ffi.cdef, [[
+            int __stdcall D3DXSaveSurfaceToFileW(const void* pDestFile, int DestFormat,
+                void* pSrcSurface, const void* pSrcPalette, const void* pSrcRect);
+        ]])
+        if not okD then
+            -- на всякий случай: без указания соглашения (сборки LuaJIT разные)
+            pcall(ffi.cdef, [[
+                int D3DXSaveSurfaceToFileW(const void* pDestFile, int DestFormat,
+                    void* pSrcSurface, const void* pSrcPalette, const void* pSrcRect);
+            ]])
+        end
+        -- ищем и по имени (системные папки), и рядом с игрой
+        local wd = (type(getWorkingDirectory) == "function")
+            and tostring(getWorkingDirectory() or "") or ""
+        wd = wd:gsub("[/\\]+$", "")
+        for i = 1, #SHOT_D3DX_LIST do
+            local try = { SHOT_D3DX_LIST[i] }
+            if wd ~= "" then try[#try + 1] = wd .. SHOT_SEP .. SHOT_D3DX_LIST[i] .. ".dll" end
+            for j = 1, #try do
+                local okL, lib = pcall(ffi.load, try[j])
+                if okL and lib then
+                    local okP, fn = pcall(function() return lib.D3DXSaveSurfaceToFileW end)
+                    if okP and fn then
+                        SHOT_D3DX, SHOT_D3DX_NAME = lib, SHOT_D3DX_LIST[i]
+                        return SHOT_D3DX
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    -- Указатель на устройство D3D9: сначала штатная функция MoonLoader (её же
+    -- использует mimgui), иначе адрес, по которому устройство лежит в памяти
+    -- GTA SA (так делают моды). Устройство проверяем в момент съёмки: при
+    -- загрузке игры его ещё нет.
+    local function paShotDevice()
+        local ffi = paShotLibs()
+        if not ffi then return nil end
+        if type(getD3DDevicePtr) == "function" then
+            local ok, dev = pcall(getD3DDevicePtr)
+            if ok and dev ~= nil then
+                local okC, p = pcall(ffi.cast, "void*", dev)
+                if okC and p ~= nil and p ~= ffi.NULL then return p end
+            end
+        end
+        local mem = libs and libs.memory
+        if mem and type(mem.read) == "function" then
+            -- Адрес из gta_sa.exe 1.0 US (MoonLoader работает только с ней):
+            -- это ячейка, в которой лежит указатель на устройство.
+            local ok, v = pcall(mem.read, 0xC97C28, 4, false)
+            v = ok and tonumber(v) or nil
+            if v and v > 0x10000 and v < 0x80000000 then
+                local okC, p = pcall(ffi.cast, "void*", v)
+                if okC and p ~= nil and p ~= ffi.NULL then return p end
+            end
+        end
+        return nil
+    end
+
+    -- Путь для D3DXSaveSurfaceToFileW — в UTF-16. Нужен из-за русских путей
+    -- («C:\Users\Михаил\Documents\...»): ANSI-вариант функции такой путь не
+    -- понимает и молча не сохраняет файл.
+    local function paShotWide(path)
+        local ffi = paShotLibs()
+        if not ffi then return nil end
+        local s = tostring(path or "")
+        local buf = ffi.new("uint16_t[?]", #s + 2)
+        local n, i = 0, 1
+        while i <= #s do
+            local b = s:byte(i)
+            local cp, len
+            if b < 0x80 then cp, len = b, 1
+            elseif b < 0xE0 then cp, len = b - 0xC0, 2
+            elseif b < 0xF0 then cp, len = b - 0xE0, 3
+            else cp, len = b - 0xF0, 4 end
+            for k = 1, len - 1 do
+                local nb = s:byte(i + k)
+                if not nb then break end
+                cp = cp * 0x40 + (nb - 0x80)
+            end
+            i = i + len
+            if cp < 0x10000 then
+                buf[n] = cp
+                n = n + 1
+            else
+                -- суррогатная пара: в путях не встречается, но пусть будет верно
+                cp = cp - 0x10000
+                buf[n] = 0xD800 + math.floor(cp / 0x400)
+                buf[n + 1] = 0xDC00 + (cp % 0x400)
+                n = n + 2
+            end
+        end
+        buf[n] = 0
+        return buf
+    end
+
+    -- Снять кадр и записать его в path. ВЫЗЫВАТЬ ТОЛЬКО из потока отрисовки
+    -- (см. PA.shotRender): устройство D3D9 не терпит чужих потоков.
+    local function paShotGrabReal(path)
+        local ffi = paShotLibs()
+        local lib = paShotD3dx()
+        if not (ffi and lib) then return false, "не найдена библиотека d3dx9 (DirectX)" end
+        local dev = paShotDevice()
+        if not dev then return false, "не найдено устройство D3D9" end
+        local vtbl = ffi.cast("void***", dev)[0]
+        local function bind(idx, sig) return ffi.cast(sig, vtbl[idx]) end
+        -- номера методов в таблице устройства D3D9 (порядок из d3d9.h)
+        local getBackBuffer = bind(18, "int __stdcall(void*, unsigned int, unsigned int, int, void**)")
+        local getRTTData = bind(32, "int __stdcall(void*, void*, void*)")
+        local createSurface = bind(36,
+            "int __stdcall(void*, unsigned int, unsigned int, int, int, void**, void*)")
+        local release = bind(2, "uint32_t __stdcall(void*)")
+        local function hrHex(hr)
+            local n = tonumber(hr) or 0
+            if n < 0 then n = n + 4294967296 end
+            return string.format("0x%08X", n)
+        end
+        local function hrBad(hr) return (tonumber(hr) or 0) ~= 0 end
+        local back = ffi.new("void*[1]")
+        local hr = getBackBuffer(dev, 0, 0, D3D_MONO, back)
+        if hrBad(hr) or back[0] == ffi.NULL then
+            return false, "GetBackBuffer " .. hrHex(hr)
+        end
+        local src = back[0]
+        -- размеры и формат кадра узнаём у самой поверхности (GetDesc — 12-й метод)
+        local getDesc = ffi.cast("int __stdcall(void*, void*)", ffi.cast("void***", src)[0][12])
+        local desc = ffi.new("uint32_t[8]")
+        hr = getDesc(src, desc)
+        local w, h, fmt = tonumber(desc[6]), tonumber(desc[7]), tonumber(desc[0])
+        if hrBad(hr) or not w or not h or w == 0 or h == 0 then
+            release(src)
+            return false, "не удалось узнать размер кадра"
+        end
+        local dst = ffi.new("void*[1]")
+        hr = createSurface(dev, w, h, fmt, D3D_POOL_SYSTEMMEM, dst, nil)
+        if (hrBad(hr) or dst[0] == ffi.NULL) and fmt ~= D3D_A8R8G8B8 then
+            hr = createSurface(dev, w, h, D3D_A8R8G8B8, D3D_POOL_SYSTEMMEM, dst, nil)
+        end
+        if hrBad(hr) or dst[0] == ffi.NULL then
+            release(src)
+            return false, "CreateOffscreenPlainSurface " .. hrHex(hr)
+        end
+        hr = getRTTData(dev, src, dst[0])
+        release(src)
+        if hrBad(hr) then
+            release(dst[0])
+            return false, "GetRenderTargetData " .. hrHex(hr)
+        end
+        local wide = paShotWide(path)
+        if not wide then
+            release(dst[0])
+            return false, "путь не удалось преобразовать"
+        end
+        hr = lib.D3DXSaveSurfaceToFileW(wide, D3DXIFF_PNG, dst[0], nil, nil)
+        release(dst[0])
+        if hrBad(hr) then
+            return false, "D3DXSaveSurfaceToFile " .. hrHex(hr) .. " (" .. tostring(SHOT_D3DX_NAME) .. ")"
+        end
+        return true
+    end
+
+    -- Куда положить свой кадр. Путь разворачиваем в абсолютный сами: относительный
+    -- читается так же, как у плагина, — от «GTA San Andreas User Files\App screens».
+    -- Папку создаём и проверяем, что в неё можно писать (игра в «Program Files»
+    -- писать в свою папку не может).
+    local function paShotSelfTarget(name)
+        local dir = trim(tostring(PA.shotDir or ""))
+        local user = nil
+        if dir == "" then
+            dir = PA.shotDirDefault()
+        else
+            local abs = dir:match("^%a:[/\\]") ~= nil or dir:sub(1, 2) == "\\\\" or dir:sub(1, 1) == "/"
+            if not abs then
+                user = paShotUserDir()
+                if user then dir = user .. SHOT_SEP .. "App screens" .. SHOT_SEP .. dir end
+            end
+        end
+        if not (dir:match("^%a:[/\\]") or dir:sub(1, 2) == "\\\\" or dir:sub(1, 1) == "/") then
+            local wd = (type(getWorkingDirectory) == "function")
+                and tostring(getWorkingDirectory() or "") or ""
+            if wd == "" then return nil, "не понять, куда писать кадр" end
+            dir = wd:gsub("[/\\]+$", "") .. SHOT_SEP .. dir
+        end
+        dir = dir:gsub("[/\\]+$", "")
+        paShotMkdir(dir)
+        if not paShotWritable(dir) then
+            local alt = (user or paShotUserDir())
+            alt = alt and (alt .. SHOT_SEP .. "App screens" .. SHOT_SEP .. "grnd") or nil
+            if alt then paShotMkdir(alt) end
+            if not (alt and paShotWritable(alt)) then
+                return nil, "папка недоступна для записи: " .. tostring(dir)
+            end
+            dir = alt:gsub("[/\\]+$", "")
+        end
+        return dir .. SHOT_SEP .. name .. ".png", nil
+    end
+
+    -- Запасной путь: кадр просит плагин Screenshot.asi, а без него — штатная F8
+    -- (SA-MP сохранит кадр сам, в свою папку). Заполняет plan.paths/dirs/expect.
+    -- Возвращает true — запрос ушёл; false, почему — не вышло.
+    local function paShotStartAlt(plan)
+        local name = paShotName(plan.nick)
         local dir = PA.shotDirPath()
-        local name = paShotName(nick)
         local mod = paShotModule()
         local asi = paShotAsi()
         local viaMod = mod and type(mod.requestEx) == "function"
@@ -36267,8 +36512,9 @@ do
                 end
             end
         end
-        local plan = { nick = tostring(nick or ""), expect = nil, note = nil,
-            paths = {}, dirs = paShotSampDirs(), afterT = (os.time() or 0) - 2 }
+        plan.paths = {}
+        plan.dirs = paShotSampDirs()
+        plan.afterT = (os.time() or 0) - 2
         for i = 1, #roots do
             local v = paShotVariants(roots[i], name)
             for j = 1, #v do plan.paths[#plan.paths + 1] = v[j] end
@@ -36307,6 +36553,91 @@ do
             return false, "нет Screenshot.asi" .. (PA.shotWhy and (" (" .. tostring(PA.shotWhy) .. ")") or "")
         end
         if note2 then plan.note = tostring(plan.note or "") .. " · " .. note2 end
+        return true
+    end
+
+    -- Вызывается из обработчика onD3DPresent (поток отрисовки): только здесь
+    -- можно трогать устройство D3D9. Итог складываем в PA.shotJobResult, а
+    -- решение и запись в чат делает обычный тик — так не будет гонки за чат.
+    function PA.shotRender()
+        local job = PA.shotJob
+        if type(job) ~= "table" then return end
+        PA.shotJob = nil
+        local okC, okS, why = pcall(PA.shotGrab, job.path)
+        if okC and okS then
+            PA.shotJobResult = { ok = true, path = job.path }
+            return
+        end
+        local reason = (not okC) and ("ошибка: " .. tostring(okS)) or tostring(why)
+        -- Свой кадр не вышел — просим плагин или жмём F8: это уже не требует
+        -- потока отрисовки, а файл дальше ищет обычный тик.
+        local plan = job.plan
+        local aOk, aWhy = false, "план кадра потерян"
+        if type(plan) == "table" then aOk, aWhy = paShotStartAlt(plan) end
+        if aOk then
+            PA.shotJobResult = { fallback = true, why = "свой кадр не вышел: " .. reason }
+        else
+            PA.shotJobResult = { ok = false, path = job.path,
+                why = "свой кадр не вышел: " .. reason .. "; " .. tostring(aWhy) }
+        end
+    end
+
+    PA.shotGrab = paShotGrabReal     -- стенд может подменить саму съёмку
+    PA.shotWide = paShotWide         -- преобразование пути (проверяется стендом)
+    PA.shotRenderReady = false
+    -- Обработчик кадра ставим сразу: он же и признак того, что свой кадр вообще
+    -- возможен (без него снимать кадр неоткуда).
+    if type(addEventHandler) == "function" then
+        PA.shotRenderReady = pcall(addEventHandler, "onD3DPresent",
+            function() pcall(PA.shotRender) end) and true or false
+    end
+
+    -- Готов ли свой кадр: нужен обработчик кадра, d3dx9 и живое устройство.
+    PA.shotSelfReady = function()
+        if PA.shotRenderReady ~= true or type(PA.shotGrab) ~= "function" then
+            PA.shotSelfWhy = "нет обработчика кадра onD3DPresent"
+            return false
+        end
+        if not paShotD3dx() then
+            PA.shotSelfWhy = "не найдена библиотека d3dx9 (DirectX)"
+            return false
+        end
+        if paShotDevice() == nil then
+            PA.shotSelfWhy = "не найдено устройство D3D9"
+            return false
+        end
+        return true
+    end
+
+    -- Запросить кадр. Возвращает:
+    --   true, план  — запрос отправлен, файл ищем по плану (paths/dirs);
+    --   false, почему — запрос даже не ушёл.
+    -- ВНИМАНИЕ: PA.shot — тумблер (bool), поэтому функция зовётся shotTake.
+    function PA.shotTake(nick)
+        if PA.shot == false then return false, "выключено" end
+        local plan = { nick = tostring(nick or ""), expect = nil, note = nil,
+            paths = {}, dirs = {}, afterT = (os.time() or 0) - 2 }
+        -- Путь 1 (v1.19.205): свой кадр через D3D9. Доустанавливать ничего не
+        -- надо, файл ложится точно по указанному пути — и его появление можно
+        -- честно проверить.
+        if PA.shotSelfReady() then
+            local target, whySelf = paShotSelfTarget(paShotName(plan.nick))
+            if target then
+                plan.self = target
+                plan.job = true
+                plan.paths = { target }
+                plan.expect = target
+                plan.note = "свой кадр (D3D9)"
+                return true, plan
+            end
+            plan.selfWhy = whySelf
+        end
+        -- Путь 2: плагин Screenshot.asi, а без него — штатная F8.
+        local okA, whyA = paShotStartAlt(plan)
+        if not okA then return false, whyA end
+        if plan.selfWhy then
+            plan.note = tostring(plan.note or "") .. " · свой кадр не вышел: " .. tostring(plan.selfWhy)
+        end
         return true, plan
     end
 
@@ -36343,12 +36674,16 @@ do
                     paShotReport(false, "ошибка запроса", tostring(r1))
                 elseif r1 == true and type(r2) == "table" and r2.noWait then
                     paShotReport(false, "F8 нажат, но проверить нечем",
-                        "F8 нажат. Своя папка и подтверждение сохранения работают "
-                        .. "только с Screenshot.asi; без него ищите кадр в «Документы\\GTA San "
-                        .. "Andreas User Files\\SAMP\\screens»")
+                        "F8 нажат. Подтвердить сохранение нечем: папку кадров SA-MP "
+                        .. "находит только Screenshot.asi"
+                        .. (PA.shotSelfWhy and ("; свой кадр не вышел: " .. tostring(PA.shotSelfWhy)) or "")
+                        .. ". Ищите кадр в «Документы\\GTA San Andreas User Files\\SAMP\\screens»")
                 elseif r1 == true and type(r2) == "table" then
-                    r2.untilAt = now + SHOT_WAIT
+                    -- свой кадр забирает обработчик onD3DPresent: его ждём
+                    -- недолго, а потом подстрахуемся плагином или F8
+                    r2.untilAt = now + (r2.job and SHOT_JOB_WAIT or SHOT_WAIT)
                     PA.shotWait = r2
+                    if r2.job and r2.self then PA.shotJob = { path = r2.self, plan = r2 } end
                 else
                     paShotReport(false, tostring(r2), tostring(r2))
                 end
@@ -36357,6 +36692,59 @@ do
         -- Фаза 2: ждём файл — плагин сохраняет его не мгновенно
         local W = PA.shotWait
         if W then
+            -- свой кадр: ждём ответ потока отрисовки
+            if W.job then
+                local J = PA.shotJobResult
+                if J then
+                    PA.shotJobResult = nil
+                    if J.ok then
+                        -- сохранили кадр — и сейчас же убеждаемся, что файл на
+                        -- месте: «сохранено» в чате должно совпадать с диском
+                        PA.shotWait, PA.shotJob = nil, nil
+                        if paShotExists(J.path) then
+                            paShotReport(true, (J.path:match("[^/\\]+$") or J.path) .. "  (свой кадр)", J.path)
+                        else
+                            paShotReport(false, "файл не появился после сохранения",
+                                tostring(J.path) .. " — D3DX отчитался об успехе, файла нет")
+                        end
+                        return true
+                    end
+                    if J.fallback then
+                        -- запасной путь уже запрошен — дальше ищем файл как обычно
+                        W.job = nil
+                        W.note = tostring(W.note or "") .. " · " .. tostring(J.why)
+                        if #(W.paths or {}) == 0 and #(W.dirs or {}) == 0 then
+                            PA.shotWait = nil
+                            paShotReport(false, "кадр не сохранён",
+                                tostring(J.why) .. "; запасной способ тоже не сработал")
+                        end
+                        return true
+                    end
+                    PA.shotWait = nil
+                    paShotReport(false, tostring(J.why or "кадр не сохранён"),
+                        tostring(J.path or "") .. " — " .. tostring(J.why or "?"))
+                    return true
+                end
+                if now >= (tonumber(W.untilAt) or 0) then
+                    -- обработчик не ответил (свёрнутая игра, другая сборка
+                    -- MoonLoader): даём шанс запасному пути и ждём файл ещё раз
+                    PA.shotJob = nil
+                    local aOk, aWhy = paShotStartAlt(W)
+                    if aOk and (#(W.paths or {}) > 0 or #(W.dirs or {}) > 0) then
+                        W.job = nil
+                        W.note = tostring(W.note or "") .. " · свой кадр: обработчик не ответил"
+                        W.untilAt = now + SHOT_WAIT
+                    else
+                        PA.shotWait = nil
+                        paShotReport(false, "кадр не снят",
+                            "свой кадр: обработчик onD3DPresent не ответил за "
+                            .. tostring(SHOT_JOB_WAIT) .. " с; "
+                            .. tostring(aWhy or "запасной способ недоступен"))
+                    end
+                    return true
+                end
+                return true
+            end
             for i = 1, #(W.paths or {}) do
                 local p = W.paths[i]
                 if paShotExists(p) then
@@ -36920,8 +37308,8 @@ do
             end
             yy1 = yy1 + ROW + 6
             yy1 = yy1 + paHint(ctx, c1X, yy1, colW1,
-                "Пусто — resource/grnd/screenshots. Свою папку сохраняет Screenshot.asi "
-                .. "(lib.screenshot); без него кадр делает клавиша F8.", mut, 2)
+                "Пусто — resource/grnd/screenshots: папку скрипт создаст сам. Кадр "
+                .. "снимает он же (D3D9), Screenshot.asi не обязателен.", mut, 2)
             yy1 = yy1 + BLOCK
         end
 

@@ -514,6 +514,148 @@ do
     os.execute("rm -rf /tmp/grnd_shot_a /tmp/grnd_shot_b /tmp/grnd_shot_c /tmp/grnd_shot_d")
 end
 
+-- ---------- свой кадр через D3D9 (v1.19.205) ----------
+-- Сам D3D в стенде не поднять, поэтому проверяем всё вокруг съёмки: задачу
+-- ставит тик, кадр снимает обработчик кадра (PA.shotRender), а в чат уходит
+-- только то, что получилось. Съёмку и «готовность» подменяем.
+do
+    -- настоящая съёмка на этой машине невозможна (нет Windows-библиотек), но
+    -- она обязана вернуть причину, а не упасть
+    local okG, gRes, gWhy = pcall(PA.shotGrab, "/tmp/grnd_shot_x.png")
+    ok("self.grab.safe", okG and gRes == false and type(gWhy) == "string")
+
+    -- без обработчика кадра (нет addEventHandler) свой кадр не предлагается:
+    -- иначе задача уходила бы в никуда
+    eq("self.off.no.hook", PA.shotSelfReady(), false)
+
+    -- преобразование пути в UTF-16: русские папки («C:\Users\Михаил\...»)
+    local wide = PA.shotWide("C:\\Игра\\кадр.png")
+    ok("self.wide", wide ~= nil)
+    eq("self.wide.c", tonumber(wide[0]), 67)      -- C
+    eq("self.wide.cyr", tonumber(wide[3]), 0x418) -- И
+    eq("self.wide.cyr2", tonumber(wide[4]), 0x433) -- г
+    eq("self.wide.nul", tonumber(wide[16]), 0)    -- терминатор на месте
+
+    -- дальше работаем с подменённой съёмкой
+    PA.shotSelfReady = function() return true end
+    PA.shotRenderReady = true
+    PA.shot = true
+    PA.cdUntil = {}
+    PA.shotDir = shotDir("e")
+    local dirE = PA.shotDir
+    PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
+    local grabbed = {}
+    PA.shotGrab = function(path)
+        grabbed[#grabbed + 1] = path
+        local f = io.open(path, "wb")
+        if not f then return false, "не записалось" end
+        f:write("png") f:close()
+        return true
+    end
+    PA.lastAt = os.clock() - 5
+    PA.tabs[1].cmd = "/mute {ID} 60 флуд"
+    PA.onChat("Nik_Name[7]: дм для своего кадра")
+    eq("self.queued", type(PA.shotAt), "number")
+    PA.shotAt = os.clock() - 1
+    PA.tick()
+    eq("self.plan", type(PA.shotJob), "table")
+    ok("self.path", tostring(PA.shotJob.path):sub(1, #dirE) == dirE)
+    ok("self.path.png", tostring(PA.shotJob.path):match("%.png$") ~= nil)
+    eq("self.not.grabbed", #grabbed, 0)          -- кадр снимает поток отрисовки
+    PA.shotRender()                              -- ...вот он
+    eq("self.grabbed", #grabbed, 1)
+    eq("self.result.ok", PA.shotJobResult and PA.shotJobResult.ok or nil, true)
+    PA.tick()
+    eq("self.saved", PA.shotFail, nil)
+    eq("self.saved.path", PA.shotLast, grabbed[1])
+    ok("self.saved.log", tostring(logged[#logged]):find("сохранён", 1, true) ~= nil)
+    ok("self.saved.toast", tostring(toasts[#toasts]):find("свой кадр", 1, true) ~= nil)
+
+    -- съёмка «удалась», но файла нет — в чат тоже не уходит «сохранён»
+    PA.shotGrab = function() return true end                  -- врём: файл не пишем
+    shotStub.makeFile = false
+    PA.shotDir = shotDir("e2")
+    PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
+    PA.lastAt = os.clock() - 5
+    PA.tick()
+    PA.shotAt = os.clock() - 1
+    PA.tick()
+    PA.shotRender()
+    PA.tick()
+    eq("self.liar.flag", PA.shotFail, true)
+    ok("self.liar.log", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
+    os.execute("rm -rf /tmp/grnd_shot_e2")
+
+    -- свой кадр не вышел: сразу подхватывает запасной путь (плагин), и в чат
+    -- уходит «сохранён» только по появлению файла, вместе с причиной
+    shotStub.makeFile = true
+    PA.shotGrab = function() return false, "GetBackBuffer 0x8007000E" end
+    PA.shotDir = shotDir("f")
+    PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
+    PA.lastAt = os.clock() - 5
+    PA.tick()                                    -- постановка задачи
+    PA.shotAt = os.clock() - 1
+    PA.tick()
+    PA.shotRender()                              -- съёмка не удалась -> плагин
+    ok("self.fb.fallback", PA.shotJobResult and PA.shotJobResult.fallback or false)
+    PA.tick()                                    -- замечаем запасной путь
+    eq("self.fb.cleared", PA.shotWait and PA.shotWait.job or nil, nil)
+    PA.tick()                                    -- плагин уже положил файл
+    eq("self.fb.saved", PA.shotFail, nil)
+    ok("self.fb.reason", tostring(toasts[#toasts]):find("не вышел", 1, true) ~= nil)
+    ok("self.fb.path", tostring(PA.shotLast):find(PA.shotDir, 1, true) ~= nil)
+    shotStub.makeFile = false
+
+    -- свой кадр не вышел и запасной путь не дал файла — честный провал
+    PA.shotDir = shotDir("g")
+    PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
+    PA.lastAt = os.clock() - 5
+    PA.tick()
+    PA.shotAt = os.clock() - 1
+    PA.tick()
+    PA.shotRender()
+    PA.shotWait.untilAt = os.clock() - 1
+    PA.tick()                                    -- запасной путь уже запрошен
+    PA.tick()                                    -- срок вышел: честный провал
+    eq("self.both.fail", PA.shotFail, true)
+    ok("self.both.toast", tostring(toasts[#toasts]):find("не появился", 1, true) ~= nil)
+    ok("self.both.log", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
+
+    -- обработчик кадра не ответил (свёрнутая игра, чужая сборка MoonLoader):
+    -- тик не висит, а просит запасной путь и ждёт файл ещё раз
+    shotStub.makeFile = true
+    PA.shotDir = shotDir("h")
+    PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
+    PA.lastAt = os.clock() - 5
+    PA.tick()
+    PA.shotAt = os.clock() - 1
+    PA.tick()                                    -- задача ждёт обработчик
+    ok("self.t.waits", PA.shotJob ~= nil and PA.shotWait ~= nil and PA.shotWait.job ~= nil)
+    PA.shotWait.untilAt = os.clock() - 1
+    PA.tick()                                    -- не дождались -> запасной путь
+    eq("self.t.job.cleared", PA.shotJob, nil)
+    eq("self.t.job.flag", PA.shotWait and PA.shotWait.job or nil, nil)
+    PA.tick()                                    -- плагин уже положил файл
+    eq("self.t.saved", PA.shotFail, nil)
+    ok("self.t.note", tostring(toasts[#toasts]):find("не ответил", 1, true) ~= nil)
+    shotStub.makeFile = false
+
+    -- своя папка не пишется: свой кадр уступает запасному пути (плагин или
+    -- «App screens\grnd»), а причина видна в подписи способа
+    PA.shotGrab = function() return true end
+    PA.shotDir = "/proc/grnd_no_such_dir"
+    PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
+    local tookOk, tookPlan = PA.shotTake("Nik_Name")
+    eq("self.nowrite.take", tookOk, true)
+    ok("self.nowrite.reason", tostring(tookPlan and tookPlan.note):find("не вышел", 1, true) ~= nil)
+    ok("self.nowrite.note", tostring(tookPlan and tookPlan.note):find("записи", 1, true) ~= nil)
+    shotStub.makeFile = false
+
+    PA.shotDir = ""
+    PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
+    os.execute("rm -rf /tmp/grnd_shot_e /tmp/grnd_shot_f /tmp/grnd_shot_g /tmp/grnd_shot_h")
+end
+
 -- удаление вкладки
 eq("tab.del", PA.tabDel(2) and "yes" or "no", "yes")
 eq("tab.del.count", #PA.tabs, 1)
