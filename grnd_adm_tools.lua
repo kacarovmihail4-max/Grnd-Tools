@@ -1,5 +1,5 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.202"
+GRND_SCRIPT_VERSION = "1.19.203"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -78,8 +78,9 @@ GRND_CONFIG = {schema=1, sources={
     -- v1.19.27: настройки автопилота. Без этой строки open() бросал
     -- «Unknown configuration domain» и раздел вообще ничего не сохранял.
     grnd_repauto="reportAuto",
-    -- v1.19.202: автопилот ВЫДАЧИ наказаний — «Репорт» → «Наказания» →
-    -- «Автопилот» (файл grnd_punauto.cfg, секция punishAuto).
+    -- v1.19.202: автопилот ВЫДАЧИ наказаний. v1.19.203: переключатель
+    -- «Выдача / Автопилот» живёт в разделе «Наказания» ЛЕВОЙ панели меню
+    -- (файл grnd_punauto.cfg, секция punishAuto).
     grnd_punauto="punishAuto"
 }}
 do
@@ -30715,9 +30716,9 @@ local QR = {
         pickScroll = 0,
         pickFocus = false,
         left = 0,          -- сколько раз рисовали полосу
-        -- v1.19.202: страница раздела «Наказания»: give — шаблоны выдачи
-        -- (как было), auto — автопилот выдачи по строкам чата
-        page = "give",
+        -- v1.19.203: страниц «Выдача/Автопилот» в этом окне БОЛЬШЕ НЕТ —
+        -- переключатель переехал в раздел «Наказания» левой панели меню,
+        -- поэтому поле page отсюда убрано. Экран шаблонов прежний.
     },
     -- v1.19.21: автопилот ответов на репорт (вкладка «Репорт» → «Автопилот»).
     -- v1.19.22: во вкладках — в каждой свой триггер, ответ и команда.
@@ -30734,9 +30735,10 @@ local QR = {
         dirtyAt = nil,     -- есть несохранённые правки (пишем с задержкой)
         err = nil,         -- последняя ошибка (диагностика)
     },
-    -- v1.19.202: автопилот ВЫДАЧИ наказаний — «Репорт» → «Наказания» →
-    -- «Автопилот». Следит за строками чата («Ник: текст», «Ник крикнул:
-    -- текст», «(( Ник: текст ))») и выдаёт наказание командой из вкладки.
+    -- v1.19.202: автопилот ВЫДАЧИ наказаний. v1.19.203: страница открывается
+    -- из раздела «Наказания» левой панели меню (кнопки «Выдача/Автопилот»).
+    -- Следит за строками чата («Ник: текст», «Ник крикнул: текст»,
+    -- «(( Ник: текст ))») и выдаёт наказание командой из вкладки.
     punAuto = {
         loaded = false,    -- файл grnd_punauto.cfg прочитан
         on = false,        -- тумблер «Автопилот»
@@ -32125,7 +32127,7 @@ do
         local P = QR.pun
         if P.loaded then return true end
         P.loaded = true
-        local items, nextId, page = {}, nil, nil
+        local items, nextId = {}, nil
         local ok, f = pcall(GRND_CONFIG.open, QR.punPath(), "r")
         if ok and f then
             local cur = nil
@@ -32144,9 +32146,7 @@ do
                             elseif k == "cmd" then cur.cmd = v
                             elseif k == "time" then cur.time = v
                             elseif k == "reason" then cur.reason = v end
-                        elseif k == "nextId" then nextId = tonumber(v)
-                        -- v1.19.202: страница раздела («Выдача»/«Автопилот»)
-                        elseif k == "page" then page = tostring(v) end
+                        elseif k == "nextId" then nextId = tonumber(v) end
                     end
                 end
             end
@@ -32154,7 +32154,6 @@ do
         end
         P.items = items
         if nextId then P.nextId = nextId end
-        if page then P.page = (page == "auto") and "auto" or "give" end
         QR.punNormalize()
         return true
     end
@@ -32173,8 +32172,6 @@ do
         if not ok or not f then return false end
         local escv = esc
         f:write("nextId=" .. tostring(P.nextId or 1) .. "\n")
-        -- v1.19.202: какая страница раздела была открыта
-        f:write("page=" .. ((P.page == "auto") and "auto" or "give") .. "\n")
         for i = 1, #P.items do
             local it = P.items[i]
             f:write("---\n")
@@ -33277,73 +33274,9 @@ do
         local x, y, w, h = ctx.x, ctx.y, ctx.w, ctx.h
         if not (x and y and w and h) or w < 240 or h < 140 then return false end
 
-        -- =============================================================
-        --  v1.19.202: ДВЕ СТРАНИЦЫ РАЗДЕЛА — «Выдача» и «Автопилот».
-        --  «Выдача» — прежние шаблоны наказаний (список + редактор), клик по
-        --  шаблону выдаёт наказание вручную. «Автопилот» — новый раздел:
-        --  скрипт сам следит за строками чата и выдаёт наказание по триггеру.
-        --  Кнопки — как переключатель «Основные/Админ» в разделе «Настройки».
-        -- =============================================================
-        local PAGE_H, PAGE_GAP = 32, 12
-        local pages = {
-            { id = "give", name = "Выдача",    hint = "ручная выдача по шаблонам" },
-            { id = "auto", name = "Автопилот", hint = "автоматическая выдача по строкам чата" },
-        }
-        if P.page ~= "auto" then P.page = "give" end
-        do
-            local bx = x
-            for i = 1, #pages do
-                local pg = pages[i]
-                local pw = 130
-                if type(ctx.drawnW) == "function" then
-                    local okW, v = pcall(ctx.drawnW, pg.name, 0.92)
-                    if okW and type(v) == "number" and v > 0 then
-                        pw = math.max(96, math.min(200, math.floor(v + 30)))
-                    end
-                end
-                local on = (P.page == pg.id)
-                if button(ctx, "##grnd_qr_pun_page_" .. pg.id, bx, y, pw, PAGE_H, pg.name,
-                    { selected = on, primary = false }) and not on then
-                    P.page = pg.id
-                    P.comboOpen, P.pickOpen = false, false
-                    P.formKey, P.cmdSync = nil, nil
-                    pcall(QR.punSave)
-                end
-                bx = bx + pw + 8
-            end
-            local hintTxt = (P.page == "auto") and pages[2].hint or pages[1].hint
-            if bx + 140 < x + w then
-                ctx.uiText(bx + 6, y + (PAGE_H - lineH(ctx, 0.84)) / 2, hintTxt, TH and ctx.col32(TH.textMuted[1], TH.textMuted[2], TH.textMuted[3], 255) or ctx.rgba(198, 192, 216, 255), 0.84)
-            end
-        end
-        -- дальше рисуем выбранную страницу в области под кнопками
-        y = y + PAGE_H + PAGE_GAP
-        h = h - PAGE_H - PAGE_GAP
-        if h < 120 then
-            ctx.uiText(x, y, "Мало места — раскройте меню выше", ctx.rgba(230, 190, 120, 255), 0.9)
-            return true
-        end
-        if P.page == "auto" then
-            if type(QR.punAutoDraw) == "function" then
-                local sub2 = {}
-                for k, v in pairs(ctx) do sub2[k] = v end
-                sub2.x, sub2.y, sub2.w, sub2.h = x, y, w, h
-                local okA, resA = pcall(QR.punAutoDraw, sub2)
-                if not okA then
-                    QR.punDrawErr = tostring(resA)
-                    ctx.uiText(x, y, "Ошибка отрисовки автопилота: " .. tostring(resA),
-                        ctx.rgba(255, 110, 110, 255), 0.9)
-                    return false
-                end
-                return resA ~= false and true or false
-            end
-            ctx.uiText(x, y, "Раздел «Автопилот» не загружен", ctx.rgba(230, 190, 120, 255), 0.9)
-            return true
-        end
-
-        -- =============================================================
-        --  СТРАНИЦА «ВЫДАЧА» (прежний экран шаблонов наказаний)
-        -- =============================================================
+        -- v1.19.203: переключатель «Выдача/Автопилот» переехал в раздел
+        -- «Наказания» ЛЕВОЙ панели меню (там же, где очередь выдачи). Здесь
+        -- остаётся прежний экран шаблонов наказаний — как было до v1.19.202.
         -- шапка: заголовок, счётчик, поиск, «Новый шаблон»
         ctx.uiText(x, y + 1, "Шаблоны наказаний",
             ctx.col32(TH.textHi[1], TH.textHi[2], TH.textHi[3], 255), 1.0)
@@ -35392,7 +35325,7 @@ do
 end
 
 -- =====================================================================
---  АВТОПИЛОТ ВЫДАЧИ НАКАЗАНИЙ (v1.19.202) — «Наказания» → «Автопилот»
+--  АВТОПИЛОТ ВЫДАЧИ НАКАЗАНИЙ — «Наказания» (левая панель) → «Автопилот»
 -- =====================================================================
 --  Следит за строками чата трёх видов
 --      Nik_Name крикнул: текст
@@ -35439,6 +35372,10 @@ do
     local CMD_BYTES = 120      -- у строки чата SA-MP лимит 128 байт
     local GAP_DEF   = 1.0      -- пауза между выдачами, сек
     local CD_DEF    = 10       -- повтор одному игроку, сек
+    -- v1.19.203: скриншот делается не в тот же кадр, а чуть позже: ответ
+    -- сервера на команду успевает появиться в чате и попадает в кадр.
+    local SHOT_DELAY = 0.6
+    local SHOT_MAXDIR = 260    -- символов в пути к папке скриншотов
 
     -- >>> GRND_PUNAUTO_LOGIC_BEGIN
     -- -----------------------------------------------------------------
@@ -35709,9 +35646,11 @@ do
         test = false, pause = GAP_DEF, cd = CD_DEF,
         skipSelf = true, skipAdmins = true, watchSay = true, watchShout = true,
         watchOoc = true, autoId = false, notify = true, logOn = true,
+        -- v1.19.203: автоскриншот сразу после выдачи (папка — shotDir)
+        shot = true,
     }
     local PA_BOOLS = { "test", "skipSelf", "skipAdmins", "watchSay", "watchShout",
-        "watchOoc", "autoId", "notify", "logOn" }
+        "watchOoc", "autoId", "notify", "logOn", "shot" }
 
     local function paBool(v, def)
         if v == nil then return def end
@@ -35755,6 +35694,7 @@ do
             local k = PA_BOOLS[i]
             A[k] = paBool(A[k], PA_DEF[k])
         end
+        A.shotDir = clampText(oneLine(utf(A.shotDir or "")), SHOT_MAXDIR)
         A.fired = math.max(0, math.floor(tonumber(A.fired) or 0))
         if type(A.feed) ~= "table" then A.feed = {} end
         if type(A.cdUntil) ~= "table" then A.cdUntil = {} end
@@ -35846,6 +35786,7 @@ do
                     elseif k == "sel" then sel = tonumber(v)
                     elseif k == "pause" then PA.pause = tonumber(v)
                     elseif k == "cd" then PA.cd = tonumber(v)
+                    elseif k == "shotDir" then PA.shotDir = v
                     elseif PA_DEF[k] ~= nil then PA[k] = paBool(v, PA_DEF[k]) end
                 end
             end
@@ -35875,6 +35816,7 @@ do
         w("pause", string.format("%.2f", tonumber(PA.pause) or GAP_DEF))
         w("cd", tostring(math.floor(tonumber(PA.cd) or CD_DEF)))
         for i = 1, #PA_BOOLS do w(PA_BOOLS[i], PA[PA_BOOLS[i]] and 1 or 0) end
+        w("shotDir", PA.shotDir or "")
         for i = 1, #PA.tabs do
             local t = PA.tabs[i]
             w("t" .. i .. "_trigger", t.trigger or "")
@@ -36045,6 +35987,148 @@ do
         return false
     end
 
+    -- ---------- автоскриншот после выдачи (v1.19.203) ----------
+    -- Кадр делается чуть позже отправки (SHOT_DELAY), чтобы в чате успел
+    -- появиться ответ сервера: скриншот нужен как доказательство выдачи.
+    --
+    -- Пути, по которым сохраняем кадр:
+    --   1) Screenshot.asi (модуль lib.screenshot): requestEx(папка, имя) —
+    --      файл ложится ИМЕННО в указанную папку (её плагин создаст сам);
+    --   2) если плагина нет — штатная клавиша F8 (SA-MP кладёт снимок в
+    --      свою папку скриншотов), о чём пишем в журнал и уведомление.
+    local SHOT_MOD, SHOT_TRIED = nil, false
+    local function paShotModule()
+        if SHOT_TRIED then return SHOT_MOD end
+        SHOT_TRIED = true
+        if type(require) ~= "function" then return nil end
+        local ok, mod = pcall(require, "lib.screenshot")
+        if ok and type(mod) == "table" then SHOT_MOD = mod end
+        return SHOT_MOD
+    end
+
+    -- Папка по умолчанию: resource/grnd/screenshots рядом со скриптом
+    -- (там же, где логи).
+    local SHOT_DIR_DEF
+    function PA.shotDirDefault()
+        if SHOT_DIR_DEF then return SHOT_DIR_DEF end
+        local dir
+        if type(grndStoragePath) == "function" then
+            local ok, p = pcall(grndStoragePath, "screenshots", "")
+            if ok and type(p) == "string" and p ~= "" then dir = p end
+        end
+        if not dir then
+            local sep = package.config:sub(1, 1)
+            dir = "." .. sep .. "resource" .. sep .. "grnd" .. sep .. "screenshots" .. sep
+        end
+        dir = tostring(dir):gsub("[/\\]+$", "")
+        SHOT_DIR_DEF = dir
+        return dir
+    end
+
+    -- Куда сохраняем: путь из настроек, а пусто — папка по умолчанию.
+    function PA.shotDirPath()
+        local dir = trim(tostring(PA.shotDir or ""))
+        if dir == "" then return PA.shotDirDefault() end
+        return dir
+    end
+
+    -- Штатный снимок игры: синтетическое нажатие F8 (SA-MP сам сохранит файл
+    -- в свою папку скриншотов). Настройка папки при этом не действует —
+    -- об этом честно пишем в журнал.
+    local function paShotPressF8()
+        local okF, ffi = pcall(require, "ffi")
+        if not okF or type(ffi) ~= "table" then return false end
+        -- cdef мог быть объявлен раньше (другим кодом скрипта или чужим
+        -- скриптом) — тогда вызов вернёт ошибку «уже объявлено», но символ
+        -- keybd_event в FFI уже есть и рабочий. Поэтому результат не проверяем.
+        pcall(ffi.cdef, "void keybd_event(unsigned char bVk, unsigned char bScan, unsigned long dwFlags, unsigned long dwExtraInfo);")
+        local okU, u32 = pcall(ffi.load, "user32")
+        if okU and u32 and u32.keybd_event then
+            local VK_F8, KEYUP = 0x77, 0x0002
+            local ok1 = pcall(u32.keybd_event, VK_F8, 0, 0, 0)
+            local ok2 = pcall(u32.keybd_event, VK_F8, 0, KEYUP, 0)
+            if ok1 and ok2 then return true end
+        end
+        -- запасной вариант для сборок без ffi: игровой клавишей средствами
+        -- MoonLoader (если такие функции есть)
+        if type(setVirtualKeyDown) == "function" then
+            local ok = pcall(setVirtualKeyDown, 0x77, true)
+            if ok then
+                pcall(wait, 30)
+                pcall(setVirtualKeyDown, 0x77, false)
+                return true
+            end
+        end
+        return false
+    end
+
+    -- Имя файла: дата-время + ник нарушителя (без символов, запрещённых в
+    -- именах файлов Windows).
+    local function paShotName(nick)
+        local tag = tostring(nick or ""):gsub("[^%w_%-%.,]+", "_"):sub(1, 24)
+        if tag == "" then tag = "nick" end
+        return string.format("grnd_%s_%s.png", os.date("%Y-%m-%d_%H-%M-%S"), tag)
+    end
+
+    -- Сделать кадр. true + описание места, куда он лёг (для журнала).
+    -- ВНИМАНИЕ: PA.shot — тумблер (bool), поэтому функция зовётся shotTake.
+    function PA.shotTake(nick)
+        if PA.shot == false then return false, "выключено" end
+        local dir = PA.shotDirPath()
+        local name = paShotName(nick)
+        local mod = paShotModule()
+        if mod and type(mod.requestEx) == "function" then
+            -- Папку на всякий случай создаём сами: плагин тоже умеет, но так
+            -- кадр не потеряется, если версия плагина старая.
+            if type(createDirectory) == "function" and dir ~= "" then pcall(createDirectory, dir) end
+            -- ВАЖНО: расширение плагину передавать НЕ надо — «.png» он
+            -- добавляет сам (иначе на выходе «….png.png»).
+            local ok, res = pcall(mod.requestEx, dir, (name:gsub("%.png$", "")))
+            if ok and res ~= false then
+                return true, dir .. "\\" .. name
+            end
+        end
+        if mod and type(mod.request) == "function" then
+            local ok, res = pcall(mod.request)
+            if ok and res ~= false then return true, "папка скриншотов SA-MP" end
+        end
+        if paShotPressF8() then
+            return true, "папка скриншотов SA-MP (F8; Screenshot.asi не найден)"
+        end
+        return false, "нет способа сделать скриншот (нужен Screenshot.asi)"
+    end
+
+    -- Очередь кадра: PA.fire только ставит задачу, снимает — тик.
+    function PA.shotQueue(nick)
+        if PA.shot == false then return false end
+        PA.shotAt = os.clock() + SHOT_DELAY
+        PA.shotNick = tostring(nick or "")
+        return true
+    end
+
+    function PA.shotTick()
+        local at = tonumber(PA.shotAt)
+        if not at then return false end
+        if PA.shot == false then
+            PA.shotAt, PA.shotNick = nil, nil
+            return false
+        end
+        if os.clock() < at then return false end
+        local nick = PA.shotNick or ""
+        PA.shotAt, PA.shotNick = nil, nil
+        local ok, made, where = pcall(PA.shotTake, nick)
+        if ok and made then
+            PA.shotLast = tostring(where)
+            PA.log("скриншот: " .. tostring(where))
+            if PA.notify then QR.toast("Автопилот: скриншот сохранён", "ok", 3.2) end
+        else
+            PA.shotLast = (ok and tostring(where)) or ("ошибка: " .. tostring(made))
+            PA.log("скриншот не сделан: " .. tostring(PA.shotLast))
+            if PA.notify then QR.toast("Автопилот: скриншот не сделан", "warn", 3.2) end
+        end
+        return true
+    end
+
     -- sameEvent: эту вкладку выдаёт та же СТРОКА, что и предыдущую — тогда
     -- пауза между выдачами не мешает (иначе вторая совпавшая вкладка молчала
     -- бы, хотя строка должна была сработать по обеим).
@@ -36092,6 +36176,8 @@ do
         if after ~= "" and after ~= cmd then pcall(paSend, after) end
         PA.lastAt, PA.fired = now, (PA.fired or 0) + 1
         PA.cdUntil[key] = now + cd
+        -- v1.19.203: кадр-доказательство сразу после выдачи
+        PA.shotQueue(info.nick)
         PA.lastCheck = "выдано: " .. cmd
         PA.log("выдано: " .. info.nick .. "[" .. tostring(info.pid) .. "] → " .. cmd
             .. " · триггер «" .. tostring(trigger) .. "»")
@@ -36220,6 +36306,7 @@ do
         PA.ensure()
         local now = os.clock()
         if PA.dirtyAt and (now - PA.dirtyAt) > 0.6 then pcall(PA.save) end
+        pcall(PA.shotTick)
         if now - (PA.cdClean or 0) > 10 then
             PA.cdClean = now
             for k, t in pairs(PA.cdUntil or {}) do
@@ -36454,43 +36541,56 @@ do
         end
         if delIdx then PA.tabDel(delIdx) return true end
 
-        -- ---------- поля выбранной вкладки ----------
+        -- =================================================================
+        --  ДВЕ КОЛОНКИ (v1.19.203). Раньше страница была одной длинной
+        --  «простынёй», и в реальном меню (окно не тянется, ~500 px под
+        --  содержимое) нижние блоки — параметры и тумблеры — просто не
+        --  влезали. Теперь слева данные вкладки и скриншот, справа проверка
+        --  строки, параметры и лента. Узкая страница → одна колонка.
+        -- =================================================================
         local tab = PA.tab()
-        local yy = ty + tabH + 12
         local hintStep = lineH(ctx, 0.72) + 2
+        local twoCol = (w >= 620)
+        local colGap = 20
+        local colW1 = twoCol and math.floor((w - colGap) * 0.56) or w
+        local colW2 = twoCol and (w - colW1 - colGap) or w
+        local c1X, c2X = x, (twoCol and (x + colW1 + colGap) or x)
+        local rowY = ty + tabH + 14
+        local yy1, yy2 = rowY, rowY
 
+        -- ---------- ЛЕВАЯ КОЛОНКА: что и как выдаём ----------
         -- триггеры
-        if yy + 46 <= bottomY then
-            ctx.uiText(x, yy, "Триггеры (можно несколько через запятую)", dim, 0.84)
-            yy = yy + 16
+        if yy1 + 46 <= bottomY then
+            ctx.uiText(c1X, yy1, "Триггеры (можно несколько через запятую)", dim, 0.84)
+            yy1 = yy1 + 16
             local tkey = "paTrig" .. PA.sel
-            field(ctx, "##grnd_pa_trigger", tkey, TRIG_CAP, x, yy, w, 28,
+            field(ctx, "##grnd_pa_trigger", tkey, TRIG_CAP, c1X, yy1, colW1, 28,
                 "дм, dm — что искать в тексте строки", false, tab.trigger)
             local tv = trim(bufText(tkey))
             if tv ~= tab.trigger then
                 tab.trigger = clampText(oneLine(utf(tv)), MAX_PTRIG)
                 PA.touch()
             end
-            yy = yy + 32
-            yy = yy + paHint(ctx, x, yy, w,
+            yy1 = yy1 + 32
+            yy1 = yy1 + paHint(ctx, c1X, yy1, colW1,
                 "Строка чата: «Ник: дм» — во вкладке ищем «дм». Крики, обычный чат и "
                 .. "«(( … ))» разбираются одинаково; ник берётся из строки, ID — из списка игроков в сети.",
                 mut, 2)
-            yy = yy + 8
+            yy1 = yy1 + 8
         end
 
         -- режим поиска
-        if yy + 30 <= bottomY then
+        if yy1 + 30 <= bottomY then
             local modeTxt = "Режим:"
-            ctx.uiText(x, yy + 6, modeTxt, dim, 0.84)
-            local bx = x + paW(ctx, modeTxt, 0.84) + 10
+            ctx.uiText(c1X, yy1 + 6, modeTxt, dim, 0.84)
+            local bx = c1X + paW(ctx, modeTxt, 0.84) + 10
             local items = {
                 { id = "word",  name = "В любом месте",  hint = "слово ищется в тексте строки" },
                 { id = "exact", name = "Точное совпадение", hint = "текст строки равен триггеру" },
             }
             for i = 1, #items do
                 local bw = math.max(110, paW(ctx, items[i].name, 0.84) + 22)
-                if button(ctx, "##grnd_pa_mode_" .. items[i].id, bx, yy, bw, 26, items[i].name,
+                if button(ctx, "##grnd_pa_mode_" .. items[i].id, bx, yy1, bw, 26, items[i].name,
                     { selected = (tab.mode == items[i].id) }) then
                     tab.mode = items[i].id
                     PA.touch()
@@ -36498,22 +36598,22 @@ do
                 end
                 bx = bx + bw + 8
             end
-            yy = yy + 34
+            yy1 = yy1 + 34
         end
 
         -- команда
-        if yy + 62 <= bottomY then
-            ctx.uiText(x, yy, "Команда (любая — уйдёт в чат при срабатывании)", dim, 0.84)
-            yy = yy + 16
+        if yy1 + 62 <= bottomY then
+            ctx.uiText(c1X, yy1, "Команда (любая — уйдёт в чат при срабатывании)", dim, 0.84)
+            yy1 = yy1 + 16
             local ckey = "paCmd" .. PA.sel
-            field(ctx, "##grnd_pa_cmd", ckey, CMD_CAP, x, yy, w, 28,
+            field(ctx, "##grnd_pa_cmd", ckey, CMD_CAP, c1X, yy1, colW1, 28,
                 "/mute {ID} 60 флуд", false, tab.cmd)
             local cv = trim(bufText(ckey))
             if cv ~= tab.cmd then
                 tab.cmd = clampText(oneLine(utf(cv)), MAX_PCMD)
                 PA.touch()
             end
-            yy = yy + 32
+            yy1 = yy1 + 32
             local hint = (PA.autoId == true)
                 and ("{ID} — ID нарушителя, {ник} — его ник, {текст} — текст строки. "
                     .. "Переменных в команде нет — ID сам встанет после её имени "
@@ -36522,82 +36622,124 @@ do
                     .. "{триггер} — найденное слово. Без переменных команда уходит "
                     .. "ровно так, как написана; чтобы ID подставлялся сам, включите "
                     .. "«подставлять ID без переменных».")
-            yy = yy + paHint(ctx, x, yy, w, hint, mut, 2)
-            yy = yy + 6
+            yy1 = yy1 + paHint(ctx, c1X, yy1, colW1, hint, mut, 2)
+            yy1 = yy1 + 6
         end
 
         -- команда после
-        if yy + 52 <= bottomY then
-            ctx.uiText(x, yy, "Команда после (не обязательно)", dim, 0.84)
-            yy = yy + 16
+        if yy1 + 52 <= bottomY then
+            ctx.uiText(c1X, yy1, "Команда после (не обязательно)", dim, 0.84)
+            yy1 = yy1 + 16
             local akey = "paAfter" .. PA.sel
-            field(ctx, "##grnd_pa_after", akey, AFT_CAP, x, yy, w, 28,
-                "/sp {ID}", false, tab.after)
+            field(ctx, "##grnd_pa_after", akey, AFT_CAP, c1X, yy1, colW1, 28,
+                "/sp {ID} — уйдёт сразу после выдачи", false, tab.after)
             local av = trim(bufText(akey))
             if av ~= tab.after then
                 tab.after = clampText(oneLine(utf(av)), MAX_PAFT)
                 PA.touch()
             end
-            yy = yy + 32
-            yy = yy + paHint(ctx, x, yy, w,
-                "Уйдёт сразу после выдачи — например /sp {ID}, /goto {ID} или /getinfo {ID}.",
-                mut, 1)
-            yy = yy + 6
+            yy1 = yy1 + 36
         end
 
-        -- ---------- проверка строки ----------
-        if yy + 76 <= bottomY then
-            ctx.uiText(x, yy, "Проверка строки (образец строки чата — что ушло бы)", dim, 0.84)
-            yy = yy + 16
-            local bw = 118
-            field(ctx, "##grnd_pa_tline", "paTestLine", 512, x, yy, math.max(120, w - bw - 8), 28,
-                "Nik_Name: дм", false, PA.testLine or "")
-            if button(ctx, "##grnd_pa_tbtn", x + w - bw, yy, bw, 28, "Разобрать", { primary = true }) then
-                PA.testLine = trim(bufText("paTestLine"))
-                PA.testOut = PA.dryRun(PA.testLine)
+        -- ---------- автоскриншот (после выдачи) ----------
+        if yy1 + 26 <= bottomY then
+            if paToggle(ctx, "##grnd_pa_shot", c1X, yy1, PA.shot ~= false, "скриншот после выдачи") then
+                PA.shot = not (PA.shot ~= false)
+                PA.touch()
+                pcall(PA.save)
+                QR.toast(PA.shot and "Скриншот после выдачи включён"
+                    or "Скриншот после выдачи выключен", PA.shot and "ok" or "warn", 2.6)
             end
-            yy = yy + 32
-            local out = PA.testOut
-            if out and out ~= "" then
-                yy = yy + paHint(ctx, x, yy, w, out, (out:find("→", 1, true) and okC or warnC), 2)
-            else
-                ctx.uiText(x, yy, "Ничего не отправляется — только разбор строки.", mut, 0.78)
-                yy = yy + hintStep
+            yy1 = yy1 + 28
+        end
+        if PA.shot ~= false and yy1 + 62 <= bottomY then
+            ctx.uiText(c1X, yy1, "Папка для скриншотов (пусто — по умолчанию)", dim, 0.84)
+            yy1 = yy1 + 16
+            local skey = "paShotDir"
+            field(ctx, "##grnd_pa_shotdir", skey, SHOT_MAXDIR * 2 + 1, c1X, yy1, colW1, 28,
+                PA.shotDirDefault(), false, PA.shotDir or "")
+            local sv = trim(bufText(skey))
+            if sv ~= (PA.shotDir or "") then
+                PA.shotDir = clampText(oneLine(utf(sv)), SHOT_MAXDIR)
+                PA.touch()
             end
-            yy = yy + 6
+            yy1 = yy1 + 32
+            yy1 = yy1 + paHint(ctx, c1X, yy1, colW1,
+                "Снимок делает Screenshot.asi (модуль lib.screenshot): файл ложится в эту "
+                .. "папку, плагин создаст её сам. Путь можно указать полный («C:\\папка»), "
+                .. "а относительный считается от «Мои документы\\GTA San Andreas User Files"
+                .. "\\App screens». Без плагина кадр делается клавишей F8 и попадает в "
+                .. "папку скриншотов SA-MP.",
+                mut, 3)
+            yy1 = yy1 + 6
         end
 
-        -- тумблер вкладки
-        if yy + 26 <= bottomY then
-            if paToggle(ctx, "##grnd_pa_tabon", x, yy, tab.on ~= false, "вкладка включена") then
+        -- тумблер вкладки и состояние автопилота
+        if yy1 + 26 <= bottomY then
+            if paToggle(ctx, "##grnd_pa_tabon", c1X, yy1, tab.on ~= false, "вкладка включена") then
                 tab.on = not (tab.on ~= false)
                 PA.touch()
                 pcall(PA.save)
             end
-            -- подпись состояния
-            ctx.uiText(x + 190, yy + 4,
+            ctx.uiText(c1X + 190, yy1 + 4,
                 (PA.test and "режим проверки" or (PA.on and "автопилот включён" or "автопилот выключен")),
                 PA.test and warnC or (PA.on and okC or mut), 0.82)
-            yy = yy + 30
+            yy1 = yy1 + 30
         end
 
-        -- ---------- параметры ----------
-        if yy + 24 <= bottomY then
-            ctx.uiText(x, yy + 3, "Пауза между выдачами, сек", dim, 0.84)
+        -- узкая страница: правая колонка начинается ПОД левой
+        if not twoCol then yy2 = yy1 + 8 end
+
+        -- ---------- ПРАВАЯ КОЛОНКА: проверка, параметры, лента ----------
+        -- проверка строки
+        if yy2 + 76 <= bottomY then
+            ctx.uiText(c2X, yy2, "Проверка строки (образец строки чата)", dim, 0.84)
+            yy2 = yy2 + 16
+            local bw = 118
+            field(ctx, "##grnd_pa_tline", "paTestLine", 512, c2X, yy2,
+                math.max(120, colW2 - bw - 8), 28,
+                "Nik_Name: дм", false, PA.testLine or "")
+            if button(ctx, "##grnd_pa_tbtn", c2X + colW2 - bw, yy2, bw, 28, "Разобрать",
+                { primary = true }) then
+                PA.testLine = trim(bufText("paTestLine"))
+                PA.testOut = PA.dryRun(PA.testLine)
+            end
+            yy2 = yy2 + 32
+            local out = PA.testOut
+            if out and out ~= "" then
+                yy2 = yy2 + paHint(ctx, c2X, yy2, colW2, out,
+                    (out:find("→", 1, true) and okC or warnC), 3)
+            else
+                ctx.uiText(c2X, yy2, "Ничего не отправляется — только разбор строки.", mut, 0.78)
+                yy2 = yy2 + hintStep
+            end
+            yy2 = yy2 + 8
+        end
+
+        -- параметры: пауза между выдачами и повтор игроку
+        if yy2 + 24 <= bottomY then
+            ctx.uiText(c2X, yy2 + 3, "Пауза между выдачами, сек", dim, 0.84)
+            local labW = paW(ctx, "Пауза между выдачами, сек", 0.84)
             local pw = 66
-            local px = x + math.min(w * 0.5, paW(ctx, "Пауза между выдачами, сек", 0.84) + 12)
-            field(ctx, "##grnd_pa_pause", "paPause", 8, px, yy, pw, 26, "1", false,
+            local px = c2X + math.min(colW2 * 0.5, labW + 12)
+            field(ctx, "##grnd_pa_pause", "paPause", 8, px, yy2, pw, 26, "1", false,
                 string.format("%.1f", tonumber(PA.pause) or GAP_DEF))
             local pv = tonumber((bufText("paPause"):gsub("[^%d%.%,]", ""):gsub(",", ".")))
             if pv and math.abs(pv - (tonumber(PA.pause) or GAP_DEF)) > 0.001 then
                 PA.pause = math.max(0, math.min(120, pv))
                 PA.touch()
             end
-            local cx2 = px + pw + 24
-            ctx.uiText(cx2, yy + 3, "Повтор игроку, сек", dim, 0.84)
-            local kx = cx2 + paW(ctx, "Повтор игроку, сек", 0.84) + 12
-            if kx + 66 <= x + w then
-                field(ctx, "##grnd_pa_cd", "paCd", 8, kx, yy, 66, 26, "10", false,
+            -- «Повтор игроку» рядом, а если места нет — строкой ниже
+            local cdLab = "Повтор игроку, сек"
+            local cx2, cy2 = px + pw + 24, yy2
+            local kx = cx2 + paW(ctx, cdLab, 0.84) + 12
+            if kx + 66 > c2X + colW2 then
+                cx2, cy2 = c2X, yy2 + 30
+                kx = cx2 + paW(ctx, cdLab, 0.84) + 12
+            end
+            ctx.uiText(cx2, cy2 + 3, cdLab, dim, 0.84)
+            if kx + 66 <= c2X + colW2 and cy2 + 26 <= bottomY then
+                field(ctx, "##grnd_pa_cd", "paCd", 8, kx, cy2, 66, 26, "10", false,
                     tostring(math.floor(tonumber(PA.cd) or CD_DEF)))
                 local kv = tonumber((bufText("paCd"):gsub("%D", "")))
                 if kv and kv ~= math.floor(tonumber(PA.cd) or CD_DEF) then
@@ -36605,7 +36747,7 @@ do
                     PA.touch()
                 end
             end
-            yy = yy + 32
+            yy2 = (cy2 == yy2) and (yy2 + 32) or (cy2 + 30)
         end
 
         -- тумблеры параметров: переносим по строкам, как кнопки
@@ -36620,12 +36762,12 @@ do
                 { key = "watchShout", label = "крик" },
                 { key = "watchOoc", label = "ООС (( … ))" },
             }
-            local bx, by = x, yy
+            local bx, by = c2X, yy2
             for i = 1, #items do
                 local it = items[i]
                 local labW = 24 + paW(ctx, it.label, 0.86)
-                if bx + labW > x + w and bx > x then
-                    bx, by = x, by + 26
+                if bx + labW > c2X + colW2 and bx > c2X then
+                    bx, by = c2X, by + 26
                 end
                 if by + 24 > bottomY then break end
                 if paToggle(ctx, "##grnd_pa_tg_" .. it.key, bx, by, PA[it.key] ~= false, it.label) then
@@ -36635,34 +36777,44 @@ do
                 end
                 bx = bx + labW + 14
             end
-            if by + 24 <= bottomY then yy = by + 30 end
+            if by + 24 <= bottomY then yy2 = by + 30 end
         end
 
-        -- ---------- лента последних выдач ----------
-        if yy + 20 <= bottomY then
-            ctx.uiText(x, yy, "Последние срабатывания (выдано: " .. tostring(PA.fired or 0) .. ")", dim, 0.84)
-            yy = yy + 16
+        -- лента последних выдач
+        if yy2 + 20 <= bottomY then
+            ctx.uiText(c2X, yy2, "Последние срабатывания (выдано: " .. tostring(PA.fired or 0) .. ")",
+                dim, 0.84)
+            yy2 = yy2 + 16
             local feed = PA.feed or {}
             if #feed == 0 then
-                ctx.uiText(x, yy, "Пока пусто.", mut, 0.78)
-                yy = yy + hintStep
+                ctx.uiText(c2X, yy2, "Пока пусто.", mut, 0.78)
+                yy2 = yy2 + hintStep
             else
                 for i = 1, #feed do
-                    if yy + lineH(ctx, 0.78) > bottomY then break end
+                    if yy2 + lineH(ctx, 0.78) > bottomY then break end
                     local f = feed[i]
                     local col = f.test and warnC or okC
                     local text = f.at .. "  " .. f.who .. " → " .. f.cmd
-                    ctx.uiText(x, yy, fit(text, w, ctx.drawnW, 0.78), col, 0.78)
-                    yy = yy + lineH(ctx, 0.78) + 2
+                    ctx.uiText(c2X, yy2, fit(text, colW2, ctx.drawnW, 0.78), col, 0.78)
+                    yy2 = yy2 + lineH(ctx, 0.78) + 2
                 end
             end
-            yy = yy + 2
+            yy2 = yy2 + 2
         end
 
-        -- ---------- состояние (диагностика внизу) ----------
-        if yy + 14 <= bottomY and PA.lastCheck then
-            local col = PA.on and mut or dim
-            ctx.uiText(x, yy, fit("Проверка: " .. tostring(PA.lastCheck), w, ctx.drawnW, 0.74), col, 0.74)
+        -- состояние (диагностика внизу страницы)
+        if bottomY - 16 > yy1 and bottomY - 16 > yy2 then
+            local stY = math.max(yy1, yy2)
+            if PA.lastCheck then
+                local col = PA.on and mut or dim
+                ctx.uiText(x, stY, fit("Проверка: " .. tostring(PA.lastCheck), w, ctx.drawnW, 0.74),
+                    col, 0.74)
+                stY = stY + lineH(ctx, 0.74) + 4
+            end
+            if PA.shotLast and stY + lineH(ctx, 0.74) <= bottomY then
+                ctx.uiText(x, stY, fit("Скриншот: " .. tostring(PA.shotLast), w, ctx.drawnW, 0.74),
+                    mut, 0.74)
+            end
         end
 
         QR.punAutoErr = nil
@@ -39604,6 +39756,7 @@ function grndMainBody()
             tab = 1,
             settingsTab = "main",
         reportTab = "answers",   -- v1.19.194: «Репорт» → Ответы/Наказания/Автопилот
+        punPage = "give",        -- v1.19.203: «Наказания» → Выдача/Автопилот
             anim = 0,
             indY = nil,
             posInit = false,
@@ -39614,6 +39767,7 @@ function grndMainBody()
             menu.tab=math.max(1,math.min(#MENU_TABS,math.floor(tonumber(saved.tab) or 1)))
             menu.settingsTab=saved.settingsTab=="admin" and "admin" or "main"
             menu.reportTab=(saved.reportTab=="punish" or saved.reportTab=="auto") and saved.reportTab or "answers"
+            menu.punPage=(saved.punPage=="auto") and "auto" or "give"
             menu.adminPanel=(saved.adminPanel=="ring" or saved.adminPanel=="tracer") and saved.adminPanel or "general"
         end
         local scoreboard = {
@@ -41859,7 +42013,8 @@ function grndMainBody()
                 wantCursor = menu.open
                 local pos = im.GetWindowPos()
                 GRND_CONFIG.setLayout("menu",{x=math.floor(pos.x),y=math.floor(pos.y),
-                    tab=menu.tab,settingsTab=menu.settingsTab,adminPanel=menu.adminPanel or "general"})
+                    tab=menu.tab,settingsTab=menu.settingsTab,adminPanel=menu.adminPanel or "general",
+                    punPage=menu.punPage or "give"})
                 local dl  = im.GetWindowDrawList()
                 local function at(dx, dy) return im.ImVec2(pos.x + dx, pos.y + dy) end
 
@@ -42740,10 +42895,91 @@ function grndMainBody()
                         end
                         end -- v1.14.58: конец общего блока раздела Рекон
                     elseif tab.id == "punish" then
-                        GRND_BULK.draw({im=im,dl=dl,at=at,
-                            x=cardX+8,y=cardY+8,w=cardW-16,h=cardH-16,dt=dt,
+                        -- =================================================
+                        --  «НАКАЗАНИЯ» (v1.19.203): две страницы раздела.
+                        --  «Выдача» — прежняя очередь наказаний (GRND_BULK),
+                        --  «Автопилот» — авто-выдача по строкам чата
+                        --  (QR.punAutoDraw: вкладки, триггеры, команда,
+                        --  скриншоты). Кнопки — как в «Настройках».
+                        -- =================================================
+                        menu.punPage = (menu.punPage == "auto") and "auto" or "give"
+                        local punBtnCtx = {im=im,dl=dl,at=at,
                             uiText=uiText,tsize=tsize,roundRect=roundRect,
-                            col32=col32,rgba=rgba,slider=menuSlider})
+                            col32=col32,rgba=rgba}
+                        local pBtnW, pBtnH = 150, 34
+                        local pBtnX, pBtnY = cardX + 20, cardY + 16
+                        local giveOn = (menu.punPage == "give")
+                        if grndUiButton(punBtnCtx, "##grnd_pun_page_give",
+                                pBtnX, pBtnY, pBtnW, pBtnH, "Выдача",
+                                {selected = giveOn}) and not giveOn then
+                            menu.punPage = "give"   -- сохранит кадр меню (layout.menu)
+                        end
+                        local autoOn = (menu.punPage == "auto")
+                        if grndUiButton(punBtnCtx, "##grnd_pun_page_auto",
+                                pBtnX + pBtnW + 10, pBtnY, pBtnW, pBtnH, "Автопилот",
+                                {selected = autoOn}) and not autoOn then
+                            menu.punPage = "auto"   -- сохранит кадр меню (layout.menu)
+                        end
+                        -- подпись страницы справа от кнопок
+                        local punHint = giveOn
+                            and "ручная выдача по шаблонам"
+                            or "автоматическая выдача по строкам чата"
+                        local punHintX = pBtnX + pBtnW * 2 + 26
+                        if punHintX + 200 < cardX + cardW then
+                            uiText(punHintX, pBtnY + 10, punHint,
+                                c4(TH.textDim), 0.86)
+                        end
+                        -- разделитель под кнопками
+                        local punSepY = pBtnY + pBtnH + 12
+                        dl:AddRectFilled(at(cardX + 20, punSepY),
+                            at(cardX + cardW - 20, punSepY + 1), c32(TH.line))
+                        local punBodyY = punSepY + 14
+                        local punBodyH = math.max(90, cardY + cardH - punBodyY - 12)
+                        if menu.punPage == "auto" then
+                            local QRm = _G.GRND_QR
+                            if QRm and type(QRm.punAutoDraw) == "function" then
+                                -- замер текста: у PA свой ctx.drawnW, в меню
+                                -- ширина берётся из tsize
+                                local function punDrawnW(text, scale)
+                                    local w2 = select(1, tsize(tostring(text or "")))
+                                    return (tonumber(w2) or 0) * (tonumber(scale) or 1)
+                                end
+                                local okAuto, resAuto = pcall(QRm.punAutoDraw, {
+                                    im=im,dl=dl,at=at,
+                                    x=cardX + 16, y=punBodyY,
+                                    w=cardW - 32, h=punBodyH,
+                                    uiText=uiText,tsize=tsize,roundRect=roundRect,
+                                    col32=col32,rgba=rgba,drawnW=punDrawnW,
+                                    -- v1.19.201: без пушей стилей поля ввода
+                                    -- остались бы без рамки и цвета фона —
+                                    -- берём те же помощники, что «Репорт»
+                                    pushCol=grndPushCol,popCol=grndPopCol,
+                                    pushVarF=grndPushStyleF,
+                                    pushVarV2=grndPushStyleV2,
+                                    popVar=grndPopStyle})
+                                if not okAuto then
+                                    QRm.punAutoErr = tostring(resAuto)
+                                    uiText(cardX + 20, punBodyY + 8,
+                                        "Ошибка отрисовки автопилота: " .. tostring(resAuto),
+                                        c4({255, 110, 110, 255}), 0.9)
+                                elseif resAuto == false then
+                                    -- страница сама просит минимум 190 px высоты:
+                                    -- на крошечном окне честно объясняем, что не так
+                                    uiText(cardX + 20, punBodyY + 8,
+                                        "Мало места для раздела «Автопилот» — увеличьте окно или разрешение экрана",
+                                        c4({230, 190, 120, 255}), 0.9)
+                                end
+                            else
+                                uiText(cardX + 20, punBodyY + 8,
+                                    "Раздел «Автопилот» не загружен",
+                                    c4({230, 190, 120, 255}), 0.9)
+                            end
+                        else
+                            GRND_BULK.draw({im=im,dl=dl,at=at,
+                                x=cardX+8,y=punBodyY,w=cardW-16,h=punBodyH,dt=dt,
+                                uiText=uiText,tsize=tsize,roundRect=roundRect,
+                                col32=col32,rgba=rgba,slider=menuSlider})
+                        end
                     elseif tab.id == "binder" then
                         if type(_G.grndBinderDraw) == "function" then
                             _G.grndBinderDraw({

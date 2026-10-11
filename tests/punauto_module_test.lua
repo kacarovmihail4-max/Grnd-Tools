@@ -174,6 +174,8 @@ eq("on.default", PA.on, false)
 eq("pause.default", PA.pause, 1.0)
 eq("cd.default", PA.cd, 10)
 eq("autoId.default", PA.autoId, false)   -- команда уходит ровно как написана
+eq("shot.default", PA.shot, true)         -- автоскриншот после выдачи включён
+ok("shotDir.default", type(PA.shotDirDefault()) == "string" and #PA.shotDirDefault() > 0)
 
 -- ---------- сохранение/загрузка ----------
 PA.tabs[1].trigger = "дм, dm"
@@ -363,6 +365,56 @@ PA.autoId = false
 PA.tabs[1].cmd = "/mute {ID} 60 флуд"
 PA.save()
 
+-- ---------- автоскриншот после выдачи ----------
+-- Подменяем require: вместо Screenshot.asi отдаём модуль-пустышку, который
+-- записывает, куда его попросили сохранить кадр.
+do
+    local shots = {}
+    local origRequire = require
+    require = function(name)
+        if name == "lib.screenshot" then
+            return { requestEx = function(dir, file) shots[#shots+1] = { dir = dir, file = file } return true end }
+        end
+        return origRequire(name)
+    end
+    -- модуль кэширует плагин при первом обращении — до этого вызова ещё не было
+    PA.shotDir = ""
+    PA.lastAt = os.clock() - 5
+    PA.cdUntil = {}
+    queued = {}
+    PA.tabs[1].cmd = "/mute {ID} 60 флуд"
+    PA.onChat("Nik_Name[7]: дм для скриншота")
+    eq("shot.queued", type(PA.shotAt), "number")          -- задача поставлена
+    eq("shot.no.instant", #shots, 0)                     -- но кадр ещё не снят
+    -- «промотать» задержку и прогнать тик
+    PA.shotAt = os.clock() - 1
+    PA.tick()
+    eq("shot.taken", #shots, 1)
+    -- плагину имя отдаётся БЕЗ расширения: «.png» он добавляет сам
+ok("shot.name", tostring(shots[1].file):match("^grnd_%d%d%d%d%-%d%d%-%d%d_%d%d%-%d%d%-%d%d_Nik_Name$") ~= nil)
+ok("shot.name.ext", tostring(shots[1].file):find("%.png") == nil)
+    eq("shot.dir", shots[1].dir, PA.shotDirDefault())
+    ok("shot.logged", tostring(logged[#logged]):find("скриншот", 1, true) ~= nil)
+    -- своя папка из настроек
+    PA.shotDir = "D:\\GRND\\shots"
+    PA.lastAt = os.clock() - 5
+    PA.cdUntil = {}
+    PA.onChat("Nik_Name[7]: дм ещё раз")
+    PA.shotAt = os.clock() - 1
+    PA.tick()
+    eq("shot.customDir", shots[2].dir, "D:\\GRND\\shots")
+    PA.shotDir = ""
+    -- выключенный тумблер: кадр не делается
+    PA.shot = false
+    eq("shot.off.queue", PA.shotQueue("X"), false)
+    PA.shotAt = os.clock() - 1
+    PA.tick()
+    eq("shot.off.taken", #shots, 2)
+    eq("shot.off.cleared", PA.shotAt, nil)
+    PA.shot = true
+    require = origRequire
+end
+
 -- удаление вкладки
 eq("tab.del", PA.tabDel(2) and "yes" or "no", "yes")
 eq("tab.del.count", #PA.tabs, 1)
@@ -448,6 +500,23 @@ pcall(QR.punAutoDraw, ctx)
 click["##grnd_pa_tg_notify"] = nil
 eq("draw.notify.back", PA.notify, true)
 
+-- скриншот: тумблер и поле папки на странице
+pcall(QR.punAutoDraw, ctx)
+ok("draw.shotdir.seeded", bufs["paShotDir"] ~= nil)
+bufs["paShotDir"] = "E:\\shots"
+pcall(QR.punAutoDraw, ctx)
+eq("draw.shotdir.sync", PA.shotDir, "E:\\shots")
+click["##grnd_pa_shot"] = true
+pcall(QR.punAutoDraw, ctx)
+click["##grnd_pa_shot"] = nil
+eq("draw.shot.toggle", PA.shot, false)
+click["##grnd_pa_shot"] = true
+pcall(QR.punAutoDraw, ctx)
+click["##grnd_pa_shot"] = nil
+eq("draw.shot.back", PA.shot, true)
+PA.shotDir = ""
+bufs["paShotDir"] = nil
+
 -- «+» добавляет вкладку, крестик удаляет
 click["##grnd_pa_add"] = true
 pcall(QR.punAutoDraw, ctx)
@@ -481,6 +550,73 @@ pcall(QR.punAutoDraw, ctx)
 click["##grnd_pa_tbtn"] = nil
 eq("draw.testline.no.send", #queued, 0)
 ok("draw.testline.out", tostring(PA.testOut):find("вкладка 1", 1, true) ~= nil)
+
+-- ================== ВИДИМОСТЬ СТРАНИЦЫ В РЕАЛЬНОМ ОКНЕ ==================
+-- v1.19.203: страница рисуется в ДВЕ КОЛОНКИ и обязана помещаться в
+-- настоящую карточку меню целиком. Геометрия под 1920x1080:
+--   W=980, SB=224 → cardX=250, cardW=980-26-250=704;
+--   cardY=26+19+44=89, cardH=720-26-89=605;
+--   кнопки-страницы (16+34+12) и разделитель (14) отнимают 76 px →
+--   странице остаётся w=672, h=605-88=517.
+-- Раньше (одна колонка) низ страницы — параметры, тумблеры и лента — не
+-- влезал: именно эту поломку стенд и ловит.
+local seen = {}
+do
+    local im = {}
+    function im.ImVec2(x2, y2) return { x = x2, y = y2 } end
+    function im.SetCursorPos() end
+    function im.InvisibleButton() return false end
+    function im.IsItemHovered() return false end
+    local dl = {}
+    function dl.AddLine() end
+    function dl.AddRect() end
+    function dl.AddRectFilled() end
+    function dl.AddCircleFilled() end
+    function dl.AddCircle() end
+    local ctxFit = {
+        im = im, dl = dl,
+        uiText = function(_x, y2, t2) seen[#seen + 1] = { y = y2, t = tostring(t2) } end,
+        roundRect = function() end,
+        col32 = function(r, g, b, a) return (r or 0) + (g or 0) * 256 end,
+        rgba = function(r, g, b, a) return { r, g, b, a } end,
+        at = function(x2, y2) return { x = x2, y = y2 } end,
+        -- замер как в меню: tsize возвращает ширину строки шрифтом игры
+        drawnW = function(t2) return #tostring(t2) * 6.5 end,
+        tsize = function() return 6.5, 14 end,
+        x = 100, y = 100, w = 672, h = 514,
+    }
+    local okFit, errFit = pcall(QR.punAutoDraw, ctxFit)
+    ok("drawfit.ok", okFit and "да" or tostring(errFit))
+end
+
+local function drawSeen(pat)
+    for i = 1, #seen do
+        if seen[i].t:find(pat, 1, true) then return true end
+    end
+    return false
+end
+
+-- левая колонка: данные вкладки и скриншот
+ok("drawfit.triggers", drawSeen("Триггеры"))
+ok("drawfit.mode", drawSeen("Режим:"))
+ok("drawfit.cmd", drawSeen("Команда (любая"))
+ok("drawfit.after", drawSeen("Команда после"))
+ok("drawfit.shot.toggle", drawSeen("скриншот после выдачи"))
+ok("drawfit.shot.dir", drawSeen("Папка для скриншотов"))
+-- правая колонка: проверка строки, параметры, тумблеры, лента
+ok("drawfit.testline", drawSeen("Проверка строки"))
+ok("drawfit.pause", drawSeen("Пауза между выдачами"))
+ok("drawfit.cd", drawSeen("Повтор игроку"))
+ok("drawfit.toggles", drawSeen("не трогать себя"))
+ok("drawfit.tabon", drawSeen("вкладка включена"))
+ok("drawfit.feed", drawSeen("Последние срабатывания"))
+
+-- ничего не нарисовано ниже карточки (y + h - 4 = 610)
+local lowest, lowTxt = 0, ""
+for i = 1, #seen do
+    if seen[i].y > lowest then lowest, lowTxt = seen[i].y, seen[i].t end
+end
+eq("drawfit.fits", lowest <= 606 and "да" or ("ниже карточки: " .. lowest .. " " .. lowTxt), "да")
 
 -- мелкое окно: страница просто ничего не рисует, но не падает
 ctx.w, ctx.h = 200, 100

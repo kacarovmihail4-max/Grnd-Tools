@@ -22,11 +22,22 @@ do
 end
 
 -- 2. Стенды (каждый печатает свой итог и выходит с кодом 0/1).
-for _, name in ipairs({ "punauto_logic_test", "punauto_module_test", "chatlog_test" }) do
+-- ВАЖНО: в LuaJIT io.popen():close() возвращает true даже при ненулевом коде
+-- выхода, поэтому итог читаем из вывода стенда: он печатает
+-- «--- <имя>: N/N ok ---», а провалы — строками «FAIL».
+local function runStand(name)
     local cmd = string.format('%s "%s/%s.lua"', lua, dir, name)
     local pipe = io.popen(cmd, "r")
-    local out = pipe and pipe:read("*a") or ""
-    local okRun = pipe and pipe:close() or false
+    if not pipe then return false, "не запустить: " .. cmd .. "\n" end
+    local out = pipe:read("*a") or ""
+    pipe:close()
+    local got, all = out:match("(%d+)/(%d+) ok")
+    local okRun = (got ~= nil) and (got == all) and (out:find("FAIL ", 1, true) == nil)
+    return okRun, out
+end
+
+for _, name in ipairs({ "punauto_logic_test", "punauto_module_test", "chatlog_test" }) do
+    local okRun, out = runStand(name)
     io.write(out)
     if okRun then
         print("[ok]   " .. name)
