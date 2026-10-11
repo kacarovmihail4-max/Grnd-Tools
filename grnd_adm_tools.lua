@@ -1,6 +1,14 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.203"
+GRND_SCRIPT_VERSION = "1.19.204"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.204 — правки по замечаниям:
+--   1) Автоскриншот выдачи: «сохранён» пишется в чат и журнал только тогда,
+--      когда файл кадра реально найден. Плагин Screenshot.asi вызывается и
+--      напрямую (если в сборке нет модуля lib.screenshot), имя ему отдаётся без
+--      «.png», недоступная для записи папка заменяется на «App screens\grnd»;
+--      без плагина нажимается F8 и кадр ищется в папке скриншотов SA-MP.
+--   2) Страница «Автопилот» (раздел «Наказания»): раскладка по сетке, подписи
+--      больше не вылезают за карточку, лишние элементы убраны.
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
 require "lib.sampfuncs"
@@ -30735,7 +30743,9 @@ local QR = {
         dirtyAt = nil,     -- есть несохранённые правки (пишем с задержкой)
         err = nil,         -- последняя ошибка (диагностика)
     },
-    -- v1.19.202: автопилот ВЫДАЧИ наказаний. v1.19.203: страница открывается
+    -- v1.19.202: автопилот ВЫДАЧИ наказаний. v1.19.204: страница рисуется по
+    -- сетке (ровные подписи и тумблеры, ничего за краем карточки).
+    -- v1.19.203: страница открывается
     -- из раздела «Наказания» левой панели меню (кнопки «Выдача/Автопилот»).
     -- Следит за строками чата («Ник: текст», «Ник крикнул: текст»,
     -- «(( Ник: текст ))») и выдаёт наказание командой из вкладки.
@@ -35374,6 +35384,7 @@ do
     local CD_DEF    = 10       -- повтор одному игроку, сек
     -- v1.19.203: скриншот делается не в тот же кадр, а чуть позже: ответ
     -- сервера на команду успевает появиться в чате и попадает в кадр.
+    -- v1.19.204: и подтверждается — в чат идёт только найденный на диске файл.
     local SHOT_DELAY = 0.6
     local SHOT_MAXDIR = 260    -- символов в пути к папке скриншотов
 
@@ -35987,22 +35998,38 @@ do
         return false
     end
 
-    -- ---------- автоскриншот после выдачи (v1.19.203) ----------
+    -- ---------- автоскриншот после выдачи (v1.19.204) ----------
     -- Кадр делается чуть позже отправки (SHOT_DELAY), чтобы в чате успел
     -- появиться ответ сервера: скриншот нужен как доказательство выдачи.
     --
-    -- Пути, по которым сохраняем кадр:
-    --   1) Screenshot.asi (модуль lib.screenshot): requestEx(папка, имя) —
-    --      файл ложится ИМЕННО в указанную папку (её плагин создаст сам);
-    --   2) если плагина нет — штатная клавиша F8 (SA-MP кладёт снимок в
-    --      свою папку скриншотов), о чём пишем в журнал и уведомление.
+    -- ПОЧЕМУ ТЕПЕРЬ ПРОВЕРЯЕТСЯ ФАЙЛ, А НЕ ВЫЗОВ. Модуль lib.screenshot —
+    -- тонкая обёртка над Screenshot.asi: request()/requestEx() НИЧЕГО не
+    -- возвращают, они просто просят плагин снять кадр. Ошибку внутри плагина
+    -- так не увидеть, поэтому раньше в чат могло уйти «сохранено», хотя файла
+    -- не было (нет плагина, не создалась папка, другое имя файла). Теперь
+    -- после запроса скрипт ЖДЁТ появления файла в списке возможных мест (до
+    -- SHOT_WAIT секунд) и пишет в чат и журнал только то, что реально нашёл.
+    --
+    -- Места, где ищем кадр:
+    --   1) Screenshot.asi: requestEx(папка, имя) — «.png» плагин добавляет
+    --      сам, поэтому имя отдаём без расширения;
+    --   2) без плагина — штатная F8: SA-MP кладёт кадр в
+    --      «Документы\GTA San Andreas User Files\SAMP\screens», ищем там
+    --      свежий файл (имя задаёт игра, угадать его нельзя).
+    local SHOT_WAIT = 5          -- сколько секунд ждём файл после запроса
+    local SHOT_SEP = package.config:sub(1, 1)
     local SHOT_MOD, SHOT_TRIED = nil, false
     local function paShotModule()
         if SHOT_TRIED then return SHOT_MOD end
         SHOT_TRIED = true
         if type(require) ~= "function" then return nil end
         local ok, mod = pcall(require, "lib.screenshot")
-        if ok and type(mod) == "table" then SHOT_MOD = mod end
+        if ok and type(mod) == "table" then
+            SHOT_MOD = mod
+        else
+            -- чаще всего здесь «ffi.load: Screenshot.asi: не найден»
+            PA.shotWhy = tostring(mod)
+        end
         return SHOT_MOD
     end
 
@@ -36017,8 +36044,7 @@ do
             if ok and type(p) == "string" and p ~= "" then dir = p end
         end
         if not dir then
-            local sep = package.config:sub(1, 1)
-            dir = "." .. sep .. "resource" .. sep .. "grnd" .. sep .. "screenshots" .. sep
+            dir = "." .. SHOT_SEP .. "resource" .. SHOT_SEP .. "grnd" .. SHOT_SEP .. "screenshots" .. SHOT_SEP
         end
         dir = tostring(dir):gsub("[/\\]+$", "")
         SHOT_DIR_DEF = dir
@@ -36032,15 +36058,165 @@ do
         return dir
     end
 
-    -- Штатный снимок игры: синтетическое нажатие F8 (SA-MP сам сохранит файл
-    -- в свою папку скриншотов). Настройка папки при этом не действует —
-    -- об этом честно пишем в журнал.
+    -- Прямой вызов экспортов Screenshot.asi. Нужен, когда сам плагин есть, а
+    -- модуля moonloader/lib/screenshot.lua в сборке нет (бывает часто: плагин
+    -- положили, «обёртку» — нет). Объявления ровно те же, что в модуле.
+    local SHOT_ASI, SHOT_ASI_TRIED, SHOT_FFI = nil, false, nil
+    local function paShotAsi()
+        if SHOT_ASI_TRIED then return SHOT_ASI, SHOT_FFI end
+        SHOT_ASI_TRIED = true
+        local okF, ffi = pcall(require, "ffi")
+        if not okF or type(ffi) ~= "table" then return nil end
+        SHOT_FFI = ffi
+        pcall(ffi.cdef, [[
+            int __cdecl GetPluginVersion(void);
+            const char* __cdecl GetUserDirectoryPath(void);
+            void __cdecl RequestScreenshot(void);
+            void __cdecl RequestScreenshotEx(const char* filePath, const char* fileName);
+        ]])
+        local cands = { "Screenshot.asi", "moonloader\\Screenshot.asi" }
+        for i = 1, #cands do
+            local okL, lib = pcall(ffi.load, cands[i])
+            if okL and lib and lib.RequestScreenshotEx then
+                SHOT_ASI = lib
+                return SHOT_ASI, SHOT_FFI
+            end
+        end
+        return nil
+    end
+
+    -- «Документы\GTA San Andreas User Files» — этот путь отдаёт сам плагин;
+    -- он нужен и для относительных путей («App screens»), и для поиска кадра
+    -- по F8.
+    local function paShotUserDir()
+        local mod = paShotModule()
+        if mod and type(mod.getUserDirectoryPath) == "function" then
+            local ok, v = pcall(mod.getUserDirectoryPath)
+            if ok and type(v) == "string" and v ~= "" then
+                return (tostring(v):gsub("[/\\]+$", ""))
+            end
+        end
+        local asi, ffi = paShotAsi()
+        if asi and asi.GetUserDirectoryPath and ffi then
+            local ok, v = pcall(function() return ffi.string(asi.GetUserDirectoryPath()) end)
+            if ok and type(v) == "string" and v ~= "" then
+                return (tostring(v):gsub("[/\\]+$", ""))
+            end
+        end
+        return nil
+    end
+
+    -- Создать папку вместе с родителями: createDirectory делает только один
+    -- уровень, а «…\resource\grnd\screenshots» может не существовать целиком.
+    local function paShotMkdir(dir)
+        if type(dir) ~= "string" or dir == "" then return end
+        if type(createDirectory) ~= "function" then return end
+        dir = dir:gsub("[/\\]+$", "")
+        local prefix = dir:match("^%a:") or ((dir:sub(1, 2) == "\\\\") and "\\\\" or "")
+        local cursor = prefix
+        for part in dir:sub(#prefix + 1):gmatch("[^/\\]+") do
+            cursor = (cursor == "") and part or (cursor .. SHOT_SEP .. part)
+            pcall(createDirectory, cursor)
+        end
+    end
+
+    -- Возможные папки кадра: абсолютный путь берём как есть, относительный —
+    -- как в примере плагина, от «GTA San Andreas User Files\App screens».
+    local function paShotRoots(dir)
+        dir = tostring(dir or ""):gsub("[/\\]+$", "")
+        local abs = dir:match("^%a:[/\\]") ~= nil or dir:sub(1, 2) == "\\\\"
+            or dir:sub(1, 1) == "/"
+        local roots = {}
+        if abs then
+            roots[#roots + 1] = dir
+        else
+            local user = paShotUserDir()
+            if user then roots[#roots + 1] = user .. SHOT_SEP .. "App screens" .. SHOT_SEP .. dir end
+            roots[#roots + 1] = dir
+        end
+        return roots, abs
+    end
+
+    -- Имя файла БЕЗ расширения: «.png» добавляет сам плагин. Ник чистим от
+    -- символов, запрещённых в именах файлов Windows.
+    local function paShotName(nick)
+        local tag = tostring(nick or ""):gsub("[^%w_%-%.,]+", "_"):sub(1, 24)
+        if tag == "" then tag = "nick" end
+        return string.format("grnd_%s_%s", os.date("%Y-%m-%d_%H-%M-%S"), tag)
+    end
+
+    -- Папка вообще writable? Так ловится частая беда: игра стоит в
+    -- «Program Files», и плагин молча не может сохранить туда кадр.
+    local function paShotWritable(dir)
+        if type(dir) ~= "string" or dir == "" then return false end
+        local probe = dir .. SHOT_SEP .. "grnd_write_test.tmp"
+        local f = io.open(probe, "wb")
+        if not f then return false end
+        f:close()
+        pcall(os.remove, probe)
+        return true
+    end
+
+    -- Файл есть? doesFileExist — штатная функция MoonLoader, io.open — запас.
+    local function paShotExists(path)
+        if type(path) ~= "string" or path == "" then return false end
+        if type(doesFileExist) == "function" then
+            local ok, v = pcall(doesFileExist, path)
+            if ok and v then return true end
+        end
+        local f = io.open(path, "rb")
+        if f then f:close() return true end
+        return false
+    end
+
+    -- Версии плагинов разные, поэтому проверяем и имя как есть, и с одним, и
+    -- с двумя «.png» (второе — след старого бага «имя с расширением»).
+    local function paShotVariants(root, name)
+        return {
+            root .. SHOT_SEP .. name .. ".png",
+            root .. SHOT_SEP .. name,
+            root .. SHOT_SEP .. name .. ".png.png",
+        }
+    end
+
+    -- Папки штатных скриншотов SA-MP (для кадра по F8).
+    local function paShotSampDirs()
+        local list = {}
+        local user = paShotUserDir()
+        if user then
+            list[#list + 1] = user .. SHOT_SEP .. "SAMP" .. SHOT_SEP .. "screens"
+            list[#list + 1] = user .. SHOT_SEP .. "SAMP" .. SHOT_SEP .. "Screenshots"
+        end
+        return list
+    end
+
+    -- Самый свежий файл в папке (позже afterT). Нужен для кадра по F8: имя
+    -- файла задаёт игра, поэтому смотрим папку через lfs, если он загружен.
+    local function paShotFresh(dir, afterT)
+        local lfs = libs and libs.lfs
+        if not (lfs and type(lfs.dir) == "function") then return nil end
+        local okD, iter, obj = pcall(lfs.dir, dir)
+        if not okD or type(iter) ~= "function" then return nil end
+        local best, bestT = nil, nil
+        for file in iter, obj do
+            if file ~= "." and file ~= ".." then
+                local okA, t = pcall(lfs.attributes, dir .. SHOT_SEP .. file, "modification")
+                t = okA and tonumber(t) or nil
+                if t and t >= (tonumber(afterT) or 0) and (not bestT or t >= bestT) then
+                    best, bestT = file, t
+                end
+            end
+        end
+        if best then return dir .. SHOT_SEP .. best end
+        return nil
+    end
+
+    -- Штатный снимок игры: F8 (SA-MP сам положит файл в свою папку).
     local function paShotPressF8()
         local okF, ffi = pcall(require, "ffi")
         if not okF or type(ffi) ~= "table" then return false end
-        -- cdef мог быть объявлен раньше (другим кодом скрипта или чужим
-        -- скриптом) — тогда вызов вернёт ошибку «уже объявлено», но символ
-        -- keybd_event в FFI уже есть и рабочий. Поэтому результат не проверяем.
+        -- cdef мог быть объявлен раньше — тогда вызов вернёт «уже объявлено»,
+        -- но символ в FFI уже есть и рабочий, поэтому результат не проверяем.
         pcall(ffi.cdef, "void keybd_event(unsigned char bVk, unsigned char bScan, unsigned long dwFlags, unsigned long dwExtraInfo);")
         local okU, u32 = pcall(ffi.load, "user32")
         if okU and u32 and u32.keybd_event then
@@ -36049,12 +36225,10 @@ do
             local ok2 = pcall(u32.keybd_event, VK_F8, 0, KEYUP, 0)
             if ok1 and ok2 then return true end
         end
-        -- запасной вариант для сборок без ffi: игровой клавишей средствами
-        -- MoonLoader (если такие функции есть)
+        -- запасной вариант для сборок без ffi
         if type(setVirtualKeyDown) == "function" then
             local ok = pcall(setVirtualKeyDown, 0x77, true)
             if ok then
-                pcall(wait, 30)
                 pcall(setVirtualKeyDown, 0x77, false)
                 return true
             end
@@ -36062,40 +36236,78 @@ do
         return false
     end
 
-    -- Имя файла: дата-время + ник нарушителя (без символов, запрещённых в
-    -- именах файлов Windows).
-    local function paShotName(nick)
-        local tag = tostring(nick or ""):gsub("[^%w_%-%.,]+", "_"):sub(1, 24)
-        if tag == "" then tag = "nick" end
-        return string.format("grnd_%s_%s.png", os.date("%Y-%m-%d_%H-%M-%S"), tag)
-    end
-
-    -- Сделать кадр. true + описание места, куда он лёг (для журнала).
+    -- Запросить кадр. Возвращает:
+    --   true, план  — запрос отправлен, файл ищем по плану (paths/dirs);
+    --   false, почему — запрос даже не ушёл.
     -- ВНИМАНИЕ: PA.shot — тумблер (bool), поэтому функция зовётся shotTake.
     function PA.shotTake(nick)
         if PA.shot == false then return false, "выключено" end
         local dir = PA.shotDirPath()
         local name = paShotName(nick)
         local mod = paShotModule()
-        if mod and type(mod.requestEx) == "function" then
-            -- Папку на всякий случай создаём сами: плагин тоже умеет, но так
-            -- кадр не потеряется, если версия плагина старая.
-            if type(createDirectory) == "function" and dir ~= "" then pcall(createDirectory, dir) end
-            -- ВАЖНО: расширение плагину передавать НЕ надо — «.png» он
-            -- добавляет сам (иначе на выходе «….png.png»).
-            local ok, res = pcall(mod.requestEx, dir, (name:gsub("%.png$", "")))
-            if ok and res ~= false then
-                return true, dir .. "\\" .. name
+        local asi = paShotAsi()
+        local viaMod = mod and type(mod.requestEx) == "function"
+        local viaAsi = (not viaMod) and asi and asi.RequestScreenshotEx
+        local note2 = nil
+        local roots, abs = paShotRoots(dir)
+        if abs then
+            paShotMkdir(dir)
+            if not paShotWritable(dir) then
+                -- Своя папка не пишется: чаще всего игра стоит в «Program
+                -- Files», и прав на запись нет. Тогда (если есть плагин)
+                -- уходим в «App screens» рядом с документами — там права есть
+                -- всегда, а путь создаёт сам плагин.
+                local user = paShotUserDir()
+                if (viaMod or viaAsi) and user then
+                    note2 = "своя папка недоступна, сохраняю в «App screens" .. SHOT_SEP .. "grnd»"
+                    dir = "grnd"
+                    roots, abs = paShotRoots(dir)
+                else
+                    return false, "папка недоступна для записи: " .. tostring(PA.shotDirPath())
+                end
             end
         end
-        if mod and type(mod.request) == "function" then
-            local ok, res = pcall(mod.request)
-            if ok and res ~= false then return true, "папка скриншотов SA-MP" end
+        local plan = { nick = tostring(nick or ""), expect = nil, note = nil,
+            paths = {}, dirs = paShotSampDirs(), afterT = (os.time() or 0) - 2 }
+        for i = 1, #roots do
+            local v = paShotVariants(roots[i], name)
+            for j = 1, #v do plan.paths[#plan.paths + 1] = v[j] end
         end
-        if paShotPressF8() then
-            return true, "папка скриншотов SA-MP (F8; Screenshot.asi не найден)"
+        plan.expect = plan.paths[1] or (dir .. SHOT_SEP .. name .. ".png")
+        if viaMod or viaAsi then
+            if abs then paShotMkdir(roots[1]) end
+            -- расширение плагину передавать НЕ надо: «.png» он добавляет сам
+            local call = viaMod and function(fname) return mod.requestEx(dir, fname) end
+                or function(fname) return asi.RequestScreenshotEx(dir, fname) end
+            local ok, err = pcall(call, name)
+            if ok then
+                plan.note = viaMod and "Screenshot.asi" or "Screenshot.asi (напрямую)"
+            else
+                -- некоторые сборки плагина ждут имя вместе с расширением
+                local ok2 = pcall(call, name .. ".png")
+                if not ok2 then
+                    return false, "запрос плагина не удался (" .. tostring(err) .. ")"
+                end
+                plan.note = "Screenshot.asi (имя с .png)"
+            end
+        elseif mod and type(mod.request) == "function" then
+            local ok, err = pcall(mod.request)
+            if not ok then return false, "Screenshot.asi не отвечает: " .. tostring(err) end
+            plan.note = "Screenshot.asi (штатный кадр)"
+        elseif asi and asi.RequestScreenshot then
+            local ok, err = pcall(asi.RequestScreenshot)
+            if not ok then return false, "Screenshot.asi не отвечает: " .. tostring(err) end
+            plan.note = "Screenshot.asi (штатный кадр, напрямую)"
+        elseif paShotPressF8() then
+            plan.note = "клавиша F8"
+            -- папку скриншотов SA-MP находит плагин (getUserDirectoryPath), а
+            -- без него проверить кадр нечем — честно скажем об этом сразу
+            if #plan.dirs == 0 then plan.noWait = true end
+        else
+            return false, "нет Screenshot.asi" .. (PA.shotWhy and (" (" .. tostring(PA.shotWhy) .. ")") or "")
         end
-        return false, "нет способа сделать скриншот (нужен Screenshot.asi)"
+        if note2 then plan.note = tostring(plan.note or "") .. " · " .. note2 end
+        return true, plan
     end
 
     -- Очередь кадра: PA.fire только ставит задачу, снимает — тик.
@@ -36106,27 +36318,78 @@ do
         return true
     end
 
+    -- Одна точка отчёта: чат/журнал/тост + короткая строка на странице.
+    local function paShotReport(okFlag, short, full)
+        PA.shotLast = tostring(full or short)
+        PA.shotFail = (not okFlag) or nil
+        PA.log("скриншот " .. (okFlag and "сохранён" or "не сохранён") .. ": " .. tostring(full or short))
+        if PA.notify then
+            QR.toast("Автоскриншот: " .. tostring(short), okFlag and "ok" or "warn", okFlag and 3.4 or 5)
+        end
+    end
+
     function PA.shotTick()
+        local now = os.clock()
+        -- Фаза 1: пришло время снять кадр
         local at = tonumber(PA.shotAt)
-        if not at then return false end
-        if PA.shot == false then
-            PA.shotAt, PA.shotNick = nil, nil
-            return false
+        if at then
+            if PA.shot == false then
+                PA.shotAt, PA.shotNick = nil, nil
+            elseif now >= at then
+                local nick = PA.shotNick or ""
+                PA.shotAt, PA.shotNick = nil, nil
+                local okC, r1, r2 = pcall(PA.shotTake, nick)
+                if not okC then
+                    paShotReport(false, "ошибка запроса", tostring(r1))
+                elseif r1 == true and type(r2) == "table" and r2.noWait then
+                    paShotReport(false, "F8 нажат, но проверить нечем",
+                        "F8 нажат. Своя папка и подтверждение сохранения работают "
+                        .. "только с Screenshot.asi; без него ищите кадр в «Документы\\GTA San "
+                        .. "Andreas User Files\\SAMP\\screens»")
+                elseif r1 == true and type(r2) == "table" then
+                    r2.untilAt = now + SHOT_WAIT
+                    PA.shotWait = r2
+                else
+                    paShotReport(false, tostring(r2), tostring(r2))
+                end
+            end
         end
-        if os.clock() < at then return false end
-        local nick = PA.shotNick or ""
-        PA.shotAt, PA.shotNick = nil, nil
-        local ok, made, where = pcall(PA.shotTake, nick)
-        if ok and made then
-            PA.shotLast = tostring(where)
-            PA.log("скриншот: " .. tostring(where))
-            if PA.notify then QR.toast("Автопилот: скриншот сохранён", "ok", 3.2) end
-        else
-            PA.shotLast = (ok and tostring(where)) or ("ошибка: " .. tostring(made))
-            PA.log("скриншот не сделан: " .. tostring(PA.shotLast))
-            if PA.notify then QR.toast("Автопилот: скриншот не сделан", "warn", 3.2) end
+        -- Фаза 2: ждём файл — плагин сохраняет его не мгновенно
+        local W = PA.shotWait
+        if W then
+            for i = 1, #(W.paths or {}) do
+                local p = W.paths[i]
+                if paShotExists(p) then
+                    -- «…png.png» от старых версий плагина приводим к имени
+                    -- с одним расширением, чтобы файл было легко найти
+                    if p:sub(-8) == ".png.png" then
+                        local nice = p:sub(1, #p - 4)
+                        local okR, resR = pcall(os.rename, p, nice)
+                        if okR and resR == true then p = nice end
+                    end
+                    PA.shotWait = nil
+                    paShotReport(true, (p:match("[^/\\]+$") or p) .. "  (" .. tostring(W.note or "") .. ")", p)
+                    return true
+                end
+            end
+            for i = 1, #(W.dirs or {}) do
+                local found = paShotFresh(W.dirs[i], W.afterT or 0)
+                if found then
+                    PA.shotWait = nil
+                    paShotReport(true, (found:match("[^/\\]+$") or found) .. "  (F8, папка SA-MP)", found)
+                    return true
+                end
+            end
+            if now >= (W.untilAt or 0) then
+                PA.shotWait = nil
+                local extra = PA.shotWhy and ("; плагин: " .. tostring(PA.shotWhy)) or ""
+                paShotReport(false, "файл не появился (" .. tostring(W.note or "?") .. ")",
+                    tostring(W.expect) .. extra
+                    .. "; проверьте, что папка доступна для записи и что Screenshot.asi установлен")
+            end
+            return true
         end
-        return true
+        return false
     end
 
     -- sameEvent: эту вкладку выдаёт та же СТРОКА, что и предыдущую — тогда
@@ -36332,9 +36595,11 @@ do
 
     -- =================================================================
     --  СТРАНИЦА «АВТОПИЛОТ» (рисуется внутри раздела «Наказания»)
+    --  v1.19.204: раскладка по сетке — одинаковые подписи и отступы,
+    --  поля ввода одной ширины, тумблеры ровными рядами по два. Лишнее
+    --  убрано: счётчик вкладок, длинные простыни подсказок и строки
+    --  диагностики (успешный кадр и так виден в чате и журнале).
     -- =================================================================
-    -- Замер текста через ctx.drawnW (как у соседних разделов), с запасным
-    -- вариантом «на глаз», если обёртка не умеет мерить.
     local function paW(ctx, text, scale)
         scale = tonumber(scale) or 1
         if type(ctx.drawnW) == "function" then
@@ -36368,10 +36633,12 @@ do
 
     -- Галочка-тумблер с подписью. Квадратик и галочка рисуются линиями:
     -- символов «✓»/«☑» нет во всех шрифтах игры.
-    local function paToggle(ctx, id, x, y, on, label, box)
+    -- Возвращает: нажатие, ширину (по ней страница кладёт элементы в сетку).
+    local function paToggle(ctx, id, x, y, on, label, box, scale)
         local im = ctx.im
         box = tonumber(box) or 18
-        local labW = paW(ctx, label, 0.86)
+        scale = tonumber(scale) or 0.86
+        local labW = paW(ctx, label, scale)
         local w = box + 6 + labW
         im.SetCursorPos(im.ImVec2(x, y))
         local clicked = im.InvisibleButton(id, im.ImVec2(w, 24)) and true or false
@@ -36395,16 +36662,13 @@ do
         end
         local col = on and ctx.col32(240, 236, 250, 255) or ctx.col32(198, 192, 216, 255)
         if hov then col = ctx.col32(252, 250, 255, 255) end
-        ctx.uiText(x + box + 6, y + 4, label, col, 0.86)
+        ctx.uiText(x + box + 6, y + 4, label, col, scale)
         return clicked, w
     end
 
-    -- Залитый круг средствами draw-list. AddCircleFilled есть не во всех
-    -- сборках ImGui, поэтому пробуем круг, потом контур, потом квадрат.
-    -- (Такой же хелпер есть у автопилота ответов, но он локальный для своего
-    -- do-блока и здесь не виден.)
-    local function paCircle(c2, cx, cy, r, col)
-        local dl2, at2 = c2.dl, c2.at
+    -- Кружок (если draw-list не умеет — квадратик): кнопка «+» на вкладках.
+    local function paCircle(ctx, cx, cy, r, col)
+        local dl2, at2 = ctx.dl, ctx.at
         if not (dl2 and at2) then return false end
         if dl2.AddCircleFilled and pcall(dl2.AddCircleFilled, dl2, at2(cx, cy), r, col) then
             return true
@@ -36452,26 +36716,32 @@ do
         local TH = theme()
         local x, y, w, h = ctx.x, ctx.y, ctx.w, ctx.h
         if not (x and y and w and h) or w < 320 or h < 190 then return false end
-        local hi  = ctx.col32(TH.textHi[1], TH.textHi[2], TH.textHi[3], 255)
-        local dim = ctx.col32(TH.textDim[1], TH.textDim[2], TH.textDim[3], 255)
-        local mut = ctx.col32(TH.textMuted[1], TH.textMuted[2], TH.textMuted[3], 255)
-        local ac  = TH.accent or { 164, 112, 224, 255 }
-        local acC = ctx.col32(ac[1], ac[2], ac[3], 255)
-        local okC = ctx.col32(120, 220, 160, 255)
+        local hi   = ctx.col32(TH.textHi[1], TH.textHi[2], TH.textHi[3], 255)
+        local dim  = ctx.col32(TH.textDim[1], TH.textDim[2], TH.textDim[3], 255)
+        local mut  = ctx.col32(TH.textMuted[1], TH.textMuted[2], TH.textMuted[3], 255)
+        local ac   = TH.accent or { 164, 112, 224, 255 }
+        local acC  = ctx.col32(ac[1], ac[2], ac[3], 255)
+        local okC  = ctx.col32(120, 220, 160, 255)
         local warnC = ctx.col32(255, 176, 96, 255)
         local bottomY = y + h - 4
 
-        -- ---------- шапка: название, счётчик, тумблеры ----------
+        -- единый ритм страницы: подпись 0.82, поле/кнопка 28, блок 12
+        local ROW, BLOCK = 28, 12
+        local LABEL = 0.82
+        local TEXT = 0.72
+        local TEXT_STEP = lineH(ctx, TEXT) + 2
+        local canLine = (type(ctx.dl.AddRectFilled) == "function")
+
+        -- ---------- шапка: название и тумблеры ----------
         ctx.uiText(x, y + 1, "Автопилот наказаний", hi, 0.98)
         local tw = paW(ctx, "Автопилот наказаний", 0.98)
-        chip(ctx, x + tw + 10, y - 3, "вкладок: " .. tostring(#PA.tabs))
         local swX = x + w - 46
         if paSwitch(ctx, swX, y + 2, PA.on, "##grnd_pa_switch") then PA.set(not PA.on) end
         local testLab = "Проверка"
-        local testW = 18 + 6 + paW(ctx, testLab, 0.86)
+        local testW = 24 + paW(ctx, testLab, LABEL)
         local testX = swX - 18 - testW
-        if testX > x + tw + 140 then
-            if paToggle(ctx, "##grnd_pa_test", testX, y + 4, PA.test, testLab) then
+        if testX > x + tw + 60 then
+            if paToggle(ctx, "##grnd_pa_test", testX, y + 4, PA.test, testLab, 18, LABEL) then
                 PA.test = not PA.test
                 PA.touch()
                 pcall(PA.save)
@@ -36542,108 +36812,95 @@ do
         if delIdx then PA.tabDel(delIdx) return true end
 
         -- =================================================================
-        --  ДВЕ КОЛОНКИ (v1.19.203). Раньше страница была одной длинной
-        --  «простынёй», и в реальном меню (окно не тянется, ~500 px под
-        --  содержимое) нижние блоки — параметры и тумблеры — просто не
-        --  влезали. Теперь слева данные вкладки и скриншот, справа проверка
-        --  строки, параметры и лента. Узкая страница → одна колонка.
+        --  ДВЕ КОЛОНКИ. Слева — данные вкладки и скриншот, справа — проверка
+        --  строки, параметры, тумблеры и лента. Узкая страница → одна колонка.
         -- =================================================================
         local tab = PA.tab()
-        local hintStep = lineH(ctx, 0.72) + 2
         local twoCol = (w >= 620)
-        local colGap = 20
-        local colW1 = twoCol and math.floor((w - colGap) * 0.56) or w
+        local colGap = 22
+        local colW1 = twoCol and math.floor((w - colGap) * 0.54) or w
         local colW2 = twoCol and (w - colW1 - colGap) or w
-        local c1X, c2X = x, (twoCol and (x + colW1 + colGap) or x)
-        local rowY = ty + tabH + 14
+        local c1X = x
+        local c2X = twoCol and (x + colW1 + colGap) or x
+        local rowY = ty + tabH + 16
         local yy1, yy2 = rowY, rowY
 
+        -- подпись блока: возвращает y первой строки под ней
+        local function label(yy, cx, text)
+            ctx.uiText(cx, yy, text, dim, LABEL)
+            return yy + 15
+        end
+
         -- ---------- ЛЕВАЯ КОЛОНКА: что и как выдаём ----------
-        -- триггеры
-        if yy1 + 46 <= bottomY then
-            ctx.uiText(c1X, yy1, "Триггеры (можно несколько через запятую)", dim, 0.84)
-            yy1 = yy1 + 16
+        if yy1 + 15 + ROW <= bottomY then
+            yy1 = label(yy1, c1X, "Триггеры (можно несколько через запятую)")
             local tkey = "paTrig" .. PA.sel
-            field(ctx, "##grnd_pa_trigger", tkey, TRIG_CAP, c1X, yy1, colW1, 28,
-                "дм, dm — что искать в тексте строки", false, tab.trigger)
+            field(ctx, "##grnd_pa_trigger", tkey, TRIG_CAP, c1X, yy1, colW1, ROW,
+                "дм, dm", false, tab.trigger)
             local tv = trim(bufText(tkey))
             if tv ~= tab.trigger then
                 tab.trigger = clampText(oneLine(utf(tv)), MAX_PTRIG)
                 PA.touch()
             end
-            yy1 = yy1 + 32
+            yy1 = yy1 + ROW + 6
             yy1 = yy1 + paHint(ctx, c1X, yy1, colW1,
-                "Строка чата: «Ник: дм» — во вкладке ищем «дм». Крики, обычный чат и "
-                .. "«(( … ))» разбираются одинаково; ник берётся из строки, ID — из списка игроков в сети.",
-                mut, 2)
-            yy1 = yy1 + 8
+                "Ищем в тексте строки: «Ник: дм» — триггер «дм». Крик, обычный чат и «(( … ))» — одинаково.",
+                mut, 1)
+            yy1 = yy1 + BLOCK
         end
 
-        -- режим поиска
-        if yy1 + 30 <= bottomY then
-            local modeTxt = "Режим:"
-            ctx.uiText(c1X, yy1 + 6, modeTxt, dim, 0.84)
-            local bx = c1X + paW(ctx, modeTxt, 0.84) + 10
+        if yy1 + 15 + ROW <= bottomY then
+            yy1 = label(yy1, c1X, "Режим поиска")
             local items = {
-                { id = "word",  name = "В любом месте",  hint = "слово ищется в тексте строки" },
-                { id = "exact", name = "Точное совпадение", hint = "текст строки равен триггеру" },
+                { id = "word",  name = "В любом месте" },
+                { id = "exact", name = "Точное совпадение" },
             }
+            local bw = math.floor((colW1 - 8) / 2)
             for i = 1, #items do
-                local bw = math.max(110, paW(ctx, items[i].name, 0.84) + 22)
-                if button(ctx, "##grnd_pa_mode_" .. items[i].id, bx, yy1, bw, 26, items[i].name,
-                    { selected = (tab.mode == items[i].id) }) then
+                if button(ctx, "##grnd_pa_mode_" .. items[i].id, c1X + (i - 1) * (bw + 8), yy1,
+                    bw, ROW, items[i].name, { selected = (tab.mode == items[i].id) }) then
                     tab.mode = items[i].id
                     PA.touch()
                     pcall(PA.save)
                 end
-                bx = bx + bw + 8
             end
-            yy1 = yy1 + 34
+            yy1 = yy1 + ROW + BLOCK
         end
 
-        -- команда
-        if yy1 + 62 <= bottomY then
-            ctx.uiText(c1X, yy1, "Команда (любая — уйдёт в чат при срабатывании)", dim, 0.84)
-            yy1 = yy1 + 16
+        if yy1 + 15 + ROW <= bottomY then
+            yy1 = label(yy1, c1X, "Команда (уйдёт в чат при срабатывании)")
             local ckey = "paCmd" .. PA.sel
-            field(ctx, "##grnd_pa_cmd", ckey, CMD_CAP, c1X, yy1, colW1, 28,
+            field(ctx, "##grnd_pa_cmd", ckey, CMD_CAP, c1X, yy1, colW1, ROW,
                 "/mute {ID} 60 флуд", false, tab.cmd)
             local cv = trim(bufText(ckey))
             if cv ~= tab.cmd then
                 tab.cmd = clampText(oneLine(utf(cv)), MAX_PCMD)
                 PA.touch()
             end
-            yy1 = yy1 + 32
-            local hint = (PA.autoId == true)
-                and ("{ID} — ID нарушителя, {ник} — его ник, {текст} — текст строки. "
-                    .. "Переменных в команде нет — ID сам встанет после её имени "
-                    .. "(«/mute 60 флуд» → «/mute 7 60 флуд»).")
-                or ("{ID} — ID нарушителя, {ник} — его ник, {текст} — текст строки, "
-                    .. "{триггер} — найденное слово. Без переменных команда уходит "
-                    .. "ровно так, как написана; чтобы ID подставлялся сам, включите "
-                    .. "«подставлять ID без переменных».")
-            yy1 = yy1 + paHint(ctx, c1X, yy1, colW1, hint, mut, 2)
-            yy1 = yy1 + 6
+            yy1 = yy1 + ROW + 6
+            yy1 = yy1 + paHint(ctx, c1X, yy1, colW1,
+                "{ID} {ник} {текст} {триггер} {мой_ник} {время} — подстановки. Без переменных команда "
+                .. "уходит ровно как написана.", mut, 2)
+            yy1 = yy1 + BLOCK
         end
 
-        -- команда после
-        if yy1 + 52 <= bottomY then
-            ctx.uiText(c1X, yy1, "Команда после (не обязательно)", dim, 0.84)
-            yy1 = yy1 + 16
+        if yy1 + 15 + ROW <= bottomY then
+            yy1 = label(yy1, c1X, "Команда после")
             local akey = "paAfter" .. PA.sel
-            field(ctx, "##grnd_pa_after", akey, AFT_CAP, c1X, yy1, colW1, 28,
-                "/sp {ID} — уйдёт сразу после выдачи", false, tab.after)
+            field(ctx, "##grnd_pa_after", akey, AFT_CAP, c1X, yy1, colW1, ROW,
+                "/sp {ID} — не обязательно", false, tab.after)
             local av = trim(bufText(akey))
             if av ~= tab.after then
                 tab.after = clampText(oneLine(utf(av)), MAX_PAFT)
                 PA.touch()
             end
-            yy1 = yy1 + 36
+            yy1 = yy1 + ROW + BLOCK
         end
 
-        -- ---------- автоскриншот (после выдачи) ----------
-        if yy1 + 26 <= bottomY then
-            if paToggle(ctx, "##grnd_pa_shot", c1X, yy1, PA.shot ~= false, "скриншот после выдачи") then
+        -- скриншот: тумблер, под ним папка (пусто — папка по умолчанию)
+        if yy1 + 24 <= bottomY then
+            if paToggle(ctx, "##grnd_pa_shot", c1X, yy1, PA.shot ~= false,
+                "скриншот после выдачи", 18, LABEL) then
                 PA.shot = not (PA.shot ~= false)
                 PA.touch()
                 pcall(PA.save)
@@ -36652,174 +36909,162 @@ do
             end
             yy1 = yy1 + 28
         end
-        if PA.shot ~= false and yy1 + 62 <= bottomY then
-            ctx.uiText(c1X, yy1, "Папка для скриншотов (пусто — по умолчанию)", dim, 0.84)
-            yy1 = yy1 + 16
-            local skey = "paShotDir"
-            field(ctx, "##grnd_pa_shotdir", skey, SHOT_MAXDIR * 2 + 1, c1X, yy1, colW1, 28,
+        if PA.shot ~= false and yy1 + 15 + ROW <= bottomY then
+            yy1 = label(yy1, c1X, "Папка для скриншотов")
+            field(ctx, "##grnd_pa_shotdir", "paShotDir", SHOT_MAXDIR * 2 + 1, c1X, yy1, colW1, ROW,
                 PA.shotDirDefault(), false, PA.shotDir or "")
-            local sv = trim(bufText(skey))
+            local sv = trim(bufText("paShotDir"))
             if sv ~= (PA.shotDir or "") then
                 PA.shotDir = clampText(oneLine(utf(sv)), SHOT_MAXDIR)
                 PA.touch()
             end
-            yy1 = yy1 + 32
+            yy1 = yy1 + ROW + 6
             yy1 = yy1 + paHint(ctx, c1X, yy1, colW1,
-                "Снимок делает Screenshot.asi (модуль lib.screenshot): файл ложится в эту "
-                .. "папку, плагин создаст её сам. Путь можно указать полный («C:\\папка»), "
-                .. "а относительный считается от «Мои документы\\GTA San Andreas User Files"
-                .. "\\App screens». Без плагина кадр делается клавишей F8 и попадает в "
-                .. "папку скриншотов SA-MP.",
-                mut, 3)
-            yy1 = yy1 + 6
+                "Пусто — resource/grnd/screenshots. Свою папку сохраняет Screenshot.asi "
+                .. "(lib.screenshot); без него кадр делает клавиша F8.", mut, 2)
+            yy1 = yy1 + BLOCK
         end
 
-        -- тумблер вкладки и состояние автопилота
-        if yy1 + 26 <= bottomY then
-            if paToggle(ctx, "##grnd_pa_tabon", c1X, yy1, tab.on ~= false, "вкладка включена") then
+        if yy1 + 24 <= bottomY then
+            local click, tw2 = paToggle(ctx, "##grnd_pa_tabon", c1X, yy1, tab.on ~= false,
+                "вкладка включена", 18, LABEL)
+            if click then
                 tab.on = not (tab.on ~= false)
                 PA.touch()
                 pcall(PA.save)
             end
-            ctx.uiText(c1X + 190, yy1 + 4,
-                (PA.test and "режим проверки" or (PA.on and "автопилот включён" or "автопилот выключен")),
-                PA.test and warnC or (PA.on and okC or mut), 0.82)
-            yy1 = yy1 + 30
+            local st = PA.test and "режим проверки"
+                or (PA.on and "автопилот включён" or "автопилот выключен")
+            ctx.uiText(c1X + (tw2 or 170) + 18, yy1 + 4, st,
+                PA.test and warnC or (PA.on and okC or mut), 0.78)
+            yy1 = yy1 + 28
         end
 
-        -- узкая страница: правая колонка начинается ПОД левой
-        if not twoCol then yy2 = yy1 + 8 end
+        -- узкая страница: правая колонка начинается под левой
+        if not twoCol then yy2 = yy1 + BLOCK end
 
         -- ---------- ПРАВАЯ КОЛОНКА: проверка, параметры, лента ----------
-        -- проверка строки
-        if yy2 + 76 <= bottomY then
-            ctx.uiText(c2X, yy2, "Проверка строки (образец строки чата)", dim, 0.84)
-            yy2 = yy2 + 16
-            local bw = 118
+        if yy2 + 15 + ROW <= bottomY then
+            yy2 = label(yy2, c2X, "Проверка строки (образец строки чата)")
+            local bw = math.min(118, math.floor(colW2 * 0.42))
             field(ctx, "##grnd_pa_tline", "paTestLine", 512, c2X, yy2,
-                math.max(120, colW2 - bw - 8), 28,
-                "Nik_Name: дм", false, PA.testLine or "")
-            if button(ctx, "##grnd_pa_tbtn", c2X + colW2 - bw, yy2, bw, 28, "Разобрать",
+                math.max(90, colW2 - bw - 8), ROW, "Nik_Name: дм", false, PA.testLine or "")
+            if button(ctx, "##grnd_pa_tbtn", c2X + colW2 - bw, yy2, bw, ROW, "Разобрать",
                 { primary = true }) then
                 PA.testLine = trim(bufText("paTestLine"))
                 PA.testOut = PA.dryRun(PA.testLine)
             end
-            yy2 = yy2 + 32
+            yy2 = yy2 + ROW + 6
             local out = PA.testOut
             if out and out ~= "" then
                 yy2 = yy2 + paHint(ctx, c2X, yy2, colW2, out,
-                    (out:find("→", 1, true) and okC or warnC), 3)
+                    (out:find("→", 1, true) and okC or warnC), 2)
             else
-                ctx.uiText(c2X, yy2, "Ничего не отправляется — только разбор строки.", mut, 0.78)
-                yy2 = yy2 + hintStep
+                ctx.uiText(c2X, yy2, fit("Ничего не отправляется — только разбор строки.",
+                    colW2, ctx.drawnW, TEXT), mut, TEXT)
+                yy2 = yy2 + TEXT_STEP
             end
-            yy2 = yy2 + 8
+            yy2 = yy2 + BLOCK
         end
 
-        -- параметры: пауза между выдачами и повтор игроку
-        if yy2 + 24 <= bottomY then
-            ctx.uiText(c2X, yy2 + 3, "Пауза между выдачами, сек", dim, 0.84)
-            local labW = paW(ctx, "Пауза между выдачами, сек", 0.84)
-            local pw = 66
-            local px = c2X + math.min(colW2 * 0.5, labW + 12)
-            field(ctx, "##grnd_pa_pause", "paPause", 8, px, yy2, pw, 26, "1", false,
+        -- параметры: подпись слева, поле — у правого края, одной ширины
+        local PF = 64
+        if yy2 + 2 * (ROW + 2) <= bottomY then
+            local function param(yy, id, bufkey, lab, cap, def, val)
+                ctx.uiText(c2X, yy + 7, lab, dim, LABEL)
+                field(ctx, id, bufkey, cap, c2X + colW2 - PF, yy, PF, ROW, def, false, val)
+            end
+            param(yy2, "##grnd_pa_pause", "paPause", "Пауза между выдачами, сек", 8, "1",
                 string.format("%.1f", tonumber(PA.pause) or GAP_DEF))
             local pv = tonumber((bufText("paPause"):gsub("[^%d%.%,]", ""):gsub(",", ".")))
             if pv and math.abs(pv - (tonumber(PA.pause) or GAP_DEF)) > 0.001 then
                 PA.pause = math.max(0, math.min(120, pv))
                 PA.touch()
             end
-            -- «Повтор игроку» рядом, а если места нет — строкой ниже
-            local cdLab = "Повтор игроку, сек"
-            local cx2, cy2 = px + pw + 24, yy2
-            local kx = cx2 + paW(ctx, cdLab, 0.84) + 12
-            if kx + 66 > c2X + colW2 then
-                cx2, cy2 = c2X, yy2 + 30
-                kx = cx2 + paW(ctx, cdLab, 0.84) + 12
+            yy2 = yy2 + ROW + 2
+            param(yy2, "##grnd_pa_cd", "paCd", "Повтор игроку, сек", 8, "10",
+                tostring(math.floor(tonumber(PA.cd) or CD_DEF)))
+            local kv = tonumber((bufText("paCd"):gsub("%D", "")))
+            if kv and kv ~= math.floor(tonumber(PA.cd) or CD_DEF) then
+                PA.cd = math.max(0, math.min(3600, kv))
+                PA.touch()
             end
-            ctx.uiText(cx2, cy2 + 3, cdLab, dim, 0.84)
-            if kx + 66 <= c2X + colW2 and cy2 + 26 <= bottomY then
-                field(ctx, "##grnd_pa_cd", "paCd", 8, kx, cy2, 66, 26, "10", false,
-                    tostring(math.floor(tonumber(PA.cd) or CD_DEF)))
-                local kv = tonumber((bufText("paCd"):gsub("%D", "")))
-                if kv and kv ~= math.floor(tonumber(PA.cd) or CD_DEF) then
-                    PA.cd = math.max(0, math.min(3600, kv))
-                    PA.touch()
-                end
-            end
-            yy2 = (cy2 == yy2) and (yy2 + 32) or (cy2 + 30)
+            yy2 = yy2 + ROW + BLOCK
         end
 
-        -- тумблеры параметров: переносим по строкам, как кнопки
+        -- тумблеры: ровная сетка по два в ряд
         do
             local items = {
-                { key = "skipSelf", label = "не трогать себя" },
-                { key = "skipAdmins", label = "не трогать администраторов" },
-                { key = "autoId", label = "подставлять ID без переменных" },
-                { key = "notify", label = "уведомления" },
-                { key = "logOn", label = "журнал выдач" },
-                { key = "watchSay", label = "обычный чат" },
-                { key = "watchShout", label = "крик" },
-                { key = "watchOoc", label = "ООС (( … ))" },
+                { key = "skipSelf",    label = "не трогать себя" },
+                { key = "skipAdmins",  label = "не трогать админов" },
+                { key = "autoId",      label = "ID без переменных" },
+                { key = "notify",      label = "уведомления" },
+                { key = "logOn",       label = "журнал выдач" },
+                { key = "watchSay",    label = "обычный чат" },
+                { key = "watchShout",  label = "крик" },
+                { key = "watchOoc",    label = "ООС (( … ))" },
             }
-            local bx, by = c2X, yy2
+            local cw = math.floor((colW2 - 16) / 2)
+            local rows = 0
             for i = 1, #items do
                 local it = items[i]
-                local labW = 24 + paW(ctx, it.label, 0.86)
-                if bx + labW > c2X + colW2 and bx > c2X then
-                    bx, by = c2X, by + 26
-                end
+                local row = math.floor((i - 1) / 2)
+                local bx = c2X + ((i - 1) % 2) * (cw + 16)
+                local by = yy2 + row * 26
                 if by + 24 > bottomY then break end
-                if paToggle(ctx, "##grnd_pa_tg_" .. it.key, bx, by, PA[it.key] ~= false, it.label) then
+                if paToggle(ctx, "##grnd_pa_tg_" .. it.key, bx, by,
+                    PA[it.key] ~= false, it.label, 18, 0.78) then
                     PA[it.key] = not (PA[it.key] ~= false)
                     PA.touch()
                     pcall(PA.save)
                 end
-                bx = bx + labW + 14
+                rows = row + 1
             end
-            if by + 24 <= bottomY then yy2 = by + 30 end
+            if rows > 0 then yy2 = yy2 + rows * 26 end
+            yy2 = yy2 + BLOCK
         end
 
-        -- лента последних выдач
-        if yy2 + 20 <= bottomY then
+        -- лента последних выдач (не больше четырёх строк)
+        if yy2 + 15 + TEXT_STEP <= bottomY then
             ctx.uiText(c2X, yy2, "Последние срабатывания (выдано: " .. tostring(PA.fired or 0) .. ")",
-                dim, 0.84)
-            yy2 = yy2 + 16
+                dim, LABEL)
+            yy2 = yy2 + 15
             local feed = PA.feed or {}
             if #feed == 0 then
-                ctx.uiText(c2X, yy2, "Пока пусто.", mut, 0.78)
-                yy2 = yy2 + hintStep
+                ctx.uiText(c2X, yy2, "Пока пусто.", mut, TEXT)
+                yy2 = yy2 + TEXT_STEP
             else
+                local shown = 0
                 for i = 1, #feed do
-                    if yy2 + lineH(ctx, 0.78) > bottomY then break end
+                    if shown >= 4 or yy2 + lineH(ctx, TEXT) > bottomY then break end
                     local f = feed[i]
-                    local col = f.test and warnC or okC
-                    local text = f.at .. "  " .. f.who .. " → " .. f.cmd
-                    ctx.uiText(c2X, yy2, fit(text, colW2, ctx.drawnW, 0.78), col, 0.78)
-                    yy2 = yy2 + lineH(ctx, 0.78) + 2
+                    local text = tostring(f.at) .. "  " .. tostring(f.who) .. " → " .. tostring(f.cmd)
+                    ctx.uiText(c2X, yy2, fit(text, colW2, ctx.drawnW, TEXT),
+                        f.test and warnC or okC, TEXT)
+                    yy2 = yy2 + TEXT_STEP
+                    shown = shown + 1
                 end
             end
-            yy2 = yy2 + 2
         end
 
-        -- состояние (диагностика внизу страницы)
-        if bottomY - 16 > yy1 and bottomY - 16 > yy2 then
+        -- диагностика: одна строка и только когда есть о чём сказать
+        do
             local stY = math.max(yy1, yy2)
-            if PA.lastCheck then
-                local col = PA.on and mut or dim
-                ctx.uiText(x, stY, fit("Проверка: " .. tostring(PA.lastCheck), w, ctx.drawnW, 0.74),
-                    col, 0.74)
-                stY = stY + lineH(ctx, 0.74) + 4
+            local msg
+            if PA.err then
+                msg = "Ошибка: " .. tostring(PA.err)
+            elseif PA.shotFail and PA.shotLast then
+                msg = "Скриншот: " .. tostring(PA.shotLast)
             end
-            if PA.shotLast and stY + lineH(ctx, 0.74) <= bottomY then
-                ctx.uiText(x, stY, fit("Скриншот: " .. tostring(PA.shotLast), w, ctx.drawnW, 0.74),
-                    mut, 0.74)
+            if msg and stY + lineH(ctx, TEXT) <= bottomY then
+                ctx.uiText(x, stY, fit(msg, w, ctx.drawnW, TEXT), warnC, TEXT)
             end
         end
 
         QR.punAutoErr = nil
         return true
     end
+
 end
 
 -- ---------- самопроверка логики (без файлов и ImGui) ----------

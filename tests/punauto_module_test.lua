@@ -106,6 +106,34 @@ local function isConnected(id) return connected[id] ~= nil end
 local function nickOf(id) return connected[id] end
 local function myId() return 5 end
 
+-- ---------- заглушка Screenshot.asi ----------
+-- Скрипт берёт модуль только через require, а модуль этот ничего не
+-- возвращает; поэтому подменяем его один раз на весь стенд и по-настоящему
+-- пишем файл, когда это нужно проверке.
+local shotStub = { shots = {}, makeFile = false, dupExt = false }
+do
+    local origRequire = require
+    require = function(name)
+        if name == "lib.screenshot" then
+            if shotStub.broken then error("module 'lib.screenshot' not found", 2) end
+            return {
+                getUserDirectoryPath = function() return "/tmp/grnd_user_files" end,
+                requestEx = function(dir, file)
+                    shotStub.shots[#shotStub.shots + 1] = { dir = dir, file = file }
+                    if shotStub.makeFile then
+                        local ext = shotStub.dupExt and ".png.png" or ".png"
+                        local f = io.open(dir .. "/" .. file .. ext, "wb")
+                        if f then f:write("png") f:close() end
+                    end
+                    return true
+                end,
+                request = function() end,
+            }
+        end
+        return origRequire(name)
+    end
+end
+
 -- ---------- локальные имена, которые в файле живут в объёмлющем closure ----------
 local function theme()
     return { textHi = { 240, 238, 246 }, textDim = { 170, 164, 188 },
@@ -124,7 +152,26 @@ local function button(_ctx, id) return click[id] == true end
 local function chip() end
 local function lineH() return 14 end
 local function fit(s) return tostring(s) end
-local function wrapW(s) return { tostring(s) } end
+-- Перенос строки — как в скрипте (wrapW там настоящий, по замеру ширины).
+-- Простая заглушка «одна строка» ломала проверку «ничего не вылезает».
+local function wrapW(s, maxW, measure, scale)
+    scale = tonumber(scale) or 1
+    local function width(t)
+        local w = (type(measure) == "function") and measure(t, scale) or (#tostring(t) * 7 * scale)
+        return tonumber(w) or 0
+    end
+    local out, line = {}, ""
+    for word in tostring(s or ""):gmatch("%S+") do
+        if line == "" then
+            line = word
+        else
+            local cand = line .. " " .. word
+            if width(cand) <= maxW then line = cand else out[#out + 1] = line line = word end
+        end
+    end
+    if line ~= "" then out[#out + 1] = line end
+    return out
+end
 local function bufText(k) return bufs[k] or "" end
 local function utf8Len(s) return #tostring(s) end
 local function clampText(s) return tostring(s) end
@@ -365,54 +412,106 @@ PA.autoId = false
 PA.tabs[1].cmd = "/mute {ID} 60 флуд"
 PA.save()
 
--- ---------- автоскриншот после выдачи ----------
--- Подменяем require: вместо Screenshot.asi отдаём модуль-пустышку, который
--- записывает, куда его попросили сохранить кадр.
+-- ---------- автоскриншот после выдачи (v1.19.204) ----------
+-- Главное отличие от прошлой версии: скрипт не верит вызову плагина (модуль
+-- lib.screenshot ничего не возвращает), а ЖДЁТ появления файла и пишет в чат
+-- только то, что нашёл. Проверяем оба исхода. У каждого случая своя пустая
+-- папка: имя кадра содержит секунды, и файл из прошлой проверки не должен
+-- «находиться» в следующей.
+local function shotDir(tag)
+    local d = "/tmp/grnd_shot_" .. tostring(tag)
+    os.execute("rm -rf " .. d .. "; mkdir -p " .. d)
+    return d
+end
+
 do
-    local shots = {}
-    local origRequire = require
-    require = function(name)
-        if name == "lib.screenshot" then
-            return { requestEx = function(dir, file) shots[#shots+1] = { dir = dir, file = file } return true end }
-        end
-        return origRequire(name)
-    end
-    -- модуль кэширует плагин при первом обращении — до этого вызова ещё не было
-    PA.shotDir = ""
-    PA.lastAt = os.clock() - 5
+    local shots = shotStub.shots
+    PA.shotAt, PA.shotWait, PA.shotFail, PA.shotLast = nil, nil, nil, nil
+    PA.shot = true
     PA.cdUntil = {}
+
+    -- ---- 1. плагин сохранил файл: успех подтверждается проверкой ----
+    shotStub.makeFile, shotStub.dupExt = true, false
+    PA.shotDir = shotDir("a")
+    local dirA = PA.shotDir
+    local before = #shots
+    PA.lastAt = os.clock() - 5
     queued = {}
     PA.tabs[1].cmd = "/mute {ID} 60 флуд"
     PA.onChat("Nik_Name[7]: дм для скриншота")
     eq("shot.queued", type(PA.shotAt), "number")          -- задача поставлена
-    eq("shot.no.instant", #shots, 0)                     -- но кадр ещё не снят
-    -- «промотать» задержку и прогнать тик
-    PA.shotAt = os.clock() - 1
+    eq("shot.no.instant", #shots, before)                 -- но кадр ещё не снят
+    PA.shotAt = os.clock() - 1                             -- «промотали» задержку
     PA.tick()
-    eq("shot.taken", #shots, 1)
+    eq("shot.taken", #shots, before + 1)
+    eq("shot.dir", shots[#shots].dir, dirA)
     -- плагину имя отдаётся БЕЗ расширения: «.png» он добавляет сам
-ok("shot.name", tostring(shots[1].file):match("^grnd_%d%d%d%d%-%d%d%-%d%d_%d%d%-%d%d%-%d%d_Nik_Name$") ~= nil)
-ok("shot.name.ext", tostring(shots[1].file):find("%.png") == nil)
-    eq("shot.dir", shots[1].dir, PA.shotDirDefault())
-    ok("shot.logged", tostring(logged[#logged]):find("скриншот", 1, true) ~= nil)
-    -- своя папка из настроек
-    PA.shotDir = "D:\\GRND\\shots"
+    ok("shot.name", tostring(shots[#shots].file):match("^grnd_%d%d%d%d%-%d%d%-%d%d_%d%d%-%d%d%-%d%d_Nik_Name$") ~= nil)
+    ok("shot.name.ext", tostring(shots[#shots].file):find("%.png") == nil)
+    eq("shot.saved", PA.shotFail, nil)
+    ok("shot.saved.path", tostring(PA.shotLast):match("^" .. dirA .. "/grnd_.+Nik_Name%.png$") ~= nil)
+    ok("shot.saved.log", tostring(logged[#logged]):find("сохранён", 1, true) ~= nil)
+
+    -- ---- 2. старая версия плагина дописала «.png» к имени ----
+    -- скрипт сам приводит файл к нормальному имени и всё равно подтверждает
+    shotStub.dupExt = true
+    PA.shotDir = shotDir("b")
+    local dirB = PA.shotDir
+    PA.shotWait, PA.shotFail, PA.shotLast = nil, nil, nil
     PA.lastAt = os.clock() - 5
-    PA.cdUntil = {}
-    PA.onChat("Nik_Name[7]: дм ещё раз")
+    PA.tick()
     PA.shotAt = os.clock() - 1
     PA.tick()
-    eq("shot.customDir", shots[2].dir, "D:\\GRND\\shots")
-    PA.shotDir = ""
-    -- выключенный тумблер: кадр не делается
+    eq("shot.dup.taken", #shots, before + 2)
+    eq("shot.dup.saved", PA.shotFail, nil)
+    ok("shot.dup.renamed", tostring(PA.shotLast):match("%.png%.png$") == nil)
+    eq("shot.dup.path", tostring(PA.shotLast), dirB .. "/" .. shots[#shots].file .. ".png")
+    ok("shot.dup.file", io.open(tostring(PA.shotLast), "rb") ~= nil)
+    shotStub.dupExt = false
+
+    -- ---- 3. плагин промолчал: честный провал, а не «сохранено» ----
+    shotStub.makeFile = false
+    PA.shotDir = shotDir("c")
+    PA.shotWait, PA.shotFail, PA.shotLast = nil, nil, nil
+    local nf = #shots
+    PA.lastAt = os.clock() - 5
+    PA.tick()
+    PA.shotAt = os.clock() - 1
+    PA.tick()
+    eq("shot.fail.requested", #shots, nf + 1)              -- запрос ушёл
+    eq("shot.fail.not.yet", PA.shotFail, nil)              -- но файла ещё нет
+    ok("shot.fail.waiting", type(PA.shotWait) == "table")
+    PA.shotWait.untilAt = os.clock() - 1                   -- «прошло 5 секунд»
+    PA.tick()
+    eq("shot.fail.flag", PA.shotFail, true)
+    ok("shot.fail.path", tostring(PA.shotLast):find(PA.shotDir, 1, true) ~= nil)
+    ok("shot.fail.log", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
+
+    -- ---- 4. своя папка уходит в плагин как есть ----
+    shotStub.makeFile = true
+    PA.shotDir = shotDir("d")
+    PA.shotWait, PA.shotFail = nil, nil
+    local n2 = #shots
+    PA.lastAt = os.clock() - 5
+    PA.tick()
+    PA.shotAt = os.clock() - 1
+    PA.tick()
+    eq("shot.dir.again", shots[n2 + 1].dir, PA.shotDir)
+    eq("shot.dir.saved", PA.shotFail, nil)
+
+    -- ---- 5. выключенный тумблер: кадр не делается ----
     PA.shot = false
+    PA.shotWait = nil
     eq("shot.off.queue", PA.shotQueue("X"), false)
     PA.shotAt = os.clock() - 1
     PA.tick()
-    eq("shot.off.taken", #shots, 2)
+    eq("shot.off.taken", #shots, n2 + 1)
     eq("shot.off.cleared", PA.shotAt, nil)
+
     PA.shot = true
-    require = origRequire
+    PA.shotDir = ""
+    PA.shotWait, PA.shotFail, PA.shotLast = nil, nil, nil
+    os.execute("rm -rf /tmp/grnd_shot_a /tmp/grnd_shot_b /tmp/grnd_shot_c /tmp/grnd_shot_d")
 end
 
 -- удаление вкладки
@@ -561,6 +660,12 @@ ok("draw.testline.out", tostring(PA.testOut):find("вкладка 1", 1, true) ~
 -- Раньше (одна колонка) низ страницы — параметры, тумблеры и лента — не
 -- влезал: именно эту поломку стенд и ловит.
 local seen = {}
+-- ширина строки «по-человечески»: считаем символы UTF-8, а не байты, иначе
+-- кириллица даёт завышенную оценку и проверка на вылезание врёт
+local function utf8chars(text)
+    local _, n = tostring(text):gsub("[^\128-\191]", "")
+    return n
+end
 do
     local im = {}
     function im.ImVec2(x2, y2) return { x = x2, y = y2 } end
@@ -575,13 +680,13 @@ do
     function dl.AddCircle() end
     local ctxFit = {
         im = im, dl = dl,
-        uiText = function(_x, y2, t2) seen[#seen + 1] = { y = y2, t = tostring(t2) } end,
+        uiText = function(x2, y2, t2, _col, scale) seen[#seen + 1] = { x = x2, y = y2, t = tostring(t2), s = tonumber(scale) or 1 } end,
         roundRect = function() end,
         col32 = function(r, g, b, a) return (r or 0) + (g or 0) * 256 end,
         rgba = function(r, g, b, a) return { r, g, b, a } end,
         at = function(x2, y2) return { x = x2, y = y2 } end,
         -- замер как в меню: tsize возвращает ширину строки шрифтом игры
-        drawnW = function(t2) return #tostring(t2) * 6.5 end,
+        drawnW = function(t2) return utf8chars(t2) * 6.5 end,
         tsize = function() return 6.5, 14 end,
         x = 100, y = 100, w = 672, h = 514,
     }
@@ -598,8 +703,8 @@ end
 
 -- левая колонка: данные вкладки и скриншот
 ok("drawfit.triggers", drawSeen("Триггеры"))
-ok("drawfit.mode", drawSeen("Режим:"))
-ok("drawfit.cmd", drawSeen("Команда (любая"))
+ok("drawfit.mode", drawSeen("Режим поиска"))
+ok("drawfit.cmd", drawSeen("Команда (уйдёт"))
 ok("drawfit.after", drawSeen("Команда после"))
 ok("drawfit.shot.toggle", drawSeen("скриншот после выдачи"))
 ok("drawfit.shot.dir", drawSeen("Папка для скриншотов"))
@@ -618,11 +723,66 @@ for i = 1, #seen do
 end
 eq("drawfit.fits", lowest <= 606 and "да" or ("ниже карточки: " .. lowest .. " " .. lowTxt), "да")
 
+-- ни одна надпись не вылезает за правый край карточки (x0 + w = 772)
+local overX, overTxt = 0, ""
+for i = 1, #seen do
+    local e = seen[i]
+    local right = (tonumber(e.x) or 0) + utf8chars(e.t) * 6.5 * (e.s or 1)
+    if right > overX then overX, overTxt = right, e.t end
+end
+eq("drawfit.width", overX <= 778 and "да" or (math.floor(overX) .. "px: " .. overTxt), "да")
+
 -- мелкое окно: страница просто ничего не рисует, но не падает
 ctx.w, ctx.h = 200, 100
 local okSmall = pcall(QR.punAutoDraw, ctx)
 ok("draw.small", okSmall)
 ctx.w, ctx.h = 700, 560
+
+-- ======== нет Screenshot.asi: скрипт не должен врать про «сохранено» ========
+-- Отдельная копия модуля с падающим require и без рабочего ffi.load("user32"):
+-- ровно та ситуация, из-за которой в чат уходило «сохранено», а файла не было.
+do
+    shotStub.broken = true
+    local QR2 = { bufs = {}, toast = function() end,
+        path = function() return "C:\\x.cfg" end,
+        myNick = function() return "Mixa" end,
+        queueCmd = function() return true end }
+    QR2.punAuto = {}
+    local body2 = assert(loadstring(chunk, "@punauto_module2"))()
+    body2(QR2, GRND_CONFIG, GRND_LOG, _G, os, string, table, math, pcall, print, type, tostring, tonumber,
+        theme, field, button, chip, lineH, fit, wrapW, bufText, utf8Len, clampText, oneLine, utf, trim, byteCut, utf8Cut,
+        grndLowerUtf, grndUtf8Text, grndSessionReady, grndRepQueue, grndAnsiText,
+        sampIsPlayerConnected, sampGetPlayerNickname, sampGetLocalPlayerId, sampSendChat)
+    local P2 = QR2.punAuto
+    P2.ensure()
+    -- 1. плагина нет и F8 нажать нечем — честный провал
+    P2.shotDir = ""
+    P2.shotQueue("Nik_Name")
+    P2.shotAt = os.clock() - 1
+    P2.tick()
+    -- причина неудачи видна в тексте: почему модуль не загрузился
+    ok("shot2.why", tostring(P2.shotWhy):find("lib.screenshot", 1, true) ~= nil)
+    eq("shot2.fail", P2.shotFail, true)
+    ok("shot2.reason", tostring(P2.shotLast):find("нет Screenshot.asi", 1, true) ~= nil)
+    ok("shot2.no.claim", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
+
+    -- 2. F8 нажали, но проверить негде — тоже без «сохранено»
+    _G.setVirtualKeyDown = function() return true end
+    P2.shotWait, P2.shotFail, P2.shotLast = nil, nil, nil
+    P2.shotQueue("Nik_Name")
+    P2.shotAt = os.clock() - 1
+    P2.tick()
+    eq("shot2.f8.fail", P2.shotFail, true)
+    eq("shot2.f8.nowait", P2.shotWait, nil)
+    ok("shot2.f8.text", tostring(P2.shotLast):find("F8", 1, true) ~= nil)
+    _G.setVirtualKeyDown = nil
+
+    -- 3. выключенный тумблер — запроса нет вообще
+    P2.shot = false
+    eq("shot2.off", P2.shotQueue("X"), false)
+    P2.shot = true
+    shotStub.broken = false
+end
 
 print(string.format("--- модуль автопилота: %d/%d ok ---", total - fails, total))
 os.exit(fails == 0 and 0 or 1)
