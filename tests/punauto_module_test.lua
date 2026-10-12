@@ -295,6 +295,15 @@ eq("nodelay.cduntil", PA.cdUntil, nil)
 eq("no.test.mode", PA.test, nil)          -- режима проверки больше нет
 eq("no.autoId", PA.autoId, nil)           -- ID подставляется всегда, тумблера нет
 eq("no.feed", PA.feed, nil)               -- ленты срабатываний больше нет
+-- v1.19.213: галочек нет — каналы чата, уведомления и журнал включены всегда,
+-- а предохранители «не трогать себя/админов» пока выключены
+eq("fixed.watchSay", PA.watchSay, true)
+eq("fixed.watchShout", PA.watchShout, true)
+eq("fixed.watchOoc", PA.watchOoc, true)
+eq("fixed.notify", PA.notify, true)
+eq("fixed.logOn", PA.logOn, true)
+eq("fixed.skipSelf", PA.skipSelf, false)
+eq("fixed.skipAdmins", PA.skipAdmins, false)
 eq("shot.default", PA.shot, true)         -- автоскриншот после выдачи включён
 ok("shotDir.default", type(PA.shotDirDefault()) == "string" and #PA.shotDirDefault() > 0)
 
@@ -328,6 +337,12 @@ CONFIG["grnd_punauto"]["t1_on"] = "0"
 CONFIG["grnd_punauto"]["autoId"] = "1"
 CONFIG["grnd_punauto"]["pause"] = "1.00"
 CONFIG["grnd_punauto"]["test"] = "1"
+CONFIG["grnd_punauto"]["watchShout"] = "0"     -- галочки больше нет
+CONFIG["grnd_punauto"]["watchOoc"] = "0"
+CONFIG["grnd_punauto"]["notify"] = "0"
+CONFIG["grnd_punauto"]["logOn"] = "0"
+CONFIG["grnd_punauto"]["skipSelf"] = "1"       -- и предохранители тоже
+CONFIG["grnd_punauto"]["skipAdmins"] = "1"
 
 -- перезагрузка: новая сессия модуля читает то же
 QR.punAuto = {}
@@ -340,6 +355,13 @@ eq("reload.after1", PA.tabs[1].after, nil)     -- «Команды после» 
 eq("reload.tabon", PA.tabs[1].on, nil)         -- тумблера вкладки больше нет
 eq("reload.test", PA.test, nil)                -- режима проверки больше нет
 eq("reload.oldcmd", PA.tabs[1].cmd, "/mute {ID} 60 флуд")   -- прочиталось как есть
+-- v1.19.213: значения галочек из старого конфига игнорируются
+eq("reload.watchShout", PA.watchShout, true)
+eq("reload.watchOoc", PA.watchOoc, true)
+eq("reload.notify", PA.notify, true)
+eq("reload.logOn", PA.logOn, true)
+eq("reload.skipSelf", PA.skipSelf, false)
+eq("reload.skipAdmins", PA.skipAdmins, false)
 
 -- ---------- выдача ----------
 PA.on = true
@@ -378,13 +400,15 @@ PA.onChat("[12:00:05] Vasya_Pupkin крикнул: помогите дм")
 eq("shout.fire", #queued, 1)
 eq("shout.cmd", queued[1], "/mute 9 60 2.1 ОП")
 
--- крик не отслеживается
+-- v1.19.213: каналы чата включены всегда (галочки «крик»/«ООС» больше нет) —
+-- даже если кто-то выставит флаг вручную, normalize вернёт его на место
 PA.watchShout = false
+PA.normalize()
+eq("fixed.watchShout.back", PA.watchShout, true)
 PA.lastAt = os.clock() - 5
 queued = {}
 PA.onChat("Vasya_Pupkin крикнул: дм")
-eq("watchShout.off", #queued, 0)
-PA.watchShout = true
+eq("shout.always", #queued, 1)
 
 -- ООС
 PA.lastAt = os.clock() - 5
@@ -428,18 +452,33 @@ PA.onChat("Nik_Name[7]: дм")
 eq("off.no.send", #queued, 0)
 PA.on = true
 
--- админ из списка чекера не наказывается
+-- v1.19.213: предохранители «не трогать админов» и «не трогать себя» пока
+-- ВЫКЛЮЧЕНЫ — наказание уходит и администратору, и себе
 PA.lastAt = os.clock() - 5
 queued = {}
 PA.onChat("Admin_One[400]: дм")
-eq("skipAdmin", #queued, 0)
-ok("skipAdmin.text", tostring(PA.lastCheck):find("администратор", 1, true) ~= nil)
+eq("skipAdmin.off", #queued, 1)
+eq("skipAdmin.off.cmd", queued[1], "/mute 400 60 2.1 ОП")
 
--- себя не наказываем
 PA.lastAt = os.clock() - 5
 queued = {}
 PA.onChat("Mixa[5]: дм")
-eq("skipSelf", #queued, 0)
+eq("skipSelf.off", #queued, 1)
+eq("skipSelf.off.cmd", queued[1], "/mute 5 60 2.1 ОП")
+
+-- ...а когда предохранители включат (позже), они обязаны работать по-прежнему
+PA.skipSelf, PA.skipAdmins = true, true
+PA.lastAt = os.clock() - 5
+queued = {}
+PA.onChat("Admin_One[400]: дм")
+eq("skipAdmin.on", #queued, 0)
+ok("skipAdmin.on.text", tostring(PA.lastCheck):find("администратор", 1, true) ~= nil)
+PA.lastAt = os.clock() - 5
+queued = {}
+PA.onChat("Mixa[5]: дм")
+eq("skipSelf.on", #queued, 0)
+PA.normalize()          -- фиксированные значения возвращаются
+eq("skip.off.again", PA.skipSelf, false)
 
 -- защита от двойного хука: та же строка дважды подряд — один разбор
 PA.lastAt = os.clock() - 5
@@ -1177,15 +1216,20 @@ click["##grnd_pa_switch"] = nil
 eq("draw.switch", PA.on ~= wasOn, true)
 PA.on = true
 
--- тумблеры параметров
-click["##grnd_pa_tg_notify"] = true
-pcall(QR.punAutoDraw, ctx)
-click["##grnd_pa_tg_notify"] = nil
-eq("draw.notify.toggle", PA.notify, false)
-click["##grnd_pa_tg_notify"] = true
-pcall(QR.punAutoDraw, ctx)
-click["##grnd_pa_tg_notify"] = nil
-eq("draw.notify.back", PA.notify, true)
+-- v1.19.213: галочек на странице нет — клик по их именам ничего не меняет
+for _, key in ipairs({ "notify", "logOn", "watchSay", "watchShout", "watchOoc",
+                       "skipSelf", "skipAdmins" }) do
+    click["##grnd_pa_tg_" .. key] = true
+    pcall(QR.punAutoDraw, ctx)
+    click["##grnd_pa_tg_" .. key] = nil
+end
+eq("draw.toggles.gone.notify", PA.notify, true)
+eq("draw.toggles.gone.logOn", PA.logOn, true)
+eq("draw.toggles.gone.watchSay", PA.watchSay, true)
+eq("draw.toggles.gone.watchShout", PA.watchShout, true)
+eq("draw.toggles.gone.watchOoc", PA.watchOoc, true)
+eq("draw.toggles.gone.skipSelf", PA.skipSelf, false)
+eq("draw.toggles.gone.skipAdmins", PA.skipAdmins, false)
 
 -- скриншот: тумблер и поле папки на странице
 pcall(QR.punAutoDraw, ctx)
@@ -1295,10 +1339,15 @@ ok("drawfit.cmd", drawSeen("Команда наказания"))
 ok("drawfit.id.hint", drawSeen("ID игрока подставляется сам"))
 ok("drawfit.shot.toggle", drawSeen("скриншот после выдачи"))
 ok("drawfit.shot.dir", drawSeen("Папка для скриншотов"))
+-- подсказок под папкой больше нет (v1.19.213)
+eq("drawfit.no.files.hint", drawSeen("Файлы:") and "есть" or "нет", "нет")
+eq("drawfit.no.empty.hint", drawSeen("Пусто —") and "есть" or "нет", "нет")
 -- правая колонка (v1.19.212): режим поиска переехал сюда, дальше тумблеры
 ok("drawfit.mode", drawSeen("Режим поиска"))
 ok("drawfit.nodelay", drawSeen("Задержек нет"))
-ok("drawfit.toggles", drawSeen("не трогать себя"))
+eq("drawfit.no.toggles", drawSeen("не трогать себя") and "есть" or "нет", "нет")
+eq("drawfit.no.chat.toggles", drawSeen("обычный чат") and "есть" or "нет", "нет")
+eq("drawfit.no.notify.toggle", drawSeen("уведомления") and "есть" or "нет", "нет")
 -- убранное со страницы (чтобы не вернулось правкой)
 eq("drawfit.no.after", drawSeen("Команда после") and "есть" or "нет", "нет")
 eq("drawfit.no.testline", drawSeen("Проверка строки") and "есть" or "нет", "нет")
