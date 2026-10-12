@@ -1,6 +1,17 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.207"
+GRND_SCRIPT_VERSION = "1.19.208"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.208 — правки по замечаниям (по логу игрока найден корень):
+--   1) ГЛАВНОЕ: тип методов D3D9 записывался без «(*)» — LuaJIT такие типы не
+--      принимает, поэтому съёмка падала на первом же шаге:
+--      «bad argument #1 to 'bind' (invalid C type)». Теперь все типы вида
+--      «int(__stdcall*)(…)», привязка проверяется и ошибка типа возвращается
+--      понятной строкой, а не роняет съёмку молча;
+--   2) диагностика в moonloader.log переводится в CP1251 (как и остальной
+--      вывод скрипта) — вместо «закорючек» читаемый русский текст;
+--   3) запасной путь съёмки: если драйвер не отдаёт задний буфер, кадр берётся
+--      с переднего буфера и обрезается по окну игры; свёрнутая игра — честный
+--      отказ вместо белого кадра.
 -- v1.19.207 — правки по замечаниям (кадр выдачи всё ещё не сохранялся):
 --   1) вся диагностика скриншота пишется в moonloader.log (moonloader\moonloader.log)
 --      строками «[GRND] скриншот: …»: способ съёмки, путь, причина отказа своего
@@ -36059,6 +36070,19 @@ do
         local line = "[GRND] скриншот: " .. tostring(msg)
         if PA.logFileLast == line then return end
         PA.logFileLast = line
+        -- MoonLoader пишет print() в moonloader.log в системной кодировке
+        -- (CP1251), поэтому переводим строку тем же конвертером, что и текст для
+        -- чата: иначе вместо русских слов в логе «закорючки» (v1.19.208).
+        for _, name in ipairs({ "grndAnsiText", "grndToAnsi", "grndUtf8ToCp1251" }) do
+            local fn = _G[name]
+            if type(fn) == "function" then
+                local ok, c = pcall(fn, line)
+                if ok and type(c) == "string" and c ~= "" then
+                    line = c
+                    break
+                end
+            end
+        end
         if type(print) == "function" then pcall(print, line) end
     end
 
@@ -36503,69 +36527,165 @@ do
         return buf
     end
 
+    -- Адрес окна игры (gta_sa.exe 1.0 US) — нужен только запасному пути съёмки.
+    local SHOT_HWND_ADDR = 0xC97C1C
+
     -- Снять кадр и записать его в path. ВЫЗЫВАТЬ ТОЛЬКО из потока отрисовки
     -- (см. PA.shotRender): устройство D3D9 не терпит чужих потоков.
+    --
+    -- ВАЖНО ПРО ТИПЫ МЕТОДОВ. Тип берётся из таблицы методов устройства, и
+    -- записывать его надо как «возврат(__stdcall*)(аргументы)». Форма без «(*)»
+    -- — это не тип указателя, и LuaJIT её не принимает: в игре это выглядело
+    -- как «bad argument #1 to 'bind' (invalid C type)», съёмка падала ещё до
+    -- первого вызова D3D, а в чат уходило «не сохранён». Теперь ошибка типа не
+    -- роняет съёмку, а возвращается понятной строкой.
+    --
+    -- Основной путь — задний буфер (это ровно то, что видно в окне игры).
+    -- Запасной — передний буфер (снимок экрана): так делают проверенные моды,
+    -- и он выручает, если драйвер не отдаёт задний буфер (сглаживание, ENB).
     local function paShotGrabReal(path)
         local ffi = paShotLibs()
         local lib = paShotD3dx()
         if not (ffi and lib) then return false, "не найдена библиотека d3dx9 (DirectX)" end
         local dev = paShotDevice()
         if not dev then return false, "не найдено устройство D3D9" end
+        local wide = paShotWide(path)
+        if not wide then return false, "путь не удалось преобразовать" end
         local vtbl = ffi.cast("void***", dev)[0]
-        local function bind(idx, sig) return ffi.cast(sig, vtbl[idx]) end
+        local function bind(vt, idx, sig)
+            local ok, fn = pcall(ffi.cast, sig, vt[idx])
+            if not ok or fn == nil then
+                return nil, "тип метода D3D9 не принят: " .. tostring(sig)
+            end
+            return fn
+        end
         -- номера методов в таблице устройства D3D9 (порядок из d3d9.h)
-        local getBackBuffer = bind(18, "int __stdcall(void*, unsigned int, unsigned int, int, void**)")
-        local getRTTData = bind(32, "int __stdcall(void*, void*, void*)")
-        local createSurface = bind(36,
-            "int __stdcall(void*, unsigned int, unsigned int, int, int, void**, void*)")
-        local release = bind(2, "uint32_t __stdcall(void*)")
+        local getBackBuffer, e1 = bind(vtbl, 18, "int(__stdcall*)(void*, unsigned int, unsigned int, int, void**)")
+        local getRTTData, e2 = bind(vtbl, 32, "int(__stdcall*)(void*, void*, void*)")
+        local getFrontData, e3 = bind(vtbl, 33, "int(__stdcall*)(void*, unsigned int, void*)")
+        local createSurface, e4 = bind(vtbl, 36,
+            "int(__stdcall*)(void*, unsigned int, unsigned int, int, int, void**, void*)")
+        local release, e5 = bind(vtbl, 2, "uint32_t(__stdcall*)(void*)")
         local function hrHex(hr)
             local n = tonumber(hr) or 0
             if n < 0 then n = n + 4294967296 end
             return string.format("0x%08X", n)
         end
         local function hrBad(hr) return (tonumber(hr) or 0) ~= 0 end
-        local back = ffi.new("void*[1]")
-        local hr = getBackBuffer(dev, 0, 0, D3D_MONO, back)
-        if hrBad(hr) or back[0] == ffi.NULL then
-            return false, "GetBackBuffer " .. hrHex(hr)
+        if not (release and createSurface) then
+            return false, "привязка методов D3D9 не удалась: " .. tostring(e5 or e4)
         end
-        local src = back[0]
-        -- размеры и формат кадра узнаём у самой поверхности (GetDesc — 12-й метод)
-        local getDesc = ffi.cast("int __stdcall(void*, void*)", ffi.cast("void***", src)[0][12])
-        local desc = ffi.new("uint32_t[8]")
-        hr = getDesc(src, desc)
-        local w, h, fmt = tonumber(desc[6]), tonumber(desc[7]), tonumber(desc[0])
-        if hrBad(hr) or not w or not h or w == 0 or h == 0 then
-            release(src)
-            return false, "не удалось узнать размер кадра"
+        local bad = {}
+
+        -- ---- 1. задний буфер -> системная поверхность -> PNG ----
+        if getBackBuffer and getRTTData then
+            local back = ffi.new("void*[1]")
+            local hr = getBackBuffer(dev, 0, 0, D3D_MONO, back)
+            if hrBad(hr) or back[0] == ffi.NULL then
+                bad[#bad + 1] = "GetBackBuffer " .. hrHex(hr)
+            else
+                local src = back[0]
+                -- размеры и формат кадра узнаём у самой поверхности (GetDesc — 12-й метод)
+                local svtbl = ffi.cast("void***", src)[0]
+                local getDesc, eD = bind(svtbl, 12, "int(__stdcall*)(void*, void*)")
+                local desc = ffi.new("uint32_t[8]")
+                local w, h, fmt
+                if getDesc then
+                    hr = getDesc(src, desc)
+                    w, h, fmt = tonumber(desc[6]), tonumber(desc[7]), tonumber(desc[0])
+                end
+                if not getDesc or hrBad(hr) or not w or not h or w == 0 or h == 0 then
+                    release(src)
+                    bad[#bad + 1] = "не удалось узнать размер кадра"
+                        .. (eD and (" (" .. tostring(eD) .. ")") or "")
+                else
+                    local dst = ffi.new("void*[1]")
+                    hr = createSurface(dev, w, h, fmt, D3D_POOL_SYSTEMMEM, dst, nil)
+                    if (hrBad(hr) or dst[0] == ffi.NULL) and fmt ~= D3D_A8R8G8B8 then
+                        hr = createSurface(dev, w, h, D3D_A8R8G8B8, D3D_POOL_SYSTEMMEM, dst, nil)
+                    end
+                    if hrBad(hr) or dst[0] == ffi.NULL then
+                        release(src)
+                        bad[#bad + 1] = "CreateOffscreenPlainSurface " .. hrHex(hr)
+                    else
+                        hr = getRTTData(dev, src, dst[0])
+                        release(src)
+                        if hrBad(hr) then
+                            release(dst[0])
+                            bad[#bad + 1] = "GetRenderTargetData " .. hrHex(hr)
+                        else
+                            hr = lib.D3DXSaveSurfaceToFileW(wide, D3DXIFF_PNG, dst[0], nil, nil)
+                            release(dst[0])
+                            if not hrBad(hr) then
+                                return true, nil, string.format("задний буфер %dx%d", w, h)
+                            end
+                            bad[#bad + 1] = "D3DXSaveSurfaceToFile " .. hrHex(hr)
+                                .. " (" .. tostring(SHOT_D3DX_NAME) .. ")"
+                        end
+                    end
+                end
+            end
+        else
+            bad[#bad + 1] = "привязка GetBackBuffer не удалась: " .. tostring(e1 or e2)
         end
-        local dst = ffi.new("void*[1]")
-        hr = createSurface(dev, w, h, fmt, D3D_POOL_SYSTEMMEM, dst, nil)
-        if (hrBad(hr) or dst[0] == ffi.NULL) and fmt ~= D3D_A8R8G8B8 then
-            hr = createSurface(dev, w, h, D3D_A8R8G8B8, D3D_POOL_SYSTEMMEM, dst, nil)
+
+        -- ---- 2. передний буфер (снимок экрана) ----
+        if getFrontData then
+            local okU, u32 = pcall(ffi.load, "user32")
+            local hwnd = nil
+            if okU and u32 then
+                pcall(ffi.cdef, "int __stdcall IsIconic(void* hWnd);")
+                pcall(ffi.cdef, "int __stdcall GetClientRect(void* hWnd, void* lpRect);")
+                pcall(ffi.cdef, "int __stdcall ClientToScreen(void* hWnd, void* lpPoint);")
+                pcall(ffi.cdef, "int __stdcall GetSystemMetrics(int nIndex);")
+                pcall(ffi.cdef, [[typedef struct { long left; long top; long right; long bottom; } grnd_shot_rect;]])
+                pcall(ffi.cdef, [[typedef struct { long x; long y; } grnd_shot_point;]])
+                local okW, wptr = pcall(function() return ffi.cast("void**", SHOT_HWND_ADDR)[0] end)
+                if okW and wptr ~= nil and wptr ~= ffi.NULL then hwnd = wptr end
+            end
+            if not (hwnd and u32 and u32.IsIconic and u32.GetSystemMetrics) then
+                bad[#bad + 1] = "передний буфер: не найдено окно игры"
+            elseif tonumber(u32.IsIconic(hwnd)) ~= 0 then
+                -- свёрнутая игра отдаёт белый кадр — лучше честно не снимать
+                bad[#bad + 1] = "передний буфер: окно игры свёрнуто"
+            else
+                local sw, sh = tonumber(u32.GetSystemMetrics(0)), tonumber(u32.GetSystemMetrics(1))
+                local dst = ffi.new("void*[1]")
+                local hr = createSurface(dev, sw or 0, sh or 0, D3D_A8R8G8B8, D3D_POOL_SYSTEMMEM, dst, nil)
+                if hrBad(hr) or dst[0] == ffi.NULL then
+                    bad[#bad + 1] = "передний буфер: CreateOffscreenPlainSurface " .. hrHex(hr)
+                else
+                    hr = getFrontData(dev, 0, dst[0])
+                    if hrBad(hr) then
+                        release(dst[0])
+                        bad[#bad + 1] = "передний буфер: GetFrontBufferData " .. hrHex(hr)
+                    else
+                        -- сохраняем только клиентскую часть экрана (окно игры)
+                        local rc = ffi.new("grnd_shot_rect[1]")
+                        local pt = ffi.new("grnd_shot_point[1]")
+                        local okRc = u32.GetClientRect and pcall(u32.GetClientRect, hwnd, rc)
+                        local okPt = u32.ClientToScreen and pcall(u32.ClientToScreen, hwnd, pt)
+                        local rectPtr = nil
+                        if okRc and okPt then
+                            rc[0].left = rc[0].left + pt[0].x
+                            rc[0].right = rc[0].right + pt[0].x
+                            rc[0].top = rc[0].top + pt[0].y
+                            rc[0].bottom = rc[0].bottom + pt[0].y
+                            rectPtr = rc
+                        end
+                        hr = lib.D3DXSaveSurfaceToFileW(wide, D3DXIFF_PNG, dst[0], nil, rectPtr)
+                        release(dst[0])
+                        if not hrBad(hr) then
+                            return true, nil, string.format("передний буфер %dx%d", sw or 0, sh or 0)
+                        end
+                        bad[#bad + 1] = "передний буфер: D3DXSaveSurfaceToFile " .. hrHex(hr)
+                    end
+                end
+            end
+        else
+            bad[#bad + 1] = "привязка GetFrontBufferData не удалась: " .. tostring(e3)
         end
-        if hrBad(hr) or dst[0] == ffi.NULL then
-            release(src)
-            return false, "CreateOffscreenPlainSurface " .. hrHex(hr)
-        end
-        hr = getRTTData(dev, src, dst[0])
-        release(src)
-        if hrBad(hr) then
-            release(dst[0])
-            return false, "GetRenderTargetData " .. hrHex(hr)
-        end
-        local wide = paShotWide(path)
-        if not wide then
-            release(dst[0])
-            return false, "путь не удалось преобразовать"
-        end
-        hr = lib.D3DXSaveSurfaceToFileW(wide, D3DXIFF_PNG, dst[0], nil, nil)
-        release(dst[0])
-        if hrBad(hr) then
-            return false, "D3DXSaveSurfaceToFile " .. hrHex(hr) .. " (" .. tostring(SHOT_D3DX_NAME) .. ")"
-        end
-        return true
+        return false, table.concat(bad, "; ")
     end
 
     -- Куда положить свой кадр. Путь разворачиваем в абсолютный сами: относительный

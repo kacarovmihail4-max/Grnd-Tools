@@ -30,6 +30,9 @@ local a = assert(src:find("do\n    local PA = QR.punAuto", 1, true), "нет н�
 local e = assert(src:find("\nend\n\n-- ---------- самопроверка логики", a, true), "нет конца блока")
 local block = src:sub(a, e + 4)   -- вместе с закрывающим end
 
+-- в самой игре конвертер — глобальная функция (function grndAnsiText), поэтому
+-- кладём заглушку и в _G: модуль ищет её именно там
+local grndAnsiTextLocal = nil
 -- ---------- заглушки окружения ----------
 local CONFIG = {}          -- domain -> {key=value}
 local files = {}           -- открытые "файлы"
@@ -186,7 +189,12 @@ local function utf8Cut(s, n) return tostring(s):sub(1, n) end
 local grndLowerUtf, grndUtf8Text = nil, nil
 local grndSessionReady = function() return true end
 local grndRepQueue = function(cmd) queued[#queued+1] = "rep:" .. tostring(cmd) end
-local grndAnsiText = function(s) return s end
+-- заглушка конвертера UTF-8 -> CP1251: помечает строку, чтобы стенд видел,
+-- что диагностика лога идёт через конвертер (без него в moonloader.log
+-- получались «закорючки»)
+local function grndAnsiTextImpl(s) return "[ANSI]" .. tostring(s) end
+local grndAnsiText = grndAnsiTextImpl
+_G.grndAnsiText = grndAnsiTextImpl
 local sampIsPlayerConnected = isConnected
 local sampGetPlayerNickname = nickOf
 local sampGetLocalPlayerId = myId
@@ -547,6 +555,8 @@ do
     -- она обязана вернуть причину, а не упасть
     local okG, gRes, gWhy = pcall(PA.shotGrab, "/tmp/grnd_shot_x.png")
     ok("self.grab.safe", okG and gRes == false and type(gWhy) == "string")
+    -- отдельно про тип методов: этой ошибки быть не должно ни при каком раскладе
+    ok("self.grab.no.invalid", tostring(gWhy):find("invalid C type", 1, true) == nil)
 
     -- без обработчика кадра (нет addEventHandler) свой кадр не предлагается:
     -- иначе задача уходила бы в никуда
@@ -599,6 +609,9 @@ do
     ok("log.way", logHas("способ: свой кадр (D3D9)") ~= nil)
     ok("log.grab", logHas("снимаю кадр:") ~= nil)
     ok("log.saved", logHas("СОХРАНЕНО:") ~= nil)
+    -- перевод в CP1251: в заглушке grndAnsiText мечает строку, поэтому видим,
+    -- что лог идёт через конвертер, а не сырым UTF-8
+    ok("log.ansi.called", logHas("[ANSI]") ~= nil)
     ok("log.saved.path", logHas(grabbed[1]) ~= nil)
 
     -- съёмка «удалась», но файла нет — в чат тоже не уходит «сохранён»
@@ -1022,6 +1035,25 @@ do
     ok("hook.reverse", count("_G.grndShotHookInstall") >= 2)      -- и обратный вызов
     eq("hook.calls", count("pcall(_G.grndShotFrame)"), 3)         -- две обёртки + служебный кадр
     ok("hook.reason", count("нет хука кадра") == 1)
+    -- ТИПЫ МЕТОДОВ D3D9. Из-за записи без «(*)» в игре было
+    -- «bad argument #1 to 'bind' (invalid C type)»: LuaJIT такие типы не
+    -- принимает, и съёмка падала ещё до первого вызова D3D. Проверяем, что в
+    -- скрипте нет формы без звёздочки, а все привязки идут через bind().
+    do
+        local bad = 0
+        for line in src:gmatch("[^\n]+") do
+            local code = line:gsub("%-%-.*$", "")          -- комментарии не считаем
+            if code:find("__stdcall", 1, true) and code:find("bind(", 1, true) then
+                if not code:find("(__stdcall*)", 1, true) then bad = bad + 1 end
+            end
+        end
+        eq("d3d.sig.star", bad, 0)
+        ok("d3d.bind.count", count("bind(vtbl,") + count("bind(svtbl,") == 6)
+        ok("d3d.bind.guard", count("тип метода D3D9 не принят") == 1)
+        ok("d3d.front", count("GetFrontBufferData") > 0)   -- запасной путь съёмки
+        ok("d3d.iconic", count("передний буфер: окно игры свёрнуто") == 1)   -- не снимаем свёрнутую
+    end
+
     -- paShotLibs должен быть объявлен до первого использования, иначе в игре
     -- это «attempt to call global 'paShotLibs' (a nil value)»
     local declPos = src:find("local function paShotLibs()", 1, true)
