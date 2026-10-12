@@ -3,7 +3,8 @@
 -- или из каталога tests:
 --     luajit run_all.lua
 -- Проверяет: синтаксис скрипта, логику автопилота, модуль автопилота
--- (вкладки/выдача/предохранители/страница), журнал чата.
+-- (вкладки/выдача/предохранители/страница), журнал чата, раздел
+-- «Выдача в радиусе» (панель МП: скан, радиус, выдача, страница).
 local self = (arg and arg[0]) or "tests/run_all.lua"
 local dir = self:match("^(.*)[/\\][^/\\]*$") or "."
 local lua = (arg and arg[-1]) or "luajit"
@@ -36,7 +37,8 @@ local function runStand(name)
     return okRun, out
 end
 
-for _, name in ipairs({ "punauto_logic_test", "punauto_module_test", "chatlog_test" }) do
+for _, name in ipairs({ "punauto_logic_test", "punauto_module_test",
+    "chatlog_test", "radtools_test" }) do
     local okRun, out = runStand(name)
     io.write(out)
     if okRun then

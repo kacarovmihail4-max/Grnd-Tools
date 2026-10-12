@@ -1,6 +1,18 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.214"
+GRND_SCRIPT_VERSION = "1.19.215"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.215 — раздел «ВЫДАЧА В РАДИУСЕ» (панель МП) из заглушки стал рабочим:
+--   1) Радиус: «− / полоса / Радиус: N / +» (1..200 м, запоминается);
+--   2) определение ВСЕХ игроков в радиусе: координаты из MoonLoader
+--      (игрок вне стрима — последние известные координаты), игрок из другого
+--      интерьера/z-d в радиус не попадает; список живёт на экране (ник +
+--      дистанция) и обновляется раз в секунду;
+--   3) кнопки — в стиле нашего меню, сетка 3×3 как в макете: Заспавнить,
+--      Заморозить, Разморозить, Выдать оружие ⚙, Выдать скин ⚙, Выдать XP,
+--      Выдать броню ⚙, Заспавнить транспорт ⚙, Отобрать оружие + широкая
+--      «Телепорт всех к себе» (на себя не действует);
+--   4) КОМАНДЫ — сообщит заказчик: до этого нажатие честно пишет «команда
+--      ещё не назначена», шаблон с {id} пойдёт по игроку, без {id} — на всех.
 -- v1.19.214 — ВКЛЮЧЁН предохранитель «не трогать админов»: автопилот больше
 --   не наказывает администраторов (по списку чекера «Админы в сети»).
 --   «Не трогать себя» по-прежнему выключен — включим позже.
@@ -30061,25 +30073,39 @@ local function fieldAt(ctx, x, y, w, label, key, id, cap, value, hint, onChange,
     return y + h
 end
 
--- содержимое карточки для «Выдачи в радиусе»: пока заглушка. Верхние
--- кнопки («Создать МП» / «Выдача в радиусе») при этом остаются на месте.
+-- содержимое раздела «Выдача в радиусе» (v1.19.215): движок — _G.GRND_RT
+-- (игроки в радиусе, команды), вёрстка — RT.page со своим рендерером из
+-- помощников панели (кнопки, шестерёнка — наши, стиль не чужой).
 local function drawRadiusView(ctx, cx, y, cw)
     y = section(ctx, cx, y, cw, "ВЫДАЧА В РАДИУСЕ")
-    local TH = theme()
-    ctx.uiText(cx + 2, y + 6, "Раздел в разработке", ctx.c4(TH.textHi), 1.25)
-    ctx.uiText(cx + 2, y + 40,
-        "Выдача оружия и брони всем игрокам рядом появится позже.",
-        ctx.c4(TH.textDim), 0.95)
-    ctx.uiText(cx + 2, y + 62,
-        "Пока рабочее окно — форма МП: вернуться можно кнопкой «Создать МП».",
-        ctx.c4(TH.textDim), 0.95)
-    y = y + 92
-    if button(ctx, "back_mp", cx, y, 240, M_ROW, "Вернуться в панель МП", {}) then
-        MP.view = "mp"
-        MP.scroll = 0
-        MP.flash = { text = "Панель МП", at = now(), kind = "info" }
+    local RTm = _G.GRND_RT
+    if type(RTm) ~= "table" or type(RTm.page) ~= "function" then
+        ctx.uiText(cx + 2, y + 6, "Раздел не загружен", ctx.c4(theme().textDim), 0.9)
+        return y + 20
     end
-    return y + M_ROW
+    RTm.visible = true
+    local ok, res = pcall(RTm.page, {
+        uiText = ctx.uiText, tsize = ctx.tsize, col32 = ctx.col32,
+        c4 = ctx.c4, roundRect = ctx.roundRect, dl = ctx.dl, at = ctx.at,
+        theme = theme,
+        button = function(key, bx, by, bw, bh, label, opts)
+            return button(ctx, key, bx, by, bw, bh, label, opts or {})
+        end,
+        slider = function(id, sx, sy, sw, sh, ratio)
+            return grndUiSlider(ctx, id, sx, sy, sw, sh, ratio)
+        end,
+        gearButton = function(key, gx, gy, active)
+            return gearButton(ctx, key, gx, gy, active)
+        end,
+        gear = function(gx, gy, col) gearIcon(ctx, gx, gy, col) end,
+    }, cx, y, cw)
+    RTm.visible = false
+    if ok and type(res) == "number" then
+        return res
+    end
+    ctx.uiText(cx + 2, y + 6, "Ошибка раздела: " .. tostring(res),
+        ctx.c4({ 255, 110, 110, 255 }), 0.85)
+    return y + 20
 end
 
 -- Открыть окно меню на нужной вкладке. Кнопки «Создать МП» и
@@ -30269,7 +30295,7 @@ function MP.drawInner(raw)
             MP.view = "radius"
             MP.givePopup = nil
             MP.scroll = 0
-            flash("Выдача в радиусе (в разработке)", "info")
+            flash("Выдача в радиусе", "info")
         end
         return y + M_ROW + 16
     end
@@ -38133,6 +38159,527 @@ end
 
 return QR
 end)()
+
+-- Глобальный источник пути конфига для модулей (панель МП / выдача в радиусе):
+-- берёт путь у QR (рядом со скриптом); до его загрузки — рядом с moonloader.
+function QR_PATH()
+    local QRm = _G.GRND_QR
+    if QRm and type(QRm.path) == "function" then
+        local ok, v = pcall(QRm.path)
+        if ok and type(v) == "string" and v ~= "" then return v end
+    end
+    return "grnd.cfg"
+end
+
+-- =====================================================================
+--  «ВЫДАЧА В РАДИУСЕ» (v1.19.215): панель МП → «Выдача в радиусе».
+--
+--  Определяет ВСЕХ игроков в радиусе от администратора и готов выдать
+--  им команды. Команды — RT.cmds[id] — сообщит заказчик чуть позже
+--  (v1.19.215): до тех пор кнопка честно пишет «команда ещё не
+--  назначена», а раздел уже показывает, кто сейчас в радиусе.
+--
+--  Определение игроков (без сторонних плагинов, только MoonLoader):
+--    1) sampIsPlayerConnected(id) — перебор ID 0..1003 (как MP.online:
+--       покрывает серверы до 1024 слотов; свободные ID не подключены);
+--    2) координаты: sampGetCharHandleBySampPlayerId(id) →
+--       getCharCoordinates(ped); игрок вне стрима — запасное
+--       sampGetStreamedOutPlayerPos(id) (последние известные координаты);
+--    3) интерьер/z-dimension читаются с CEntity (офсеты 0x58/0x5A):
+--       игрок из другого интерьера/z-d в радиус НЕ попадает. Если
+--       прочитать не вышло (старый MoonLoader) — фильтр отключается,
+--       остаётся только дистанция;
+--    4) самого администратора в список не включаем: команды выдаём
+--       игрокам рядом, а не себе.
+--
+--  Чистая логика (дистанция/фильтр/шаблон) — в RT_FN между якорями
+--  GRND_RADTOOLS_LOGIC_*; страницу (RT.page) гоняет стенд
+--  tests/radtools_test.lua со своим рендерером.
+-- =====================================================================
+-- >>> GRND_RADTOOLS_BEGIN
+do
+    local RT = {
+        radius = 25,        -- метры; хранится в grnd_radtools.cfg (radius=)
+        RMIN = 1, RMAX = 200,
+        visible = false,    -- открыт ли раздел (тик обновляет список лишь тогда)
+        list = nil,         -- отсортированный список игроков в радиусе
+        scanAt = 0,
+        err = nil,          -- последняя ошибка (для строки статуса)
+        lastAct = nil,      -- результат последнего действия
+        loaded = false,
+    }
+
+    -- ---------- чистая логика (её гоняет стенд) ----------
+    local RT_FN = {}
+    -- >>> GRND_RADTOOLS_LOGIC_BEGIN
+    function RT_FN.dist(ax, ay, az, bx, by, bz)
+        local dx, dy, dz = bx - ax, by - ay, bz - az
+        return math.sqrt(dx * dx + dy * dy + dz * dz)
+    end
+
+    -- raw — сырые игроки {{id, nick, x, y, z, interior, zd, self}, …};
+    -- my  — {x, y, z, interior, zd} (interior/zd могут быть nil — тогда
+    --       соответствующий фильтр не применяется, а не «ломает» список).
+    -- Возвращает игроков в радиусе, отсортированных по дистанции.
+    function RT_FN.scan(raw, my, radius)
+        local out = {}
+        if type(raw) ~= "table" or type(my) ~= "table" then return out end
+        for i = 1, #raw do
+            local p = raw[i]
+            -- себя в список не берём: команды выдаём игрокам рядом
+            if p ~= nil and p.self ~= true
+                and type(p) == "table" and p.x and p.y and p.z
+                and my.x and my.y and my.z then
+                local same = true
+                if my.interior ~= nil and p.interior ~= nil
+                    and my.interior ~= p.interior then same = false end
+                if same and my.zd ~= nil and p.zd ~= nil
+                    and my.zd ~= p.zd then same = false end
+                if same then
+                    local d = RT_FN.dist(my.x, my.y, my.z, p.x, p.y, p.z)
+                    if d <= radius then
+                        out[#out + 1] = {
+                            id = p.id,
+                            nick = tostring(p.nick or ("#" .. tostring(p.id))),
+                            dist = d, x = p.x, y = p.y, z = p.z,
+                            self = p.self == true,
+                            interior = p.interior, zd = p.zd,
+                        }
+                    end
+                end
+            end
+        end
+        table.sort(out, function(a, b) return a.dist < b.dist end)
+        return out
+    end
+
+    -- Команда-шаблон: {id} — ID игрока, {ник}/{nick} — ник,
+    -- {дист}/{dist} — дистанция в целых метрах.
+    function RT_FN.fill(tmpl, p)
+        local s = tostring(tmpl or "")
+        local function put(k, v)
+            s = s:gsub(k, (tostring(v):gsub("%%", "%%%%")))
+        end
+        put("{id}", p and p.id or "")
+        put("{ник}", p and p.nick or "")
+        put("{nick}", p and p.nick or "")
+        local d = (p and p.dist) and math.floor(p.dist + 0.5) or ""
+        put("{дист}", d)
+        put("{dist}", d)
+        return s
+    end
+    -- <<< GRND_RADTOOLS_LOGIC_END
+    RT.fn = RT_FN
+
+    -- Действия страницы — порядок из макета заказчика. gear = у действия
+    -- есть параметры, на кнопке нарисована шестерёнка. Команды (RT.cmds) —
+    -- сообщит заказчик: шаблон с {id} уходит ПО ИГРОКУ, без {id} — одной
+    -- строкой на всех.
+    RT.actions = {
+        { id = "spawn",    label = "Заспавнить" },
+        { id = "freeze",   label = "Заморозить" },
+        { id = "unfreeze", label = "Разморозить" },
+        { id = "weapon",   label = "Выдать оружие", gear = true },
+        { id = "skin",     label = "Выдать скин", gear = true },
+        { id = "xp",       label = "Выдать XP" },
+        { id = "armor",    label = "Выдать броню", gear = true },
+        { id = "vehicle",  label = "Заспавнить транспорт", gear = true },
+        { id = "takeoff",  label = "Отобрать оружие" },
+    }
+    RT.wide = { id = "tpself", label = "Телепорт всех к себе" }
+    RT.cmds = {}
+
+    function RT.actById(id)
+        for i = 1, #RT.actions do
+            if RT.actions[i].id == id then return RT.actions[i] end
+        end
+        if RT.wide and RT.wide.id == id then return RT.wide end
+        return nil
+    end
+
+    -- ---------- конфиг (grnd_radtools.cfg: radius=) ----------
+    function RT.path()
+        local dir = tostring(QR_PATH() or ""):match("^(.*[/\\])")
+        if dir then return dir .. "grnd_radtools.cfg" end
+        return "grnd_radtools.cfg"
+    end
+
+    function RT.setRadius(n)
+        n = math.floor(tonumber(n) or RT.radius)
+        if n < RT.RMIN then n = RT.RMIN end
+        if n > RT.RMAX then n = RT.RMAX end
+        if n ~= RT.radius then
+            RT.radius = n
+            RT.list = nil
+            RT.scanAt = 0
+            pcall(RT.save)
+        end
+        return RT.radius
+    end
+
+    function RT.load()
+        if RT.loaded then return true end
+        RT.loaded = true
+        local ok, f = pcall(GRND_CONFIG.open, RT.path(), "r")
+        if ok and f then
+            for line in f:lines() do
+                local k, v = tostring(line or ""):match("^([%w_]+)=(.*)$")
+                if k == "radius" then RT.setRadius(v) end
+            end
+        end
+        return true
+    end
+
+    function RT.save()
+        local ok, f = pcall(GRND_CONFIG.open, RT.path(), "w")
+        if not ok or not f then return false end
+        f:write("radius=" .. tostring(RT.radius) .. "\n")
+        return true
+    end
+
+    -- ---------- игровой слой: игроки и координаты ----------
+    local function rtNum(v)
+        return (type(v) == "number" and v == v and math.abs(v) < 1e6) and v or nil
+    end
+
+    -- Интерьер (0x58) и z-dimension (0x5A) из CEntity. Не вышло — nil:
+    -- по этому игроку фильтр просто не применяется.
+    local function rtEntityIz(ped)
+        if type(ffi) ~= "table" then return nil, nil end
+        local ok, a, b = pcall(function()
+            return ffi.cast("int*", ped + 0x58)[0], ffi.cast("short*", ped + 0x5A)[0]
+        end)
+        if ok and type(a) == "number" and type(b) == "number" then return a, b end
+        return nil, nil
+    end
+
+    -- Местный игрок: id, координаты, интерьер, z-dimension.
+    local function rtSelf()
+        local ped = _G.PLAYER_PED or _G.playerPed
+        if not ped then return nil end
+        local id
+        if type(sampGetPlayerIdByCharHandle) == "function" then
+            local ok, v = pcall(sampGetPlayerIdByCharHandle, ped)
+            if ok and type(v) == "number" and v >= 0 then id = v end
+        end
+        local ok, x, y, z = pcall(getCharCoordinates, ped)
+        if not (ok and rtNum(x) and rtNum(y) and rtNum(z)) then return nil end
+        local interior
+        if type(getActiveInterior) == "function" then
+            local ok2, v2 = pcall(getActiveInterior)
+            if ok2 and type(v2) == "number" then interior = v2 end
+        end
+        local pedInt, zd = rtEntityIz(ped)
+        if interior == nil then interior = pedInt end
+        return id, rtNum(x), rtNum(y), rtNum(z), interior, zd
+    end
+
+    -- Все подключённые игроки (сырьё для RT_FN.scan).
+    function RT.rawPlayers(myId)
+        if type(sampIsPlayerConnected) ~= "function" then
+            RT.err = "нет подключения к SAMP-серверу"
+            return nil
+        end
+        local out = {}
+        for id = 0, 1003 do
+            local ok, conn = pcall(sampIsPlayerConnected, id)
+            if ok and conn then
+                local nick
+                if type(sampGetPlayerNickname) == "function" then
+                    local ok2, n2 = pcall(sampGetPlayerNickname, id)
+                    if ok2 and type(n2) == "string" and n2 ~= "" then nick = n2 end
+                end
+                local x, y, z, interior, zd
+                local rok, res, ped = pcall(sampGetCharHandleBySampPlayerId, id)
+                if rok and res and ped then
+                    local cok, cx, cy, cz = pcall(getCharCoordinates, ped)
+                    if cok and rtNum(cx) and rtNum(cy) and rtNum(cz) then
+                        x, y, z = rtNum(cx), rtNum(cy), rtNum(cz)
+                        interior, zd = rtEntityIz(ped)
+                    end
+                end
+                if not x and type(sampGetStreamedOutPlayerPos) == "function" then
+                    -- игрок вне стрима: последние известные координаты
+                    local sok, sx, sy, sz = pcall(sampGetStreamedOutPlayerPos, id)
+                    if sok and rtNum(sx) and rtNum(sy) and rtNum(sz) then
+                        x, y, z = rtNum(sx), rtNum(sy), rtNum(sz)
+                    end
+                end
+                out[#out + 1] = {
+                    id = id, nick = nick, x = x, y = y, z = z,
+                    interior = interior, zd = zd,
+                    self = (myId ~= nil and id == myId),
+                }
+            end
+        end
+        return out
+    end
+
+    -- Обновить список игроков в радиусе (RT.list).
+    function RT.scan()
+        pcall(RT.load)
+        local myId, mx, my, mz, mi, md = rtSelf()
+        if not mx then
+            RT.err = "не удалось получить ваши координаты"
+            RT.list = nil
+            return nil
+        end
+        local raw = RT.rawPlayers(myId)
+        if not raw then
+            RT.list = nil
+            return nil
+        end
+        RT.list = RT_FN.scan(raw,
+            { x = mx, y = my, z = mz, interior = mi, zd = md }, RT.radius)
+        RT.scanAt = os.clock()
+        RT.err = nil
+        return RT.list
+    end
+
+    -- Тик из главного цикла: обновляет список раз в секунду, пока открыт
+    -- раздел «Выдача в радиусе».
+    function RT.tick()
+        pcall(RT.load)
+        if RT.visible and (RT.list == nil or os.clock() - (RT.scanAt or 0) >= 1) then
+            RT.scan()
+        end
+    end
+
+    -- Отправка строки в чат: та же прямая цепочка, что у автопилота
+    -- (v1.19.211) — без очередей и задержек.
+    local function rtSend(cmd)
+        cmd = tostring(cmd or "")
+        if cmd == "" then return false end
+        local QRm = _G.GRND_QR
+        if QRm and type(QRm.sendChat) == "function" then
+            local ok, res = pcall(QRm.sendChat, cmd)
+            if ok and res ~= false then return true end
+        end
+        if type(grndChatSend) == "function" then
+            local ok, res = pcall(grndChatSend, cmd)
+            if ok and res ~= false then return true end
+        end
+        if type(sampSendChat) == "function" then
+            local out = cmd
+            if type(grndAnsiText) == "function" then
+                local okA, ansi = pcall(grndAnsiText, cmd)
+                if okA and type(ansi) == "string" and ansi ~= "" then out = ansi end
+            end
+            return pcall(sampSendChat, out) and true or false
+        end
+        return false
+    end
+
+    local function rtToast(text, kind, t)
+        local QRm = _G.GRND_QR
+        if QRm and type(QRm.toast) == "function" then
+            local ok = pcall(QRm.toast, text, kind or "info", t or 3)
+            if ok then return end
+        end
+        pcall(print, text)
+    end
+
+    -- Клик по шестерёнке: параметров пока нет, потому что нет команд —
+    -- честно говорим, что настройка появится вместе с ними.
+    function RT.gearClick(a)
+        rtToast("«" .. a.label .. "»: настройка появится вместе с командой",
+            "info", 3.4)
+        RT.lastAct = a.label .. ": настройка появится вместе с командой"
+    end
+
+    -- Действие по кнопке: scan → игроки в радиусе → команда (если назначена).
+    function RT.doAction(id)
+        pcall(RT.load)
+        local act = RT.actById(id)
+        if not act then return false end
+        local list = RT.scan()
+        if not list then
+            rtToast("Радиус: " .. tostring(RT.err or "нет данных"), "warn", 3)
+            RT.lastAct = act.label .. ": " .. tostring(RT.err or "нет данных")
+            return false
+        end
+        -- «Телепорт всех к себе» на себя не распространяется
+        local players = {}
+        for i = 1, #list do
+            if not (id == RT.wide.id and list[i].self) then
+                players[#players + 1] = list[i]
+            end
+        end
+        if #players == 0 then
+            rtToast("В радиусе " .. RT.radius .. " м никого", "info", 2.4)
+            RT.lastAct = act.label .. ": в радиусе никого"
+            return false
+        end
+        local tmpl = RT.cmds[id]
+        if type(tmpl) ~= "string" or tmpl == "" then
+            rtToast("«" .. act.label .. "»: команда ещё не назначена", "warn", 3.2)
+            RT.lastAct = string.format("%s: команда не назначена (в радиусе %d)",
+                act.label, #players)
+            return false
+        end
+        local sent, failed = 0, 0
+        if tmpl:find("{id}", 1, true) then
+            -- шаблон с {id} — по игроку
+            for i = 1, #players do
+                if rtSend(RT_FN.fill(tmpl, players[i])) then sent = sent + 1
+                else failed = failed + 1 end
+            end
+        else
+            -- без {id} — одна команда на всех
+            if rtSend(tmpl) then sent = 1 else failed = 1 end
+        end
+        local names = {}
+        for i = 1, math.min(4, #players) do
+            names[#names + 1] = players[i].nick
+        end
+        if #players > 4 then names[#names + 1] = "…" end
+        RT.lastAct = string.format("%s: %d/%d (%s)", act.label, sent, #players,
+            table.concat(names, ", "))
+        if sent > 0 and failed == 0 then
+            rtToast(string.format("%s: %d игрокам", act.label, sent), "ok", 3)
+            return true
+        elseif sent > 0 then
+            rtToast(string.format("%s: только %d из %d", act.label, sent, #players),
+                "warn", 3.2)
+            return false
+        end
+        rtToast("Не удалось отправить команду", "warn", 3)
+        return false
+    end
+
+    -- ---------- страница раздела (рендерер передаёт панель МП) ----------
+    -- R = { uiText, tsize, col32, c4, roundRect, dl, at, button, gear, theme }
+    --   button(key, x, y, w, h, label, opts) -> clicked  (кнопка стиля меню)
+    --   gear(x, y, col)  — иконка шестерёнки (gearIcon панели)
+    function RT.page(R, cx, y, cw)
+        if type(R) ~= "table" or type(R.button) ~= "function" then return y end
+        pcall(RT.load)
+        if RT.list == nil then RT.scan() end
+        local TH = (type(R.theme) == "function") and R.theme() or {}
+        local dim = R.c4(TH.textDim or { 185, 185, 190, 255 })
+        local mut = R.c4(TH.textMuted or { 140, 140, 150, 255 })
+        local ac  = (type(TH.accent) == "table") and TH.accent or { 164, 112, 224, 255 }
+        local warnC = R.c4({ 255, 176, 96, 255 })
+
+        local function W(text, scale)
+            local ok, v = pcall(R.tsize, tostring(text or ""))
+            return (tonumber(v) or (#tostring(text or "") * 7)) * (tonumber(scale) or 1)
+        end
+
+        -- ---------- радиус: [−] полоса «Радиус: N» [+] ----------
+        y = y + 4
+        local bh = 26
+        if R.button("rt_minus", cx, y, bh, bh, "-", {}) then
+            RT.setRadius(RT.radius - 1)
+        end
+        local labW = math.ceil(W("Радиус: 200", 0.8))
+        local labX = cx + cw - bh - 8 - labW
+        local slX = cx + bh + 8
+        local slW = math.max(40, labX - slX - 8)
+        local frac = (RT.radius - RT.RMIN) / (RT.RMAX - RT.RMIN)
+        -- общий слайдер меню (grndUiSlider): дорожка, акцент, кругляш, drag
+        if type(R.slider) == "function" then
+            local nr = R.slider("rt_radius_sl", slX, y, slW, bh, frac)
+            if nr then
+                RT.setRadius(RT.RMIN + nr * (RT.RMAX - RT.RMIN) + 0.5)
+            end
+        else
+            R.roundRect(R.dl, R.at(slX, y + bh / 2 - 3.5),
+                R.at(slX + slW, y + bh / 2 + 3.5), R.col32(255, 255, 255, 30), 3.5)
+            if slW * frac >= 3.5 then
+                R.roundRect(R.dl, R.at(slX, y + bh / 2 - 3.5),
+                    R.at(slX + slW * frac, y + bh / 2 + 3.5),
+                    R.col32(ac[1], ac[2], ac[3], 235), 3.5)
+            end
+        end
+        R.uiText(labX, y + (bh - 12) / 2, "Радиус: " .. RT.radius, dim, 0.8)
+        if R.button("rt_plus", cx + cw - bh, y, bh, bh, "+", {}) then
+            RT.setRadius(RT.radius + 1)
+        end
+        y = y + bh + 10
+
+        -- ---------- кто сейчас в радиусе (тик обновляет раз в секунду) ----------
+        local list = RT.list or {}
+        local status, scol
+        if RT.err then
+            status, scol = "Радиус: " .. RT.err, warnC
+        elseif #list == 0 then
+            status, scol = "В радиусе " .. RT.radius .. " м никого", mut
+        else
+            local prefix = "В радиусе: " .. #list .. " — "
+            local parts = {}
+            for i = 1, #list do
+                local t = string.format("%s (%.0f м)", list[i].nick, list[i].dist)
+                local cand
+                if i == 1 then
+                    cand = prefix .. t
+                else
+                    cand = prefix .. table.concat(parts, ", ") .. ", " .. t
+                end
+                if W(cand, 0.78) <= cw then
+                    parts[#parts + 1] = t
+                else
+                    break
+                end
+            end
+            if #parts < #list then
+                parts[#parts + 1] = "+" .. (#list - #parts)
+            end
+            status, scol = prefix .. table.concat(parts, ", "), mut
+        end
+        R.uiText(cx, y, status, scol, 0.78)
+        y = y + 18
+
+        -- ---------- сетка действий 3×3 (порядок — из макета) ----------
+        local gap, abh = 8, 26
+        local bw = (cw - gap * 2) / 3
+        local gearCol = R.col32(255, 255, 255, 150)
+        for i = 1, #RT.actions do
+            if i > 9 then break end
+            local a = RT.actions[i]
+            local row = math.floor((i - 1) / 3)
+            local col = (i - 1) % 3
+            local bx = cx + col * (bw + gap)
+            local by = y + row * (abh + gap)
+            if R.button("rt_act_" .. a.id, bx, by, bw, abh, a.label, {}) then
+                RT.doAction(a.id)
+            end
+            if a.gear then
+                local gx, gy = bx + bw - 14, by + abh / 2
+                local clicked
+                if type(R.gearButton) == "function" then
+                    clicked = R.gearButton("rt_" .. a.id, gx, gy, false)
+                    if clicked then RT.gearClick(a) end
+                elseif type(R.gear) == "function" then
+                    R.gear(gx, gy, gearCol)
+                end
+            end
+        end
+        y = y + 3 * (abh + gap) - gap
+
+        -- ---------- широкая кнопка ----------
+        if R.button("rt_tp", cx, y, cw, abh, RT.wide.label, {}) then
+            RT.doAction(RT.wide.id)
+        end
+        y = y + abh + 8
+
+        -- последнее действие — только если есть что сказать
+        if RT.lastAct then
+            R.uiText(cx, y, "Было: " .. RT.lastAct, mut, 0.78)
+            y = y + 14
+        end
+        return y
+    end
+
+    _G.GRND_RT = RT
+    _G.grndRadTick = function()
+        local ok, res = pcall(RT.tick)
+        if ok then return res end
+        RT.err = tostring(res)
+        return false
+    end
+end
+-- <<< GRND_RADTOOLS_END
 
 -- =====================================================================
 --  ВКЛАДКА «РЕПОРТ» (v1.19.194): подключение уже написанных разделов
@@ -49878,6 +50425,7 @@ function grndMainBody()
             -- v1.19.202: тик автопилота выдачи наказаний — отложенное сохранение
             -- вкладок и чистка кулдаунов (строки ему отдаёт хук чата)
             if type(_G.grndPunAutoTick) == "function" then pcall(_G.grndPunAutoTick) end
+            if type(_G.grndRadTick) == "function" then pcall(_G.grndRadTick) end
             -- синхронизация флага UI input-guard: окно могло закрыться
             -- не хоткеем (сторож, ESC из чужого места) — сверяемся
             do
