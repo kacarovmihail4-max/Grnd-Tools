@@ -305,11 +305,9 @@ local function mkR(allow)
             table.insert(sliders, { id = id, ratio = ratio })
             return allow.slider or nil
         end,
-        gearButton = function(key, x, y, active)
-            table.insert(gears, { key = key, x = x, y = y })
-            return allow[key] == true
+        gear = function(x, y, col)
+            table.insert(gears, { x = x, y = y })
         end,
-        gear = function(x, y) table.insert(gears, { key = "static", x = x, y = y }) end,
     }
 end
 
@@ -319,40 +317,60 @@ RT.lastAct = "spawn: 3/3 (Nick7, Nick4, Nick2)"
 drawn, clicks, gears = {}, {}, {}
 local y1 = RT.page(mkR(), 10, y0, cw)
 check(type(y1) == "number" and y1 > y0, "page: y растёт")
-check(#clicks == 12, "page: 12 кнопок (−, +, 9 сетки, tp): " .. #clicks)
+check(#clicks == 16,
+    "page: 16 кнопок (−, +, 9 сетки, 4 шестерёнки, tp): " .. #clicks)
 check(clicks[1] and clicks[1].key == "rt_minus" and clicks[1].w == 26,
     "page: «−» слева 26×26")
 check(clicks[2] and clicks[2].key == "rt_plus", "page: «+»")
-local expect = { "Заспавнить", "Заморозить", "Разморозить",
-    "Выдать оружие", "Выдать скин", "Выдать XP",
-    "Выдать броню", "Заспавнить транспорт", "Отобрать оружие" }
-local gridIds = { "spawn", "freeze", "unfreeze", "weapon", "skin",
-    "xp", "armor", "vehicle", "takeoff" }
-local gridOk = true
-for i = 1, 9 do
-    if clicks[2 + i] == nil or clicks[2 + i].label ~= expect[i]
-        or clicks[2 + i].key ~= "rt_act_" .. gridIds[i] then
-        gridOk = false
+-- порядок сетки 3×3: шестерёнки — ОТДЕЛЬНЫЕ кнопки сразу за своей кнопкой
+local expect = {
+    "rt_act_spawn", "rt_act_freeze", "rt_act_unfreeze",
+    "rt_act_weapon", "rt_gear_weapon", "rt_act_skin", "rt_gear_skin",
+    "rt_act_xp", "rt_act_armor", "rt_gear_armor", "rt_act_vehicle",
+    "rt_gear_vehicle", "rt_act_takeoff",
+}
+local orderOk = true
+for i = 1, #expect do
+    if clicks[2 + i] == nil or clicks[2 + i].key ~= expect[i] then
+        orderOk = false
     end
 end
-check(gridOk, "page: сетка 3×3 в порядке макета")
-check(clicks[12] and clicks[12].key == "rt_tp" and clicks[12].w == cw
-    and clicks[12].label == "Телепорт всех к себе",
+check(orderOk, "page: сетка 3×3 + шестерёнки за кнопками")
+check(clicks[16] and clicks[16].key == "rt_tp" and clicks[16].w == cw
+    and clicks[16].label == "Телепорт всех к себе",
     "page: широкая «Телепорт всех к себе» на всю ширину")
-check(#gears == 4, "page: шестерёнки у 4 кнопок: " .. #gears)
-local gearKeys = {}
-for i = 1, #gears do gearKeys[i] = gears[i].key end
-check(table.concat(gearKeys, ",")
-    == "rt_weapon,rt_skin,rt_armor,rt_vehicle",
-    "page: шестерёнки — оружие/скин/броня/транспорт: "
-    .. table.concat(gearKeys, ","))
+-- ровная сетка: все 9 кнопок одной ширины
+local actIdx = { 3, 4, 5, 6, 8, 10, 11, 13, 15 }
+local bw0 = clicks[actIdx[1]] and clicks[actIdx[1]].w
+local evenOk = bw0 and bw0 > 40
+for i = 1, #actIdx do
+    if clicks[actIdx[i]] == nil
+        or math.abs(clicks[actIdx[i]].w - bw0) > 0.01 then
+        evenOk = false
+    end
+end
+check(evenOk, "page: все 9 кнопок одной ширины")
+-- шестерёнки ВЫНЕСЕНЫ за кнопки: иконка правее края своей кнопки
+check(#gears == 4, "page: 4 шестерёнки (оружие/скин/броня/транспорт)")
+local gearBtnIdx = { 7, 9, 12, 14 }
+local gearOut = true
+for i = 1, 4 do
+    local gb, ic = clicks[gearBtnIdx[i]], gears[i]
+    -- квадрат шестерёнки: правый край кнопки + 8
+    if gb == nil or ic == nil
+        or math.abs(gb.x - (clicks[gearBtnIdx[i] - 1].x
+            + clicks[gearBtnIdx[i] - 1].w + 8)) > 0.01
+        or math.abs(ic.x - (gb.x + gb.w / 2)) > 0.01 then
+        gearOut = false
+    end
+end
+check(gearOut, "page: шестерёнки за кнопками (не поверх)")
 local joined = {}
 for i = 1, #drawn do joined[i] = drawn[i].t end
 joined = table.concat(joined, "\n")
 check(joined:find("Радиус: 25", 1, true), "page: строка «Радиус: 25»")
-check(joined:find("В радиусе: 3", 1, true), "page: статус «В радиусе: 3»")
-check(joined:find("Nick7", 1, true) and joined:find("(10 м)", 1, true),
-    "page: ник + дистанция в статусе")
+check(joined:find("В радиусе", 1, true) == nil,
+    "page: строка «В радиусе…» убрана")
 check(joined:find("Было:", 1, true), "page: строка «Было:»")
 
 -- клики: «+» / «−»
@@ -371,7 +389,7 @@ check(#sliders >= 1 and sliders[#sliders].id == "rt_radius_sl",
 
 -- клик по шестерёнке: честно — настройка появится вместе с командой
 local beforeT = #toasts
-RT.page(mkR({ rt_weapon = true }), 10, y0, cw)
+RT.page(mkR({ rt_gear_weapon = true }), 10, y0, cw)
 lastToast = toasts[#toasts]
 check(#toasts == beforeT + 1
     and lastToast.text:find("настройка появится вместе с командой", 1, true),

@@ -1,6 +1,10 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.215"
+GRND_SCRIPT_VERSION = "1.19.216"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.216 — «ВЫДАЧА В РАДИУСЕ» по правкам: шестерёнки вынесены ЗА кнопки
+--   (отдельные квадраты рядом с действием, не поверх), сетка ровная — все
+--   9 кнопок одной ширины, длинные подписи не вылезают; строка
+--   «В радиусе: …» убрана.
 -- v1.19.215 — раздел «ВЫДАЧА В РАДИУСЕ» (панель МП) из заглушки стал рабочим:
 --   1) Радиус: «− / полоса / Радиус: N / +» (1..200 м, запоминается);
 --   2) определение ВСЕХ игроков в радиусе: координаты из MoonLoader
@@ -30094,9 +30098,6 @@ local function drawRadiusView(ctx, cx, y, cw)
         slider = function(id, sx, sy, sw, sh, ratio)
             return grndUiSlider(ctx, id, sx, sy, sw, sh, ratio)
         end,
-        gearButton = function(key, gx, gy, active)
-            return gearButton(ctx, key, gx, gy, active)
-        end,
         gear = function(gx, gy, col) gearIcon(ctx, gx, gy, col) end,
     }, cx, y, cw)
     RTm.visible = false
@@ -38272,9 +38273,9 @@ do
     RT.fn = RT_FN
 
     -- Действия страницы — порядок из макета заказчика. gear = у действия
-    -- есть параметры, на кнопке нарисована шестерёнка. Команды (RT.cmds) —
-    -- сообщит заказчик: шаблон с {id} уходит ПО ИГРОКУ, без {id} — одной
-    -- строкой на всех.
+    -- есть параметры, рядом с кнопкой — отдельная шестерёнка (v1.19.216:
+    -- вынесена ЗА кнопку). Команды (RT.cmds) — сообщит заказчик: шаблон
+    -- с {id} уходит ПО ИГРОКУ, без {id} — одной строкой на всех.
     RT.actions = {
         { id = "spawn",    label = "Заспавнить" },
         { id = "freeze",   label = "Заморозить" },
@@ -38548,9 +38549,11 @@ do
     end
 
     -- ---------- страница раздела (рендерер передаёт панель МП) ----------
-    -- R = { uiText, tsize, col32, c4, roundRect, dl, at, button, gear, theme }
+    -- R = { uiText, tsize, col32, c4, roundRect, dl, at, button, gear,
+    --        slider, theme }
     --   button(key, x, y, w, h, label, opts) -> clicked  (кнопка стиля меню)
     --   gear(x, y, col)  — иконка шестерёнки (gearIcon панели)
+    --   slider(id, x, y, w, h, ratio) -> новый ratio при drag или nil
     function RT.page(R, cx, y, cw)
         if type(R) ~= "table" or type(R.button) ~= "function" then return y end
         pcall(RT.load)
@@ -38559,7 +38562,6 @@ do
         local dim = R.c4(TH.textDim or { 185, 185, 190, 255 })
         local mut = R.c4(TH.textMuted or { 140, 140, 150, 255 })
         local ac  = (type(TH.accent) == "table") and TH.accent or { 164, 112, 224, 255 }
-        local warnC = R.c4({ 255, 176, 96, 255 })
 
         local function W(text, scale)
             local ok, v = pcall(R.tsize, tostring(text or ""))
@@ -38598,67 +38600,40 @@ do
         end
         y = y + bh + 10
 
-        -- ---------- кто сейчас в радиусе (тик обновляет раз в секунду) ----------
-        local list = RT.list or {}
-        local status, scol
-        if RT.err then
-            status, scol = "Радиус: " .. RT.err, warnC
-        elseif #list == 0 then
-            status, scol = "В радиусе " .. RT.radius .. " м никого", mut
-        else
-            local prefix = "В радиусе: " .. #list .. " — "
-            local parts = {}
-            for i = 1, #list do
-                local t = string.format("%s (%.0f м)", list[i].nick, list[i].dist)
-                local cand
-                if i == 1 then
-                    cand = prefix .. t
-                else
-                    cand = prefix .. table.concat(parts, ", ") .. ", " .. t
-                end
-                if W(cand, 0.78) <= cw then
-                    parts[#parts + 1] = t
-                else
-                    break
-                end
-            end
-            if #parts < #list then
-                parts[#parts + 1] = "+" .. (#list - #parts)
-            end
-            status, scol = prefix .. table.concat(parts, ", "), mut
-        end
-        R.uiText(cx, y, status, scol, 0.78)
-        y = y + 18
-
         -- ---------- сетка действий 3×3 (порядок — из макета) ----------
-        local gap, abh = 8, 26
-        local bw = (cw - gap * 2) / 3
+        -- Ровно: ВСЕ 9 кнопок одной ширины; место под шестерёнку зарезервировано
+        -- в каждой ячейке, шестерёнка — отдельный квадрат ЗА кнопкой (не
+        -- поверх неё). cutW — чтобы длинная подпись не вылезала из кнопки.
+        local gap, abh, gearW = 8, 26, 26
+        local cellW = (cw - gap * 2) / 3
+        local bw = math.max(40, cellW - gearW - gap)
         local gearCol = R.col32(255, 255, 255, 150)
         for i = 1, #RT.actions do
             if i > 9 then break end
             local a = RT.actions[i]
             local row = math.floor((i - 1) / 3)
             local col = (i - 1) % 3
-            local bx = cx + col * (bw + gap)
+            local bx = cx + col * (cellW + gap)
             local by = y + row * (abh + gap)
-            if R.button("rt_act_" .. a.id, bx, by, bw, abh, a.label, {}) then
+            if R.button("rt_act_" .. a.id, bx, by, bw, abh, a.label,
+                { cutW = bw - 12 }) then
                 RT.doAction(a.id)
             end
             if a.gear then
-                local gx, gy = bx + bw - 14, by + abh / 2
-                local clicked
-                if type(R.gearButton) == "function" then
-                    clicked = R.gearButton("rt_" .. a.id, gx, gy, false)
-                    if clicked then RT.gearClick(a) end
-                elseif type(R.gear) == "function" then
-                    R.gear(gx, gy, gearCol)
+                local gx = bx + bw + gap
+                if R.button("rt_gear_" .. a.id, gx, by, gearW, abh, "", {}) then
+                    RT.gearClick(a)
+                end
+                if type(R.gear) == "function" then
+                    R.gear(gx + gearW / 2, by + abh / 2, gearCol)
                 end
             end
         end
         y = y + 3 * (abh + gap) - gap
 
         -- ---------- широкая кнопка ----------
-        if R.button("rt_tp", cx, y, cw, abh, RT.wide.label, {}) then
+        if R.button("rt_tp", cx, y, cw, abh, RT.wide.label,
+            { cutW = cw - 16 }) then
             RT.doAction(RT.wide.id)
         end
         y = y + abh + 8
