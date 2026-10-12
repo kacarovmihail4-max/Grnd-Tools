@@ -1,6 +1,16 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.208"
+GRND_SCRIPT_VERSION = "1.19.209"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.209 — правки по замечаниям (в логе игрока видно точное место):
+--   1) D3DXSaveSurfaceToFile на этой сборке отвечает D3DXERR_INVALIDDATA
+--      (0x88760B59) и на заднем, и на переднем буфере: кадр снят и лежит в
+--      системной поверхности, а сохранить его нечем. Поэтому PNG собирается
+--      самим скриптом: пиксели читаются через LockRect и пишутся обычным
+--      Lua-выводом. Ни d3dx9, ни Screenshot.asi для кадра больше не нужны;
+--   2) если в системе есть zlib1.dll — файл сжимается ей (~1-2 МБ), иначе
+--      PNG с несжатыми блоками deflate (стандартный PNG, просто больше);
+--   3) D3DX остался только запасным способом — на случай, если LockRect
+--      почему-то не сработает.
 -- v1.19.208 — правки по замечаниям (по логу игрока найден корень):
 --   1) ГЛАВНОЕ: тип методов D3D9 записывался без «(*)» — LuaJIT такие типы не
 --      принимает, поэтому съёмка падала на первом же шаге:
@@ -36527,6 +36537,255 @@ do
         return buf
     end
 
+    -- ---------- PNG своими руками (v1.19.209) ----------
+    -- D3DXSaveSurfaceToFile на этой сборке отвечает D3DXERR_INVALIDDATA
+    -- (0x88760B59) и на заднем, и на переднем буфере — то есть кадр уже снят и
+    -- лежит в системной поверхности, а сохранить его нечем. Поэтому PNG
+    -- собираем сами: берём пиксели через LockRect, переводим в RGB и пишем файл
+    -- обычным Lua-выводом. Ни d3dx9, ни Screenshot.asi для кадра не нужны.
+    --
+    -- Сжатие: если в системе есть zlib1.dll, звоним в неё (файл ~1-2 МБ); если
+    -- нет — PNG с несжатыми блоками deflate (это допустимо стандартом, файл
+    -- больше, но открывается любой программой).
+    local PNG = {}
+    local PIX = {}
+
+    function PNG.u32be(n)
+        n = tonumber(n) or 0
+        return string.char(math.floor(n / 16777216) % 256, math.floor(n / 65536) % 256,
+            math.floor(n / 256) % 256, n % 256)
+    end
+
+    -- CRC32 (полином 0xEDB88320). Через zlib, если он есть: 6 МБ байт в Lua
+    -- считать заметно дольше.
+    PNG.crcLib, PNG.crcTried, PNG.crcTable = nil, false, nil
+    function PNG.zlib()
+        if PNG.crcTried then return PNG.crcLib end
+        PNG.crcTried = true
+        local ffi = paShotLibs()
+        if not ffi then return nil end
+        -- cdecl: у zlib1.dll экспорты не декорированы (у stdcall-сборок они были
+        -- бы вида _compress2@24), поэтому объявляем как cdecl и проверяем, что
+        -- символ вообще резолвится.
+        pcall(ffi.cdef, [[
+            int compress2(unsigned char* dest, uint32_t* destLen,
+                const unsigned char* source, uint32_t sourceLen, int level);
+            uint32_t crc32(uint32_t crc, const unsigned char* buf, uint32_t len);
+        ]])
+        local names = { "zlib1", "zlib", "libz" }
+        for i = 1, #names do
+            local ok, lib = pcall(ffi.load, names[i])
+            if ok and lib then
+                local okF, both = pcall(function()
+                    return (lib.compress2 ~= nil) and (lib.crc32 ~= nil)
+                end)
+                if okF and both then
+                    PNG.crcLib = lib
+                    return lib
+                end
+            end
+        end
+        return nil
+    end
+    function PNG.crc32(s)
+        local lib = PNG.zlib()
+        if lib then
+            local ok, v = pcall(lib.crc32, 0, s, #s)
+            if ok then return tonumber(v) or 0 end
+        end
+        if not PNG.crcTable then
+            local t = {}
+            for i = 0, 255 do
+                local c = i
+                for _ = 1, 8 do
+                    -- ВАЖНО: сдвиг только через bit.rshift. Деление (c/2) на
+                    -- знаковом числе после bit.bxor давало неверный CRC —
+                    -- картинка получалась битой, а стенд этого не видел.
+                    if bit.band(c, 1) == 1 then
+                        c = bit.bxor(0xEDB88320, bit.rshift(c, 1))
+                    else
+                        c = bit.rshift(c, 1)
+                    end
+                end
+                t[i] = c
+            end
+            PNG.crcTable = t
+        end
+        local crc = 0xFFFFFFFF
+        for i = 1, #s do
+            crc = bit.bxor(PNG.crcTable[bit.band(bit.bxor(crc, s:byte(i)), 255)],
+                bit.rshift(crc, 8))
+        end
+        return bit.bxor(crc, 0xFFFFFFFF) % 4294967296
+    end
+    function PNG.adler32(s)
+        local a, b = 1, 0
+        local M = 65521
+        for i = 1, #s do
+            a = (a + s:byte(i)) % M
+            b = (b + a) % M
+        end
+        return (b * 65536 + a) % 4294967296
+    end
+    function PNG.chunk(kind, data)
+        return PNG.u32be(#data) .. kind .. data .. PNG.u32be(PNG.crc32(kind .. data))
+    end
+    -- Данные PNG: строки с нулевым фильтром («нет»), сжатые в zlib-поток.
+    function PNG.deflate(raw)
+        local lib = PNG.zlib()
+        if lib and #raw > 0 then
+            local ffi = paShotLibs()
+            local src = raw
+            local cap = #raw + math.floor(#raw / 1000) + 128
+            local dst = ffi.new("unsigned char[?]", cap)
+            local len = ffi.new("uint32_t[1]", cap)
+            local ok, res = pcall(lib.compress2, dst, len, src, #raw, 6)
+            local outLen = tonumber(len[0]) or 0
+            if ok and (tonumber(res) or -1) == 0 and outLen > 0 and outLen < cap then
+                return ffi.string(dst, outLen)
+            end
+        end
+        -- несжатый deflate: заголовок 0x78 0x01, блоки до 65535 байт
+        local out = { "\120\1" }
+        local n, pos = #raw, 1
+        if n == 0 then out[#out + 1] = string.char(1, 0, 0, 255, 255) end
+        while pos <= n do
+            local size = math.min(65535, n - pos + 1)
+            local last = (pos + size > n) and 1 or 0
+            out[#out + 1] = string.char(last, size % 256, math.floor(size / 256),
+                (65535 - size) % 256, math.floor((65535 - size) / 256))
+            out[#out + 1] = raw:sub(pos, pos + size - 1)
+            pos = pos + size
+        end
+        out[#out + 1] = PNG.u32be(PNG.adler32(raw))
+        return table.concat(out)
+    end
+    function PNG.bytes(raw, w, h)
+        return "\137PNG\r\n\26\n"
+            .. PNG.chunk("IHDR", PNG.u32be(w) .. PNG.u32be(h) .. string.char(8, 2, 0, 0, 0))
+            .. PNG.chunk("IDAT", PNG.deflate(raw))
+            .. PNG.chunk("IEND", "")
+    end
+
+    -- Пиксели системной поверхности -> строки RGB. rect (если задан) обрезает
+    -- снимок до нужной части кадра (передний буфер — это весь экран).
+    function PIX.rows(surf, fmt, w, h, rect)
+        local ffi = paShotLibs()
+        if not ffi then return nil, "нет LuaJIT-FFI" end
+        local kind
+        if fmt == 21 or fmt == 22 then kind = "bgra"        -- A8R8G8B8 / X8R8G8B8
+        elseif fmt == 32 or fmt == 33 then kind = "rgba"    -- A8B8G8R8 / X8B8G8R8
+        elseif fmt == 20 then kind = "rgb"                  -- R8G8B8
+        elseif fmt == 23 then kind = "r5g6b5"
+        elseif fmt == 24 or fmt == 25 then kind = "r5g5b5"
+        else return nil, "формат кадра не поддержан (D3DFMT " .. tostring(fmt) .. ")" end
+        local vt = ffi.cast("void***", surf)[0]
+        local okL, lockRect = pcall(ffi.cast,
+            "int(__stdcall*)(void*, void*, const void*, unsigned long)", vt[13])
+        local okU, unlock = pcall(ffi.cast, "int(__stdcall*)(void*)", vt[14])
+        if not (okL and okU) then return nil, "LockRect/UnlockRect не привязались" end
+        -- D3DLOCKED_RECT: сначала Pitch (int), потом указатель на пиксели.
+        -- Описываем структурой, а не байтовым буфером: на 64-битной сборке
+        -- (и в стенде) указатель шире 4 байт, и «чтение по смещению 4»
+        -- обрезало адрес — это уже приводило к падению.
+        if not PNG.lockRectDef then
+            PNG.lockRectDef = true
+            pcall(ffi.cdef, [[typedef struct { int Pitch; void* pBits; } grnd_shot_locked_rect;]])
+        end
+        local lr = ffi.new("grnd_shot_locked_rect")
+        local hr = lockRect(surf, lr, nil, 0)
+        if (tonumber(hr) or 0) ~= 0 then return nil, "LockRect 0x" .. string.format("%08X", tonumber(hr) or 0) end
+        local okPix, rows, wOut, err = pcall(function()
+            local pitch = tonumber(lr.Pitch) or 0
+            local addr = tonumber(ffi.cast("uintptr_t", lr.pBits)) or 0
+            if pitch == 0 or addr == 0 then return nil, nil, "поверхность не залочилась" end
+            local stride = pitch > 0 and pitch or -pitch
+            local x0, y0, x1, y1 = 0, 0, w, h
+            if rect then
+                x0 = math.max(0, math.min(w, tonumber(rect.left) or 0))
+                y0 = math.max(0, math.min(h, tonumber(rect.top) or 0))
+                x1 = math.max(x0 + 1, math.min(w, tonumber(rect.right) or w))
+                y1 = math.max(y0 + 1, math.min(h, tonumber(rect.bottom) or h))
+            end
+            local cw, ch = x1 - x0, y1 - y0
+            local base = ffi.cast("uint8_t*", addr)
+            local out = ffi.new("uint8_t[?]", cw * 3)
+            local list = {}
+            for y = 0, ch - 1 do
+                -- pitch<0 — строки лежат снизу вверх
+                local srcY = (pitch > 0) and (y0 + y) or (h - 1 - (y0 + y))
+                local rowPtr = base + srcY * stride
+                if kind == "rgb" then
+                    list[#list + 1] = ffi.string(rowPtr + x0 * 3, cw * 3)
+                elseif kind == "bgra" or kind == "rgba" then
+                    local src = ffi.cast("uint32_t*", rowPtr) + x0
+                    for i = 0, cw - 1 do
+                        local v = tonumber(src[i]) or 0
+                        local r, g, b
+                        if kind == "bgra" then
+                            r = bit.band(math.floor(v / 65536), 255)
+                            g = bit.band(math.floor(v / 256), 255)
+                            b = bit.band(v, 255)
+                        else
+                            r = bit.band(v, 255)
+                            g = bit.band(math.floor(v / 256), 255)
+                            b = bit.band(math.floor(v / 65536), 255)
+                        end
+                        out[i * 3] = r
+                        out[i * 3 + 1] = g
+                        out[i * 3 + 2] = b
+                    end
+                    list[#list + 1] = ffi.string(out, cw * 3)
+                else
+                    local src = ffi.cast("uint16_t*", rowPtr) + x0
+                    for i = 0, cw - 1 do
+                        local v = tonumber(src[i]) or 0
+                        local r, g, b
+                        if kind == "r5g6b5" then
+                            r = math.floor(bit.band(math.floor(v / 2048), 31) * 255 / 31)
+                            g = math.floor(bit.band(math.floor(v / 32), 63) * 255 / 63)
+                            b = math.floor(bit.band(v, 31) * 255 / 31)
+                        else
+                            r = math.floor(bit.band(math.floor(v / 1024), 31) * 255 / 31)
+                            g = math.floor(bit.band(math.floor(v / 32), 31) * 255 / 31)
+                            b = math.floor(bit.band(v, 31) * 255 / 31)
+                        end
+                        out[i * 3] = r
+                        out[i * 3 + 1] = g
+                        out[i * 3 + 2] = b
+                    end
+                    list[#list + 1] = ffi.string(out, cw * 3)
+                end
+            end
+            return list, cw, nil
+        end)
+        pcall(unlock, surf)
+        if not okPix then return nil, "чтение пикселей: " .. tostring(rows) end
+        if not rows then return nil, tostring(wOut or err or "не удалось прочитать пиксели") end
+        return rows, wOut
+    end
+
+    -- Собрать PNG из поверхности и записать файл. Возвращает true, пояснение
+    -- (размер файла) или false, причину.
+    local function paShotSelfWrite(surf, fmt, w, h, rect, path)
+        local rows, wOut, err = PIX.rows(surf, fmt, w, h, rect)
+        if not rows then return false, tostring(err) end
+        local parts = {}
+        for i = 1, #rows do
+            parts[#parts + 1] = "\0"
+            parts[#parts + 1] = rows[i]
+        end
+        local raw = table.concat(parts)
+        local okPng, png = pcall(PNG.bytes, raw, wOut, #rows)
+        if not okPng then return false, "сборка PNG: " .. tostring(png) end
+        local f = io.open(path, "wb")
+        if not f then return false, "файл не открылся на запись" end
+        local okW, werr = pcall(function() f:write(png) end)
+        pcall(f.close, f)
+        if not okW then return false, "запись файла: " .. tostring(werr) end
+        return true, string.format("%dx%d, %d КБ", wOut, #rows, math.floor(#png / 1024))
+    end
+
     -- Адрес окна игры (gta_sa.exe 1.0 US) — нужен только запасному пути съёмки.
     local SHOT_HWND_ADDR = 0xC97C1C
 
@@ -36614,10 +36873,19 @@ do
                             release(dst[0])
                             bad[#bad + 1] = "GetRenderTargetData " .. hrHex(hr)
                         else
+                            -- 1) свой PNG (здесь и был затык: D3DX отвечал
+                            --    D3DXERR_INVALIDDATA на обоих буферах)
+                            local okPng, pngNote = paShotSelfWrite(dst[0], fmt, w, h, nil, path)
+                            if okPng then
+                                release(dst[0])
+                                return true, nil, "свой PNG, задний буфер " .. tostring(pngNote)
+                            end
+                            bad[#bad + 1] = "свой PNG: " .. tostring(pngNote)
+                            -- 2) запасной — D3DX (если LockRect не сработал)
                             hr = lib.D3DXSaveSurfaceToFileW(wide, D3DXIFF_PNG, dst[0], nil, nil)
                             release(dst[0])
                             if not hrBad(hr) then
-                                return true, nil, string.format("задний буфер %dx%d", w, h)
+                                return true, nil, string.format("задний буфер %dx%d (D3DX)", w, h)
                             end
                             bad[#bad + 1] = "D3DXSaveSurfaceToFile " .. hrHex(hr)
                                 .. " (" .. tostring(SHOT_D3DX_NAME) .. ")"
@@ -36673,12 +36941,26 @@ do
                             rc[0].bottom = rc[0].bottom + pt[0].y
                             rectPtr = rc
                         end
-                        hr = lib.D3DXSaveSurfaceToFileW(wide, D3DXIFF_PNG, dst[0], nil, rectPtr)
-                        release(dst[0])
-                        if not hrBad(hr) then
-                            return true, nil, string.format("передний буфер %dx%d", sw or 0, sh or 0)
+                        local crop = nil
+                        if rectPtr then
+                            crop = { left = tonumber(rc[0].left), top = tonumber(rc[0].top),
+                                right = tonumber(rc[0].right), bottom = tonumber(rc[0].bottom) }
                         end
-                        bad[#bad + 1] = "передний буфер: D3DXSaveSurfaceToFile " .. hrHex(hr)
+                        local okPng, pngNote = paShotSelfWrite(dst[0], D3D_A8R8G8B8,
+                            sw or 0, sh or 0, crop, path)
+                        if not okPng then
+                            hr = lib.D3DXSaveSurfaceToFileW(wide, D3DXIFF_PNG, dst[0], nil, rectPtr)
+                            if not hrBad(hr) then
+                                release(dst[0])
+                                return true, nil, string.format("передний буфер %dx%d (D3DX)", sw or 0, sh or 0)
+                            end
+                            pngNote = tostring(pngNote) .. "; D3DXSaveSurfaceToFile " .. hrHex(hr)
+                        end
+                        release(dst[0])
+                        if okPng then
+                            return true, nil, string.format("передний буфер: %s", tostring(pngNote))
+                        end
+                        bad[#bad + 1] = "передний буфер: " .. tostring(pngNote)
                     end
                 end
             end
@@ -36824,6 +37106,9 @@ do
     PA.shotGrab = paShotGrabReal     -- стенд может подменить саму съёмку
     PA.shotWide = paShotWide         -- преобразование пути (проверяется стендом)
     PA.shotUtf8 = paShotUtf8         -- обратное преобразование (UTF-16 -> UTF-8)
+    PA.pngUtil = PNG                 -- сборщик PNG (проверяется стендом)
+    PA.pngRows = PIX.rows            -- чтение пикселей поверхности (стенд)
+    PA.pngWrite = paShotSelfWrite    -- поверхность -> PNG -> файл (стенд)
 
     -- Кадр снимается только из потока отрисовки, поэтому нужен «хук кадра».
     -- Основной — кадр ImGui: меню рисуется всегда, значит кадр есть всегда

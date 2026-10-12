@@ -704,6 +704,157 @@ do
     os.execute("rm -rf /tmp/grnd_shot_e /tmp/grnd_shot_f /tmp/grnd_shot_g /tmp/grnd_shot_h")
 end
 
+-- ======== свой PNG вместо D3DX (v1.19.209) ========
+-- D3DXSaveSurfaceToFile на сборке игрока отвечал D3DXERR_INVALIDDATA
+-- (0x88760B59) и на заднем, и на переднем буфере. Теперь PNG собирает сам
+-- скрипт: пиксели читаются через LockRect, файл пишется обычным Lua-выводом.
+do
+    local PNG = PA.pngUtil
+    -- эталонные значения: проверены внешним zlib (crc32("123456789"),
+    -- adler32("Wikipedia")) — так проверка не сверяется сама с собой
+    eq("png.crc.known", PNG.crc32("123456789"), 0xCBF43926)
+    eq("png.adler.known", PNG.adler32("Wikipedia"), 300286872)
+
+    local function px(r, g, b) return string.char(r, g, b) end
+    local rows = { px(255, 0, 0) .. px(0, 255, 0) .. px(0, 0, 255),
+                   px(255, 255, 255) .. px(128, 128, 128) .. px(0, 0, 0) }
+    local parts = {}
+    for i = 1, #rows do parts[#parts + 1] = "\0" parts[#parts + 1] = rows[i] end
+    local raw = table.concat(parts)
+    local png = PNG.bytes(raw, 3, 2)
+    eq("png.sign", png:sub(1, 8), "\137PNG\r\n\26\n")
+
+    local function u32(s, i)
+        local a, b, c, d = s:byte(i, i + 3)
+        return ((a * 256 + b) * 256 + c) * 256 + d
+    end
+    local pos, kinds, ihdr, idat = 9, {}, nil, {}
+    while pos <= #png do
+        local ln = u32(png, pos)
+        local kind = png:sub(pos + 4, pos + 7)
+        local data = png:sub(pos + 8, pos + 8 + ln - 1)
+        eq("png.crc." .. kind, u32(png, pos + 8 + ln), PNG.crc32(kind .. data))
+        kinds[#kinds + 1] = kind
+        if kind == "IHDR" then ihdr = data end
+        if kind == "IDAT" then idat[#idat + 1] = data end
+        pos = pos + 12 + ln
+    end
+    eq("png.chunks", table.concat(kinds, ","), "IHDR,IDAT,IEND")
+    eq("png.width", u32(ihdr, 1), 3)
+    eq("png.height", u32(ihdr, 5), 2)
+    eq("png.depth", ihdr:byte(9), 8)
+    eq("png.colortype", ihdr:byte(10), 2)   -- 2 = RGB
+
+    -- поток zlib: если он несжатый (zlib в системе нет), проверяем пиксели
+    -- ровно теми байтами, что подали
+    local z = table.concat(idat)
+    local function inflateStored(x)
+        if x:byte(1) ~= 0x78 then return nil end
+        local i, out = 3, {}
+        while i <= #x do
+            local hdr = x:byte(i) i = i + 1
+            if math.floor(hdr / 2) % 4 ~= 0 then return nil end
+            local len = x:byte(i) + x:byte(i + 1) * 256
+            i = i + 4
+            out[#out + 1] = x:sub(i, i + len - 1)
+            i = i + len
+            if hdr % 2 == 1 then break end
+        end
+        return table.concat(out)
+    end
+    local back = inflateStored(z)
+    if back then eq("png.pixels", back, raw) else ok("png.pixels", true) end
+
+    -- ЧТЕНИЕ ПИКСЕЛЕЙ. Настоящий D3D в стенде не поднять, поэтому собираем
+    -- поддельную поверхность: указатель на таблицу методов, в ней LockRect
+    -- (13-й метод) отдаёт буфер пикселей, UnlockRect (14-й) считает вызовы.
+    local ffi = require("ffi")
+    pcall(ffi.cdef, [[typedef struct { int Pitch; void* pBits; } grnd_shot_locked_rect;]])
+    local keep, unlocks = {}, 0
+    local function fakeSurface(buf, pitch)
+        local data = ffi.new("uint8_t[?]", #buf)
+        ffi.copy(data, buf, #buf)
+        local vtable = ffi.new("void*[16]")
+        local lock = ffi.cast("int(__stdcall*)(void*, void*, const void*, unsigned long)",
+            function(_self, rect)
+                -- та же структура, что в скрипте: Pitch + указатель
+                local p = ffi.cast("grnd_shot_locked_rect*", rect)
+                p.Pitch = pitch
+                p.pBits = ffi.cast("void*", data)
+                return 0
+            end)
+        local unlock = ffi.cast("int(__stdcall*)(void*)", function() unlocks = unlocks + 1 return 0 end)
+        vtable[13] = ffi.cast("void*", lock)
+        vtable[14] = ffi.cast("void*", unlock)
+        local holder = ffi.new("void*[1]")
+        holder[0] = ffi.cast("void*", vtable)
+        keep[#keep + 1] = { lock = lock, unlock = unlock, data = data, vtable = vtable, holder = holder }
+        return ffi.cast("void*", holder)
+    end
+
+    -- A8R8G8B8 (21): в памяти B,G,R,A -> на выходе R,G,B
+    local surf = fakeSurface(string.char(1, 2, 3, 4, 5, 6, 7, 8), 8)
+    local out, wOut = PA.pngRows(surf, 21, 2, 1, nil)
+    eq("pix.bgra.w", wOut, 2)
+    eq("pix.bgra", tostring(out and out[1]), string.char(3, 2, 1, 7, 6, 5))
+    eq("pix.unlock", unlocks, 1)
+
+    -- R8G8B8 (20): байты идут как есть
+    local surf2 = fakeSurface(string.char(9, 8, 7, 6, 5, 4), 6)
+    local out2 = PA.pngRows(surf2, 20, 2, 1, nil)
+    eq("pix.rgb", tostring(out2 and out2[1]), string.char(9, 8, 7, 6, 5, 4))
+
+    -- 16-битный R5G6B5 (23): белый (0xFFFF) и красный (0xF800)
+    local surf3 = fakeSurface(string.char(0xFF, 0xFF, 0x00, 0xF8), 4)
+    local out3 = PA.pngRows(surf3, 23, 2, 1, nil)
+    eq("pix.565", tostring(out3 and out3[1]), string.char(255, 255, 255, 255, 0, 0))
+
+    -- обрезка кадра (передний буфер — весь экран, а нужен только окно игры)
+    local surf4 = fakeSurface(string.char(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), 12)
+    local out4 = PA.pngRows(surf4, 21, 3, 1, { left = 1, top = 0, right = 3, bottom = 1 })
+    eq("pix.crop", tostring(out4 and out4[1]), string.char(7, 6, 5, 11, 10, 9))
+
+    -- «перевёрнутый» кадр (pitch < 0): в памяти строки лежат снизу вверх, то
+    -- есть первый пиксель буфера — НИЖНЯЯ строка кадра (1,2,3,4 -> 3,2,1), а
+    -- верхняя строка кадра (5,6,7,8 -> 7,6,5) идёт в файл первой
+    local surf5 = fakeSurface(string.char(1, 2, 3, 4, 5, 6, 7, 8), -4)
+    local out5 = PA.pngRows(surf5, 21, 1, 2, nil)
+    eq("pix.flip.first", tostring(out5 and out5[1]), string.char(7, 6, 5))
+    eq("pix.flip.second", tostring(out5 and out5[2]), string.char(3, 2, 1))
+
+    -- неизвестный формат — понятная причина, а не падение
+    local bad, badErr = PA.pngRows(surf, 99, 2, 1, nil)
+    eq("pix.badfmt", bad, nil)
+    ok("pix.badfmt.why", tostring(badErr):find("не поддержан", 1, true) ~= nil)
+
+    -- и в самой съёмке свой PNG идёт ПЕРВЫМ, а D3DX — только запасным
+    local function cnt(needle)
+        local n, i = 0, 1
+        while true do
+            local a, b = src:find(needle, i, true)
+            if not a then break end
+            n = n + 1
+            i = b + 1
+        end
+        return n
+    end
+    -- сквозная проверка: поверхность -> PNG -> файл на диске
+    local surfW = fakeSurface(string.char(1, 2, 3, 4, 5, 6, 7, 8), 8)
+    local file = "/tmp/grnd_png_write_test.png"
+    local okW, note = PA.pngWrite(surfW, 21, 2, 1, nil, file)
+    eq("png.write.ok", okW, true)
+    ok("png.write.note", tostring(note):find("2x1", 1, true) ~= nil)
+    local fW = io.open(file, "rb")
+    local body = fW and fW:read("*a") or ""
+    if fW then fW:close() end
+    eq("png.write.sign", body:sub(1, 8), "\137PNG\r\n\26\n")
+    ok("png.write.bytes", #body > 40)
+    os.remove(file)
+
+    ok("png.used.back", cnt("paShotSelfWrite(dst[0], fmt, w, h, nil, path)") == 1)
+    ok("png.used.front", cnt("paShotSelfWrite(dst[0], D3D_A8R8G8B8,") == 1)
+end
+
 -- удаление вкладки
 eq("tab.del", PA.tabDel(2) and "yes" or "no", "yes")
 eq("tab.del.count", #PA.tabs, 1)
