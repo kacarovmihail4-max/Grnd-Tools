@@ -305,8 +305,12 @@ local function mkR(allow)
             table.insert(sliders, { id = id, ratio = ratio })
             return allow.slider or nil
         end,
+        gearButton = function(key, x, y, active)
+            table.insert(gears, { key = key, x = x, y = y })
+            return allow[key] == true
+        end,
         gear = function(x, y, col)
-            table.insert(gears, { x = x, y = y })
+            table.insert(gears, { key = "static", x = x, y = y })
         end,
     }
 end
@@ -317,17 +321,17 @@ RT.lastAct = "spawn: 3/3 (Nick7, Nick4, Nick2)"
 drawn, clicks, gears = {}, {}, {}
 local y1 = RT.page(mkR(), 10, y0, cw)
 check(type(y1) == "number" and y1 > y0, "page: y растёт")
-check(#clicks == 16,
-    "page: 16 кнопок (−, +, 9 сетки, 4 шестерёнки, tp): " .. #clicks)
+check(#clicks == 12,
+    "page: 12 кнопок (−, +, 9 сетки, tp; шестерёнки — без подложки): "
+    .. #clicks)
 check(clicks[1] and clicks[1].key == "rt_minus" and clicks[1].w == 26,
     "page: «−» слева 26×26")
 check(clicks[2] and clicks[2].key == "rt_plus", "page: «+»")
--- порядок сетки 3×3: шестерёнки — ОТДЕЛЬНЫЕ кнопки сразу за своей кнопкой
+-- порядок сетки 3×3 (шестерёнки — не кнопки, а значки кликовой зоны)
 local expect = {
     "rt_act_spawn", "rt_act_freeze", "rt_act_unfreeze",
-    "rt_act_weapon", "rt_gear_weapon", "rt_act_skin", "rt_gear_skin",
-    "rt_act_xp", "rt_act_armor", "rt_gear_armor", "rt_act_vehicle",
-    "rt_gear_vehicle", "rt_act_takeoff",
+    "rt_act_weapon", "rt_act_skin", "rt_act_xp",
+    "rt_act_armor", "rt_act_vehicle", "rt_act_takeoff",
 }
 local orderOk = true
 for i = 1, #expect do
@@ -335,12 +339,20 @@ for i = 1, #expect do
         orderOk = false
     end
 end
-check(orderOk, "page: сетка 3×3 + шестерёнки за кнопками")
-check(clicks[16] and clicks[16].key == "rt_tp" and clicks[16].w == cw
-    and clicks[16].label == "Телепорт всех к себе",
+check(orderOk, "page: сетка 3×3 в порядке макета")
+check(clicks[12] and clicks[12].key == "rt_tp" and clicks[12].w == cw
+    and clicks[12].label == "Телепорт всех к себе",
     "page: широкая «Телепорт всех к себе» на всю ширину")
+-- отступ: широкая кнопка чётко НИЖЕ сетки (последний ряд кончается на
+-- y0+4+26+10+94; кнопка — ещё через 12 px)
+local gridEnd = y0 + 4 + 26 + 10 + 3 * (26 + 8) - 8
+check(clicks[12] and clicks[12].y >= gridEnd + 12 - 0.01
+    and clicks[12].y <= gridEnd + 20,
+    "page: «Телепорт» сдвинут ниже сетки (y="
+    .. tostring(clicks[12] and clicks[12].y) .. ")")
 -- ровная сетка: все 9 кнопок одной ширины
-local actIdx = { 3, 4, 5, 6, 8, 10, 11, 13, 15 }
+local actIdx = {}
+for i = 3, 11 do actIdx[#actIdx + 1] = i end
 local bw0 = clicks[actIdx[1]] and clicks[actIdx[1]].w
 local evenOk = bw0 and bw0 > 40
 for i = 1, #actIdx do
@@ -350,21 +362,23 @@ for i = 1, #actIdx do
     end
 end
 check(evenOk, "page: все 9 кнопок одной ширины")
--- шестерёнки ВЫНЕСЕНЫ за кнопки: иконка правее края своей кнопки
-check(#gears == 4, "page: 4 шестерёнки (оружие/скин/броня/транспорт)")
-local gearBtnIdx = { 7, 9, 12, 14 }
+-- шестерёнки: БЕЗ подложки (не в списке кнопок), значок за краем кнопки
+local gearKeys = {}
+for i = 1, #gears do gearKeys[i] = gears[i].key end
+check(table.concat(gearKeys, ",")
+    == "rt_gear_weapon,rt_gear_skin,rt_gear_armor,rt_gear_vehicle",
+    "page: 4 шестерёнки без подложки: " .. table.concat(gearKeys, ","))
+local gearBtnIdx = { 6, 7, 9, 10 } -- weapon, skin, armor, vehicle
 local gearOut = true
 for i = 1, 4 do
-    local gb, ic = clicks[gearBtnIdx[i]], gears[i]
-    -- квадрат шестерёнки: правый край кнопки + 8
-    if gb == nil or ic == nil
-        or math.abs(gb.x - (clicks[gearBtnIdx[i] - 1].x
-            + clicks[gearBtnIdx[i] - 1].w + 8)) > 0.01
-        or math.abs(ic.x - (gb.x + gb.w / 2)) > 0.01 then
+    local btn, ic = clicks[gearBtnIdx[i]], gears[i]
+    if btn == nil or ic == nil
+        or math.abs(ic.x - (btn.x + btn.w + 23)) > 0.01
+        or math.abs(ic.y - (btn.y + 13)) > 0.01 then
         gearOut = false
     end
 end
-check(gearOut, "page: шестерёнки за кнопками (не поверх)")
+check(gearOut, "page: значок шестерёнки за краем своей кнопки")
 local joined = {}
 for i = 1, #drawn do joined[i] = drawn[i].t end
 joined = table.concat(joined, "\n")

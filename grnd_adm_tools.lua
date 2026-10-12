@@ -1,6 +1,9 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.216"
+GRND_SCRIPT_VERSION = "1.19.217"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.217 — «ВЫДАЧА В РАДИУСЕ»: шестерёнка без подложки (только значок,
+--   hover меняет его цвет — как у шестерёнок панели), широкая кнопка
+--   «Телепорт всех к себе» сдвинута ниже сетки (отступ 12 px).
 -- v1.19.216 — «ВЫДАЧА В РАДИУСЕ» по правкам: шестерёнки вынесены ЗА кнопки
 --   (отдельные квадраты рядом с действием, не поверх), сетка ровная — все
 --   9 кнопок одной ширины, длинные подписи не вылезают; строка
@@ -30098,6 +30101,9 @@ local function drawRadiusView(ctx, cx, y, cw)
         slider = function(id, sx, sy, sw, sh, ratio)
             return grndUiSlider(ctx, id, sx, sy, sw, sh, ratio)
         end,
+        gearButton = function(key, gx, gy, active)
+            return gearButton(ctx, key, gx, gy, active)
+        end,
         gear = function(gx, gy, col) gearIcon(ctx, gx, gy, col) end,
     }, cx, y, cw)
     RTm.visible = false
@@ -38620,16 +38626,21 @@ do
                 RT.doAction(a.id)
             end
             if a.gear then
-                local gx = bx + bw + gap
-                if R.button("rt_gear_" .. a.id, gx, by, gearW, abh, "", {}) then
-                    RT.gearClick(a)
-                end
-                if type(R.gear) == "function" then
-                    R.gear(gx + gearW / 2, by + abh / 2, gearCol)
+                -- v1.19.217: подложки под значком нет — та же шестерёнка
+                -- панели (gearButton): кликовая зона 30×30, hover меняет
+                -- только цвет значка.
+                local gx, gy = bx + bw + gap + 15, by + abh / 2
+                if type(R.gearButton) == "function" then
+                    local clicked =
+                        R.gearButton("rt_gear_" .. a.id, gx, gy, false)
+                    if clicked then RT.gearClick(a) end
+                elseif type(R.gear) == "function" then
+                    R.gear(gx, gy, gearCol)
                 end
             end
         end
         y = y + 3 * (abh + gap) - gap
+        y = y + 12  -- v1.19.217: широкий отступ, кнопка чётко ниже сетки
 
         -- ---------- широкая кнопка ----------
         if R.button("rt_tp", cx, y, cw, abh, RT.wide.label,
