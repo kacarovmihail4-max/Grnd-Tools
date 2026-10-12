@@ -192,6 +192,25 @@ local sampGetPlayerNickname = nickOf
 local sampGetLocalPlayerId = myId
 local sampSendChat = function(cmd) queued[#queued+1] = "raw:" .. tostring(cmd) end
 
+-- ---------- вывод в moonloader.log ----------
+-- Модуль печатает диагностику скриншота обычным print — MoonLoader пишет его
+-- в moonloader.log. Перехватываем, чтобы проверить строки стендом.
+local shotLog = {}
+local function logPrint(...)
+    local parts = {}
+    for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+    shotLog[#shotLog + 1] = table.concat(parts, " ")
+end
+local function lastLog()
+    return tostring(shotLog[#shotLog] or "")
+end
+local function logHas(needle)
+    for i = #shotLog, math.max(1, #shotLog - 40), -1 do
+        if tostring(shotLog[i]):find(needle, 1, true) then return shotLog[i] end
+    end
+    return nil
+end
+
 -- ---------- загрузка блока ----------
 local chunk = "return function(QR, GRND_CONFIG, GRND_LOG, _G, os, string, table, math, pcall, print, type, tostring, tonumber,\n"
     .. "  theme, field, button, chip, lineH, fit, wrapW, bufText, utf8Len, clampText, oneLine, utf, trim, byteCut, utf8Cut,\n"
@@ -201,7 +220,7 @@ local chunk = "return function(QR, GRND_CONFIG, GRND_LOG, _G, os, string, table,
 -- ВАЖНО: чанк сам ВОЗВРАЩАЕТ тело-функцию, её и надо вызвать.
 local makeBody = assert(loadstring(chunk, "@punauto_module"))
 local body = makeBody()
-body(QR, GRND_CONFIG, GRND_LOG, _G, os, string, table, math, pcall, print, type, tostring, tonumber,
+body(QR, GRND_CONFIG, GRND_LOG, _G, os, string, table, math, pcall, logPrint, type, tostring, tonumber,
    theme, field, button, chip, lineH, fit, wrapW, bufText, utf8Len, clampText, oneLine, utf, trim, byteCut, utf8Cut,
    grndLowerUtf, grndUtf8Text, grndSessionReady, grndRepQueue, grndAnsiText,
    sampIsPlayerConnected, sampGetPlayerNickname, sampGetLocalPlayerId, sampSendChat)
@@ -576,6 +595,11 @@ do
     eq("self.saved.path", PA.shotLast, grabbed[1])
     ok("self.saved.log", tostring(logged[#logged]):find("сохранён", 1, true) ~= nil)
     ok("self.saved.toast", tostring(toasts[#toasts]):find("свой кадр", 1, true) ~= nil)
+    -- то же самое уходит в moonloader.log
+    ok("log.way", logHas("способ: свой кадр (D3D9)") ~= nil)
+    ok("log.grab", logHas("снимаю кадр:") ~= nil)
+    ok("log.saved", logHas("СОХРАНЕНО:") ~= nil)
+    ok("log.saved.path", logHas(grabbed[1]) ~= nil)
 
     -- съёмка «удалась», но файла нет — в чат тоже не уходит «сохранён»
     PA.shotGrab = function() return true end                  -- врём: файл не пишем
@@ -627,6 +651,9 @@ do
     eq("self.both.fail", PA.shotFail, true)
     ok("self.both.toast", tostring(toasts[#toasts]):find("не появился", 1, true) ~= nil)
     ok("self.both.log", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
+    ok("log.fail", logHas("НЕ СОХРАНЕНО:") ~= nil)
+    ok("log.fail.reason", logHas("причина:") ~= nil)
+    ok("log.self.fail", logHas("свой кадр не вышел:") ~= nil)
 
     -- обработчик кадра не ответил (свёрнутая игра, чужая сборка MoonLoader):
     -- тик не висит, а просит запасной путь и ждёт файл ещё раз
@@ -656,6 +683,7 @@ do
     eq("self.nowrite.take", tookOk, true)
     ok("self.nowrite.reason", tostring(tookPlan and tookPlan.note):find("не вышел", 1, true) ~= nil)
     ok("self.nowrite.note", tostring(tookPlan and tookPlan.note):find("записи", 1, true) ~= nil)
+    ok("log.nowrite", logHas("свой кадр не готов:") ~= nil)
     shotStub.makeFile = false
 
     PA.shotDir = ""
@@ -902,7 +930,7 @@ do
         queueCmd = function() return true end }
     QR2.punAuto = {}
     local body2 = assert(loadstring(chunk, "@punauto_module2"))()
-    body2(QR2, GRND_CONFIG, GRND_LOG, _G, os, string, table, math, pcall, print, type, tostring, tonumber,
+    body2(QR2, GRND_CONFIG, GRND_LOG, _G, os, string, table, math, pcall, logPrint, type, tostring, tonumber,
         theme, field, button, chip, lineH, fit, wrapW, bufText, utf8Len, clampText, oneLine, utf, trim, byteCut, utf8Cut,
         grndLowerUtf, grndUtf8Text, grndSessionReady, grndRepQueue, grndAnsiText,
         sampIsPlayerConnected, sampGetPlayerNickname, sampGetLocalPlayerId, sampSendChat)
@@ -921,6 +949,16 @@ do
     eq("shot2.fail", P2.shotFail, true)
     ok("shot2.reason", tostring(P2.shotLast):find("нет Screenshot.asi", 1, true) ~= nil)
     ok("shot2.no.claim", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
+    ok("log.shot2.fail", logHas("НЕ СОХРАНЕНО:") ~= nil)
+    ok("log.shot2.fallback", logHas("запасной путь не сработал:") ~= nil)
+    -- в логе не должно быть многострочной «простыни» require
+    for i = 1, #shotLog do
+        if tostring(shotLog[i]):find("init.lua", 1, true) then
+            ok("log.shot2.nostack", false)
+            break
+        end
+    end
+    ok("log.shot2.nostack", true)
 
     -- 2. F8 нажали, но проверить негде — тоже без «сохранено»
     _G.setVirtualKeyDown = function() return true end

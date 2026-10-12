@@ -1,6 +1,17 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.206"
+GRND_SCRIPT_VERSION = "1.19.207"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.207 — правки по замечаниям (кадр выдачи всё ещё не сохранялся):
+--   1) вся диагностика скриншота пишется в moonloader.log (moonloader\moonloader.log)
+--      строками «[GRND] скриншот: …»: способ съёмки, путь, причина отказа своего
+--      кадра, ошибки D3D с кодами HRESULT и итог (СОХРАНЕНО/НЕ СОХРАНЕНО).
+--      Повторы подряд не печатаются, многострочные ошибки require схлопываются;
+--   2) добавлен запасной путь съёмки — передний буфер (GetFrontBufferData,
+--      снимок клиентской части окна игры) на случай, если драйвер не отдаёт
+--      задний буфер (сглаживание, ENB): так делают проверенные моды;
+--   3) свой кадр не снимается в свёрнутой игре (иначе кадр был бы белым);
+--   4) хук кадра перепроверяется перед каждой съёмкой — если модуль автопилота
+--      поднялся раньше рендера, хук подключается сразу, как только тот появится.
 -- v1.19.206 — правки по замечаниям (кадр выдачи опять не сохранялся):
 --   1) Кадр снимается в кадре ImGui (setupRender), а не по событию
 --      onD3DPresent: его поддерживают не все сборки MoonLoader, и именно
@@ -36040,6 +36051,17 @@ do
     local SHOT_WAIT = 5          -- сколько секунд ждём файл после запроса
     local SHOT_SEP = package.config:sub(1, 1)
 
+    -- Диагностика в moonloader.log. По этим строкам видно, что именно не вышло,
+    -- даже если журнал чата недоступен или его неудобно смотреть: игру
+    -- перезапускать не нужно, лог открывается в блокноте
+    -- (moonloader\moonloader.log). Повторы подряд не печатаем.
+    function PA.logFile(msg)
+        local line = "[GRND] скриншот: " .. tostring(msg)
+        if PA.logFileLast == line then return end
+        PA.logFileLast = line
+        if type(print) == "function" then pcall(print, line) end
+    end
+
     -- Ошибку require («no file package.preload[lib.screenshot]…») нельзя тащить
     -- в журнал целиком: это три строки шума. Оставляем суть, одна строка.
     -- LuaJIT-FFI есть в MoonLoader всегда: им и работаем с D3D9/Screenshot.asi
@@ -36667,7 +36689,7 @@ do
         PA.shotJob = nil
         local okC, okS, why = pcall(PA.shotGrab, job.path)
         if okC and okS then
-            PA.shotJobResult = { ok = true, path = job.path }
+            PA.shotJobResult = { ok = true, path = job.path, how = tostring(why or "") }
             return
         end
         local reason = (not okC) and ("ошибка: " .. tostring(okS)) or tostring(why)
@@ -36676,6 +36698,7 @@ do
         -- должны идти из своего потока, а не из потока отрисовки.
         PA.shotJobResult = { fallback = true, path = job.path,
             why = "свой кадр не вышел: " .. reason }
+        PA.logFile("свой кадр не вышел: " .. tostring(reason))
     end
 
     PA.shotGrab = paShotGrabReal     -- стенд может подменить саму съёмку
@@ -36697,6 +36720,11 @@ do
 
     -- Готов ли свой кадр: нужен хук кадра, d3dx9 и живое устройство.
     PA.shotSelfReady = function()
+        -- если модуль поднялся раньше рендера, хук мог не подключиться — пробуем
+        -- ещё раз (функция рендера идемпотентная)
+        if PA.shotFrameHook ~= true and type(_G.grndShotHookInstall) == "function" then
+            pcall(_G.grndShotHookInstall)
+        end
         if type(PA.shotGrab) ~= "function" then
             PA.shotSelfWhy = "нет функции съёмки"
             return false
@@ -36721,7 +36749,10 @@ do
     --   false, почему — запрос даже не ушёл.
     -- ВНИМАНИЕ: PA.shot — тумблер (bool), поэтому функция зовётся shotTake.
     function PA.shotTake(nick)
-        if PA.shot == false then return false, "выключено" end
+        if PA.shot == false then
+            PA.logFile("тумблер выключен — кадр не делаем")
+            return false, "выключено"
+        end
         local plan = { nick = tostring(nick or ""), expect = nil, note = nil,
             paths = {}, dirs = {}, afterT = (os.time() or 0) - 2 }
         -- Путь 1 (v1.19.205): свой кадр через D3D9. Доустанавливать ничего не
@@ -36735,13 +36766,19 @@ do
                 plan.paths = { target }
                 plan.expect = target
                 plan.note = "свой кадр (D3D9)"
+                PA.logFile("способ: свой кадр (D3D9), файл " .. tostring(target))
                 return true, plan
             end
             plan.selfWhy = whySelf
+            PA.logFile("свой кадр не готов: " .. tostring(whySelf))
         end
         -- Путь 2: плагин Screenshot.asi, а без него — штатная F8.
         local okA, whyA = paShotStartAlt(plan)
-        if not okA then return false, whyA end
+        if not okA then
+            PA.logFile("запасной путь не сработал: " .. tostring(whyA))
+            return false, whyA
+        end
+        PA.logFile("способ: " .. tostring(plan.note) .. ", ждём файл " .. tostring(plan.expect))
         if plan.selfWhy then
             plan.note = tostring(plan.note or "") .. " · свой кадр не вышел: " .. tostring(plan.selfWhy)
         end
@@ -36762,12 +36799,16 @@ do
         PA.shotFail = (not okFlag) or nil
         local prefix = okFlag and "скриншот сохранён: " or "скриншот не сохранён: "
         local tail = ""
+        PA.logFile((okFlag and "СОХРАНЕНО: " or "НЕ СОХРАНЕНО: ") .. tostring(full or short))
         if not okFlag then
             -- по строке в журнале сразу видно сборку и почему не вышло
             tail = " (v" .. tostring(GRND_SCRIPT_VERSION or "?")
                 .. (PA.shotSelfWhy and (", свой кадр: " .. tostring(PA.shotSelfWhy)) or "") .. ")"
         end
         PA.log(prefix .. tostring(full or short) .. tail)
+        if not okFlag then
+            PA.logFile("причина: " .. tostring(full or short) .. tail)
+        end
         if PA.notify then
             QR.toast("Автоскриншот: " .. tostring(short), okFlag and "ok" or "warn", okFlag and 3.4 or 5)
         end
@@ -36797,7 +36838,10 @@ do
                     -- недолго, а потом подстрахуемся плагином или F8
                     r2.untilAt = now + (r2.job and SHOT_JOB_WAIT or SHOT_WAIT)
                     PA.shotWait = r2
-                    if r2.job and r2.self then PA.shotJob = { path = r2.self, plan = r2 } end
+                    if r2.job and r2.self then
+                        PA.shotJob = { path = r2.self, plan = r2 }
+                        PA.logFile("снимаю кадр: " .. tostring(r2.self))
+                    end
                 else
                     paShotReport(false, tostring(r2), tostring(r2))
                 end
@@ -36817,6 +36861,7 @@ do
                         PA.shotWait, PA.shotJob = nil, nil
                         if paShotExists(J.path) then
                             paShotReport(true, (J.path:match("[^/\\]+$") or J.path) .. "  (свой кадр)", J.path)
+                            PA.logFile("кадр снят: " .. tostring(J.how or ""))
                         else
                             paShotReport(false, "файл не появился после сохранения",
                                 tostring(J.path) .. " — D3DX отчитался об успехе, файла нет")
@@ -48319,7 +48364,12 @@ function grndMainBody()
                 return false
             end
             _G.grndShotHookInstall = installShotHook
-            installShotHook()
+            if installShotHook() then
+                -- видно в moonloader.log: кадр вообще может сниматься в этой сборке
+                if type(print) == "function" then
+                    pcall(print, "[GRND] скриншот: хук кадра подключён (" .. tostring(imKind) .. ")")
+                end
+            end
             local function safeDraw()
                 local ok, res = pcall(drawAll)
                 if ok then return res end
