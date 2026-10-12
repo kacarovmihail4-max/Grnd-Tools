@@ -117,26 +117,43 @@ local tab3 = { trigger = "дм{ID}", mode = "exact" }
 eq("exact-var.hit", PA_FN.matchTab(tab3, "это дм"), "дм")
 eq("exact-var.miss", PA_FN.matchTab(tab3, "дмитрий"), nil)
 
-eq("cmd.autoId", PA_FN.buildCmd("/mute 60 флуд",
-    { nick = "Nik_Name", pid = 5, msg = "дм", mynick = "Mixa" }, "дм", true),
+-- слово в кавычках не срабатывает и в режиме «в любом месте» среди нескольких
+-- триггеров: цитата не должна «подставить» соседний триггер
+eq("q.list.first", PA_FN.matchTab(tab, '«дм», dm'), "dm")
+
+-- v1.19.212: ПЕРЕМЕННЫХ БОЛЬШЕ НЕТ. Команда уходит ровно как написана, а ID
+-- игрока подставляется САМ сразу после имени команды.
+eq("cmd.id", PA_FN.buildCmd("/mute 60 2.1 ОП", { nick = "Nik_Name", pid = 5 }),
+    "/mute 5 60 2.1 ОП")
+eq("cmd.id.only", PA_FN.buildCmd("/ban", { pid = 7 }), "/ban 7")
+eq("cmd.id.spaces", PA_FN.buildCmd("  /jail   10   афк  ", { pid = 9 }), "/jail 9 10 афк")
+eq("cmd.verbatim", PA_FN.buildCmd("/ban Nik_Name 3 дм", { nick = "Nik_Name", pid = 7 }),
+    "/ban 7 Nik_Name 3 дм")
+-- {…} из настроек прошлых версий в чат не уходят (переменных больше нет)
+eq("cmd.oldvar", PA_FN.buildCmd("/mute {ID} 60 флуд", { nick = "N", pid = 5 }),
     "/mute 5 60 флуд")
-eq("cmd.subst", PA_FN.buildCmd("/mute {ID} 60 флуд",
-    { nick = "Nik_Name", pid = 5, msg = "дм" }, "дм", true),
-    "/mute 5 60 флуд")
-eq("cmd.nick", PA_FN.buildCmd("/ban {ник} 3 дм", { nick = "Nik_Name", pid = 5, msg = "дм" }, "дм", true),
-    "/ban Nik_Name 3 дм")
-eq("cmd.noauto", PA_FN.buildCmd("/mute 60 флуд", { nick = "N", pid = 5, msg = "дм" }, "дм", false),
-    "/mute 60 флуд")
--- без тумблера «подставлять ID» команда уходит ровно как написана, даже если
--- внутри есть ник (досочинённый ID испортил бы такую команду)
-eq("cmd.verbatim", PA_FN.buildCmd("/ban Nik_Name 3 дм",
-    { nick = "Nik_Name", pid = 7, msg = "дм" }, "дм", false), "/ban Nik_Name 3 дм")
-eq("cmd.unknown", PA_FN.buildCmd("/mute {ID} {неизв} 60", { nick = "N", pid = 5 }, "дм", true),
-    "/mute 5 60")
-eq("cmd.trigger", PA_FN.buildCmd("/say Найдено: {триггер}", { nick = "N", pid = 5 }, "дм", true),
-    "/say Найдено: дм")
-eq("cmd.pidEmpty", PA_FN.buildCmd("/mute {ник} 60", { nick = "", pid = "" }, "дм", true),
-    "/mute 60")
+eq("cmd.oldvar2", PA_FN.buildCmd("/mute {ник} 60", { nick = "N", pid = 5 }), "/mute 5 60")
+eq("cmd.oldvar.only", PA_FN.buildCmd("{ID}", { pid = 5 }), "")
+eq("cmd.pidEmpty", PA_FN.buildCmd("/mute 60", { nick = "", pid = "" }), "/mute 60")
+eq("cmd.empty", PA_FN.buildCmd("", { pid = 5 }), "")
+eq("cmd.spaces", PA_FN.buildCmd("   ", { pid = 5 }), "")
+
+-- ---------- триггер В КАВЫЧКАХ не считается (v1.19.212) ----------
+-- «он сказал "дм"» — цитата, а не нарушение; кавычки любые, апостроф внутри
+-- слова («don't») кавычкой не считается.
+eq("q.double", PA_FN.matchTab(tab, 'он сказал "дм" и всё'), nil)
+eq("q.single", PA_FN.matchTab(tab, "он сказал 'дм'"), nil)
+eq("q.guillemet", PA_FN.matchTab(tab, "он сказал «дм»"), nil)
+eq("q.curly", PA_FN.matchTab(tab, "он сказал “дм”"), nil)
+eq("q.curly.low", PA_FN.matchTab(tab, "он сказал „дм”"), nil)
+eq("q.awt", PA_FN.matchTab(tab, "он сказал ❝дм❞"), nil)
+eq("q.only", PA_FN.matchTab(tab, "«дм»"), nil)
+eq("q.latin", PA_FN.matchTab(tab, 'he said "dm"'), nil)
+eq("q.outside", PA_FN.matchTab(tab, 'он сказал "привет" а это дм'), "дм")
+eq("q.before", PA_FN.matchTab(tab, 'дм — а он "не дм"'), "дм")
+eq("q.apostrophe", PA_FN.matchTab(tab, "don't dm me"), "dm")
+eq("q.unpaired", PA_FN.matchTab(tab, 'он сказал "дм'), "дм")
+eq("q.exact", PA_FN.matchTab(tab2, "«дм»"), nil)
 
 print(string.format("--- логика автопилота: %d/%d ok ---", total - fails, total))
 os.exit(fails == 0 and 0 or 1)

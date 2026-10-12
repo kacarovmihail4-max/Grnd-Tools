@@ -1,6 +1,24 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.211"
+GRND_SCRIPT_VERSION = "1.19.212"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.212 — дизайн страницы «Наказания» → «Автопилот» и разбор кавычек:
+--   1) УБРАНО с страницы: выбор «Проверка» (режим проверки целиком),
+--      «Проверка строки (образец строки чата)» с кнопкой «Разобрать», подсказка
+--      «Ищем в тексте строки…», «Команда после», «Последние срабатывания» и
+--      нижняя строка «вкладка включена / автопилот включён». Стало короче и
+--      ровнее: слева — триггеры, команда и скриншот, справа — режим поиска и
+--      тумблеры;
+--   2) «Команда (уйдёт в чат при срабатывании)» → «Команда наказания», пример в
+--      поле — «/mute 60 2.1 ОП»;
+--   3) ПЕРЕМЕННЫЕ КОМАНДЫ УДАЛЕНЫ ({ID}, {ник}, {текст}, {триггер}, {мой_ник},
+--      {время}): команда уходит ровно как написана, а ID игрока подставляется
+--      САМ сразу после имени команды («/mute 60 2.1 ОП» → «/mute 7 60 2.1 ОП»).
+--      Отдельный тумблер «ID без переменных» больше не нужен — подстановка
+--      работает всегда;
+--   4) триггер В КАВЫЧКАХ не считается: «он сказал "дм"» — цитата, а не
+--      нарушение. Кавычки любые (« » „ “ ” ‘ ’ ‚ ‛ ❝ ❞ " '), апостроф внутри
+--      слова («don't») кавычкой не считается. На странице об этом ничего не
+--      пишется.
 -- v1.19.211 — правки по замечаниям (сохраняется, но тост говорил «не сохранён»):
 --   1) ЗАДЕРЖЕК БОЛЬШЕ НЕТ. Убраны и настройки, которыми они задавались
 --      («Пауза между выдачами, сек» и «Повтор игроку, сек»): раньше вторая
@@ -30846,15 +30864,13 @@ local QR = {
     punAuto = {
         loaded = false,    -- файл grnd_punauto.cfg прочитан
         on = false,        -- тумблер «Автопилот»
-        test = false,      -- режим проверки: строки разбираем, но НЕ отправляем
-        tabs = nil,        -- вкладки: { {trigger=, mode=, cmd=, after=, on=}, … }
+        tabs = nil,        -- вкладки: { {trigger=, mode=, cmd=}, … }
         sel = 1,           -- выбранная вкладка
         skipSelf = true,   -- не наказывать себя
         skipAdmins = true, -- не наказывать администраторов (список чекера)
         watchSay = true,   -- следить за обычным чатом
         watchShout = true, -- следить за криком
         watchOoc = true,   -- следить за ООС «(( … ))»
-        autoId = true,     -- подставлять ID, если в команде нет {ID}
         notify = true,     -- показывать уведомление о выдаче
         logOn = true,      -- писать строку в журнал «Автопилот наказаний»
         fired = 0,         -- сколько раз выдал
@@ -30862,8 +30878,6 @@ local QR = {
         lastCheck = nil,   -- чем закончилась последняя проверка (диагностика)
         lastLine = nil,    -- последняя разобранная строка (диагностика)
         lastLog = nil,     -- последняя запись журнала (диагностика)
-        testOut = nil,     -- результат «Проверки строки» на странице
-        feed = {},         -- последние срабатывания (до 6) — для страницы
         -- v1.19.211: ни пауз между выдачами, ни кулдауна на игрока в модуле
         -- больше НЕТ — каждая подходящая строка чата выдаёт наказание сразу.
         -- Осталась только защита от двойного разбора ОДНОЙ строки: серверные
@@ -35447,15 +35461,20 @@ end
 --  наказание не ушло не тому игроку.
 --
 --  Предохранители: тумблер «не трогать себя», «не трогать администраторов»
---  (по списку чекера «Админы в сети»), пауза между выдачами, повтор одному
---  игроку не чаще N секунд и РЕЖИМ ПРОВЕРКИ — он разбирает строки, пишет
---  в журнал и уведомление, что ушло бы, но в чат НИЧЕГО не отправляет.
+--  (по списку чекера «Админы в сети») и выбор каналов чата. Ни пауз, ни
+--  кулдаунов, ни режима проверки в v1.19.212 нет: каждая подходящая строка
+--  выдаёт наказание сразу.
+--
+--  КОМАНДА НАКАЗАНИЯ — без переменных: что написали, то и уйдёт, а ID игрока
+--  подставляется сам сразу после имени команды («/mute 60 2.1 ОП» →
+--  «/mute 7 60 2.1 ОП»).
 --
 --  Конфиг — общий config.json, секция punishAuto (домен grnd_punauto):
---  on / test / sel / pause / cd / skipSelf / skipAdmins / watchSay /
---  watchShout / watchOoc / autoId / notify / logOn / t1_trigger / t1_mode /
---  t1_cmd / t1_after / t1_on / …  Вкладки пишутся по порядку, ключи читаются
---  по одному — лишнего счётчика в файле нет.
+--  on / sel / skipSelf / skipAdmins / watchSay / watchShout / watchOoc /
+--  notify / logOn / t1_trigger / t1_mode / t1_cmd / …  Вкладки пишутся по
+--  порядку, ключи читаются по одному — лишнего счётчика в файле нет.
+--  Ключи прошлых версий (test / pause / cd / autoId / t*_after / t*_on)
+--  просто игнорируются.
 --
 --  Локальные имена живут в do-блоке (в функции Lua не больше 200 локальных),
 --  логика разбора помечена якорями GRND_PUNAUTO_LOGIC_* — её гоняет стенд
@@ -35470,8 +35489,6 @@ do
     local TRIG_CAP  = MAX_PTRIG * 2 + 1
     local MAX_PCMD  = 244      -- символов в «Команде»
     local CMD_CAP   = MAX_PCMD * 2 + 1
-    local MAX_PAFT  = 244      -- символов в «Команде после»
-    local AFT_CAP   = MAX_PAFT * 2 + 1
     local MAX_PTABS = 15       -- сколько вкладок можно завести
     local CMD_BYTES = 120      -- у строки чата SA-MP лимит 128 байт
     -- v1.19.211: пауз между выдачами и кулдауна на игрока больше НЕТ: каждая
@@ -35562,13 +35579,83 @@ do
         local len = (b >= 0xF0 and 4) or (b >= 0xE0 and 3) or (b >= 0xC0 and 2) or 1
         return s:sub(pos, pos + len - 1)
     end
+    -- ---------- кавычки (v1.19.212) ----------
+    -- Триггер В КАВЫЧКАХ — это цитата, а не нарушение: «он сказал "дм"»
+    -- наказывать не за что. Поэтому совпадение внутри кавычек не считается.
+    -- Кавычки считаем ЛЮБЫЕ (открывающая — закрывающая одной семьи):
+    --   " '   « »   „ “ ‟ ”   ‚ ‘ ‛ ’   ❝ ❞
+    -- Одинарный апостроф внутри слова («don't») кавычкой не считается.
+    local PA_QT = {}
+    local function paQtAdd(chars, kind, dir)
+        for i = 1, #chars do PA_QT[chars[i]] = { kind = kind, dir = dir } end
+    end
+    paQtAdd({ '"' }, 1, 3)                          -- и открывает, и закрывает
+    paQtAdd({ "'" }, 2, 3)
+    paQtAdd({ "«" }, 1, 1) paQtAdd({ "»" }, 1, 2)  -- ёлочки
+    paQtAdd({ "“", "„", "❝" }, 1, 1)               -- двойные открывающие
+    paQtAdd({ "”", "‟", "❞" }, 1, 2)               -- двойные закрывающие
+    paQtAdd({ "‘", "‚" }, 2, 1)                    -- одинарные открывающие
+    paQtAdd({ "’", "‛" }, 2, 2)                    -- одинарные закрывающие
+
+    -- Отрезки текста, лежащие ВНУТРИ кавычек (байтовые позиции включительно).
+    local function paQuoteSpans(s)
+        if s == "" then return nil end
+        local spans, open = nil, {}
+        local i = 1
+        while i <= #s do
+            local b = s:byte(i) or 0
+            local len = (b >= 0xF0 and 4) or (b >= 0xE0 and 3) or (b >= 0xC0 and 2) or 1
+            local ch = s:sub(i, i + len - 1)
+            local q = PA_QT[ch]
+            if q then
+                -- апостроф внутри слова — часть слова, а не кавычка
+                local skip = (q.kind == 2 and q.dir == 3)
+                    and paWordChar(paCharBefore(s, i)) and paWordChar(paCharAfter(s, i + len))
+                if not skip then
+                    if q.dir == 1 then
+                        open[#open + 1] = { kind = q.kind, pos = i, ch = ch }
+                    elseif q.dir == 2 then
+                        local top = open[#open]
+                        if top and top.kind == q.kind then
+                            table.remove(open)
+                            spans = spans or {}
+                            spans[#spans + 1] = { a = top.pos, b = i + len - 1 }
+                        end
+                    else
+                        local top = open[#open]
+                        if top and top.kind == q.kind and top.ch == ch then
+                            table.remove(open)
+                            spans = spans or {}
+                            spans[#spans + 1] = { a = top.pos, b = i + len - 1 }
+                        else
+                            open[#open + 1] = { kind = q.kind, pos = i, ch = ch }
+                        end
+                    end
+                end
+            end
+            i = i + len
+        end
+        return spans
+    end
+
+    local function paInsideQuotes(spans, a, b)
+        if not spans then return false end
+        for i = 1, #spans do
+            if spans[i].a < a and spans[i].b >= b then return true end
+        end
+        return false
+    end
+
+    -- Найти слово триггера ОТДЕЛЬНЫМ словом и ВНЕ кавычек.
     local function paFindWord(low, word)
         if word == "" then return nil end
+        local spans = paQuoteSpans(low)
         local start = 1
         while true do
             local a, b = low:find(word, start, true)
             if not a then return nil end
-            if not paWordChar(paCharBefore(low, a)) and not paWordChar(paCharAfter(low, b + 1)) then
+            if not paWordChar(paCharBefore(low, a)) and not paWordChar(paCharAfter(low, b + 1))
+                and not paInsideQuotes(spans, a, b) then
                 return a, b
             end
             start = a + 1
@@ -35686,6 +35773,7 @@ do
     end
 
     -- Подошёл ли текст строки к вкладке? Возвращает найденное слово или nil.
+    -- Слово в кавычках не считается (v1.19.212): «он сказал "дм"» — цитата.
     function PA_FN.matchTab(tab, msg)
         local text = paOne(paPlain(msg))
         if text == "" then return nil end
@@ -35703,42 +35791,24 @@ do
     end
 
     -- ---------- команда ----------
-    -- Подстановки: {ID}/{ид}, {ник}, {текст}, {триггер}, {мой_ник}, {время}.
-    -- Команда уходит РОВНО так, как её написали: без переменных ничего не
-    -- досочиняется. Переменные ({ID}, {ник}, …) подставляются на месте.
-    -- Отдельный тумблер «подставлять ID» (autoId) — для тех, кому удобно
-    -- писать «/mute 60 флуд»: тогда ID встаёт сразу после имени команды
-    -- («/mute 5 60 флуд»), но только если переменных в строке нет вообще,
-    -- иначе можно было бы испортить команду с ником внутри.
-    function PA_FN.buildCmd(cmd, info, trigger, autoId)
-        local s = tostring(cmd or "")
+    -- v1.19.212: ПЕРЕМЕННЫХ БОЛЬШЕ НЕТ — ни {ID}, ни {ник}, ни {текст}.
+    -- Команда уходит ровно так, как её написали, а ID игрока подставляется САМ
+    -- сразу после имени команды:
+    --     «/mute 60 2.1 ОП»  ->  «/mute 7 60 2.1 ОП»
+    -- Раньше подстановка зависела от тумблера «ID без переменных»; теперь она
+    -- работает всегда — иначе команде неоткуда взять игрока.
+    function PA_FN.buildCmd(cmd, info)
+        local s = paOne(tostring(cmd or ""))
+        -- {…} из настроек прошлых версий («/mute {ID} 60 флуд») в чат не уходят:
+        -- переменных больше нет, а фигурные скобки сервер не поймёт
+        s = paOne((s:gsub("%b{}", " ")))
         if s == "" then return "" end
         info = (type(info) == "table") and info or {}
-        local nick = tostring(info.nick or "")
         local pid = tostring(info.pid or "")
-        local msg = tostring(info.msg or "")
-        local my = tostring(info.mynick or "")
-        local now = os.date and os.date("%H:%M") or ""
-        local hadVar = s:find("%b{}") ~= nil
-        local subs = {
-            { "{ID}", pid }, { "{ид}", pid }, { "{id}", pid },
-            { "{ник}", nick }, { "{nick}", nick },
-            { "{текст}", msg }, { "{msg}", msg },
-            { "{триггер}", tostring(trigger or "") }, { "{trigger}", tostring(trigger or "") },
-            { "{мой_ник}", my }, { "{mynick}", my },
-            { "{время}", now }, { "{time}", now },
-        }
-        for i = 1, #subs do
-            local k, v = subs[i][1], subs[i][2]
-            if v ~= "" then s = s:gsub(k, (v:gsub("%%", "%%%%"))) end
-        end
-        s = s:gsub("%b{}", "")            -- неизвестные переменные в чат не уходят
-        s = paOne(s)
-        if autoId and not hadVar and pid ~= "" then
-            local first, rest = s:match("^(%S+)%s*(.*)$")
-            if first then s = first .. " " .. pid .. (rest ~= "" and (" " .. rest) or "") end
-        end
-        return s
+        if pid == "" then return s end
+        local first, rest = s:match("^(%S+)%s*(.*)$")
+        if not first then return s end
+        return first .. " " .. pid .. (rest ~= "" and (" " .. rest) or "")
     end
 
     -- Наружу — только для стенда и страницы (подсказка «что увидит разбор»).
@@ -35749,19 +35819,18 @@ do
 
     -- ---------- вкладки ----------
     local function paNewTab()
-        return { trigger = "", mode = "word", cmd = "", after = "", on = true }
+        return { trigger = "", mode = "word", cmd = "" }
     end
     PA.newTab = paNewTab
 
     local PA_DEF = {
-        test = false,
         skipSelf = true, skipAdmins = true, watchSay = true, watchShout = true,
-        watchOoc = true, autoId = false, notify = true, logOn = true,
+        watchOoc = true, notify = true, logOn = true,
         -- v1.19.203: автоскриншот сразу после выдачи (папка — shotDir)
         shot = true,
     }
-    local PA_BOOLS = { "test", "skipSelf", "skipAdmins", "watchSay", "watchShout",
-        "watchOoc", "autoId", "notify", "logOn", "shot" }
+    local PA_BOOLS = { "skipSelf", "skipAdmins", "watchSay", "watchShout",
+        "watchOoc", "notify", "logOn", "shot" }
 
     local function paBool(v, def)
         if v == nil then return def end
@@ -35789,12 +35858,10 @@ do
             local t = out[i]
             t.trigger = clampText(oneLine(utf(t.trigger or "")), MAX_PTRIG)
             t.cmd = clampText(oneLine(utf(t.cmd or "")), MAX_PCMD)
-            t.after = clampText(oneLine(utf(t.after or "")), MAX_PAFT)
             t.mode = (tostring(t.mode or "") == "exact") and "exact" or "word"
-            -- (t.on ~= false), а НЕ «t.on == false and false or true»: в Lua
-            -- такое выражение всегда даёт true, и выключенный тумблер вкладки
-            -- включался сам на первом же normalize.
-            t.on = (t.on ~= false)
+            -- v1.19.212: «Команда после» и тумблер «вкладка включена» убраны —
+            -- вкладка, которая есть на странице, всегда работает
+            t.after, t.on = nil, nil
         end
         A.tabs = out
         A.sel = math.max(1, math.min(#out, math.floor(tonumber(A.sel) or 1)))
@@ -35808,7 +35875,6 @@ do
         end
         A.shotDir = clampText(oneLine(utf(A.shotDir or "")), SHOT_MAXDIR)
         A.fired = math.max(0, math.floor(tonumber(A.fired) or 0))
-        if type(A.feed) ~= "table" then A.feed = {} end
         return A
     end
 
@@ -35887,18 +35953,19 @@ do
                         local n = tonumber(idx)
                         if n and n >= 1 and n <= MAX_PTABS then
                             tabs[n] = tabs[n] or paNewTab()
+                            -- ключи after/on из старых версий пропускаем: этих
+                            -- настроек больше нет (v1.19.212)
                             if field == "trigger" then tabs[n].trigger = v
                             elseif field == "mode" then tabs[n].mode = v
-                            elseif field == "cmd" then tabs[n].cmd = v
-                            elseif field == "after" then tabs[n].after = v
-                            elseif field == "on" then tabs[n].on = paBool(v, true) end
+                            elseif field == "cmd" then tabs[n].cmd = v end
                         end
                     elseif k == "on" then PA.on = paBool(v, false)
                     elseif k == "sel" then sel = tonumber(v)
                     -- ключи pause/cd из прошлых версий пропускаем: задержек
                     -- в автопилоте больше нет (v1.19.211)
                     elseif k == "shotDir" then PA.shotDir = v
-                    elseif PA_DEF[k] ~= nil then PA[k] = paBool(v, PA_DEF[k]) end
+                    elseif PA_DEF[k] ~= nil then PA[k] = paBool(v, PA_DEF[k])
+                    end
                 end
             end
             pcall(f.close, f)
@@ -35925,14 +35992,14 @@ do
         w("on", PA.on and 1 or 0)
         w("sel", tostring(PA.sel or 1))
         for i = 1, #PA_BOOLS do w(PA_BOOLS[i], PA[PA_BOOLS[i]] and 1 or 0) end
+        -- «test», «autoId» и «t*_after»/«t*_on» из прошлых версий не пишем:
+        -- этих настроек больше нет (v1.19.212)
         w("shotDir", PA.shotDir or "")
         for i = 1, #PA.tabs do
             local t = PA.tabs[i]
             w("t" .. i .. "_trigger", t.trigger or "")
             w("t" .. i .. "_mode", t.mode or "word")
             w("t" .. i .. "_cmd", t.cmd or "")
-            w("t" .. i .. "_after", t.after or "")
-            w("t" .. i .. "_on", t.on and 1 or 0)
         end
         pcall(f.close, f)
         if GRND_CONFIG and type(GRND_CONFIG.flush) == "function" then
@@ -36057,18 +36124,6 @@ do
         if type(L) == "table" and type(L.append) == "function" then
             pcall(L.append, "punish_auto", tostring(msg or ""))
         end
-    end
-
-    function PA.push(info, trigger, cmd, test)
-        PA.feed = (type(PA.feed) == "table") and PA.feed or {}
-        table.insert(PA.feed, 1, {
-            at = os.date("%H:%M:%S"),
-            who = tostring(info.nick or "") .. "[" .. tostring(info.pid or "") .. "]",
-            cmd = tostring(cmd or ""),
-            trigger = tostring(trigger or ""),
-            test = test and true or false,
-        })
-        while #PA.feed > 6 do table.remove(PA.feed) end
     end
 
     -- ---------- выдача ----------
@@ -37532,37 +37587,26 @@ do
     -- обе вкладки просто выдают каждая свою команду.
     function PA.fire(tab, trigger, info, sameEvent)
         local now = os.clock()
-        local cmd = PA_FN.buildCmd(tab.cmd, info, trigger, PA.autoId == true)
+        local cmd = PA_FN.buildCmd(tab.cmd, info)
         if cmd == "" then
-            PA.lastCheck = "во вкладке не заполнена «Команда»"
+            PA.lastCheck = "во вкладке не заполнена «Команда наказания»"
             return false
         end
         if #cmd > CMD_BYTES then
             cmd = byteCut(cmd, CMD_BYTES)
             PA.lastCheck = "команда длиннее строки чата — обрезана"
         end
-        local after = PA_FN.buildCmd(tab.after, info, trigger, PA.autoId == true)
-        if PA.test then
-            PA.lastAt = now
-            PA.lastCheck = "проверка (не отправлено): " .. cmd
-            PA.log("проверка: " .. info.nick .. "[" .. tostring(info.pid) .. "] → " .. cmd
-                .. " · триггер «" .. tostring(trigger) .. "»")
-            PA.push(info, trigger, cmd, true)
-            if PA.notify then QR.toast("Проверка: " .. cmd, "info", 3.4) end
-            return true
-        end
+        -- режима проверки больше нет (v1.19.212): команда всегда отправляется
         if not paSend(cmd) then
             PA.lastCheck = "не удалось отправить команду"
             return false
         end
-        if after ~= "" and after ~= cmd then pcall(paSend, after) end
         PA.lastAt, PA.fired = now, (PA.fired or 0) + 1
         -- v1.19.203: кадр-доказательство сразу после выдачи
         PA.shotQueue(info.nick)
         PA.lastCheck = "выдано: " .. cmd
         PA.log("выдано: " .. info.nick .. "[" .. tostring(info.pid) .. "] → " .. cmd
             .. " · триггер «" .. tostring(trigger) .. "»")
-        PA.push(info, trigger, cmd, false)
         if PA.notify then QR.toast("Автопилот: " .. cmd, "ok", 3.8) end
         return true
     end
@@ -37621,10 +37665,10 @@ do
         local hits, fired = {}, 0
         for i = 1, #PA.tabs do
             local tab = PA.tabs[i]
-            if tab.on ~= false then
-                local hit = PA_FN.matchTab(tab, msg)
-                if hit then hits[#hits + 1] = { tab = tab, hit = hit } end
-            end
+            -- v1.19.212: тумблера «вкладка включена» больше нет — вкладка на
+            -- странице всегда работает
+            local hit = PA_FN.matchTab(tab, msg)
+            if hit then hits[#hits + 1] = { tab = tab, hit = hit } end
         end
         for i = 1, #hits do
             local okF, res = pcall(PA.fire, hits[i].tab, hits[i].hit, info, i > 1)
@@ -37660,34 +37704,6 @@ do
             return false
         end
         return res
-    end
-
-    -- Проверка произвольной строки со страницы (и стенда): ничего не отправляет.
-    function PA.dryRun(line)
-        PA.ensure()
-        local nick, pidHint, msg, kind = PA_FN.parseLine(line)
-        if not nick then return "не распознал строку: ник не найден" end
-        local id = PA.resolve(nick, pidHint)
-        local kindTxt = (kind == "shout" and "крик")
-            or (kind == "ooc" and "ООС") or "обычный чат"
-        local head = kindTxt .. " · ник " .. nick
-            .. (id and (" [ID " .. tostring(id) .. "]") or " — в сети не найден")
-        local hits = {}
-        for i = 1, #PA.tabs do
-            local tab = PA.tabs[i]
-            local hit = PA_FN.matchTab(tab, msg)
-            if hit then
-                local cmd = PA_FN.buildCmd(tab.cmd,
-                    { nick = nick, pid = id or 0, msg = msg, mynick = QR.myNick() },
-                    hit, PA.autoId == true)
-                hits[#hits + 1] = "вкладка " .. tostring(i) .. " («" .. hit .. "») → "
-                    .. (cmd ~= "" and cmd or "команда не заполнена")
-            end
-        end
-        if #hits == 0 then
-            return head .. " · триггер не найден в тексте «" .. utf8Cut(msg, 40) .. "»"
-        end
-        return head .. " · " .. table.concat(hits, " | ")
     end
 
     -- Тик из основного цикла: отложенное сохранение вкладок и кадр выдачи.
@@ -37848,7 +37864,6 @@ do
         local mut  = ctx.col32(TH.textMuted[1], TH.textMuted[2], TH.textMuted[3], 255)
         local ac   = TH.accent or { 164, 112, 224, 255 }
         local acC  = ctx.col32(ac[1], ac[2], ac[3], 255)
-        local okC  = ctx.col32(120, 220, 160, 255)
         local warnC = ctx.col32(255, 176, 96, 255)
         local bottomY = y + h - 4
 
@@ -37856,26 +37871,13 @@ do
         local ROW, BLOCK = 28, 12
         local LABEL = 0.82
         local TEXT = 0.72
-        local TEXT_STEP = lineH(ctx, TEXT) + 2
-        local canLine = (type(ctx.dl.AddRectFilled) == "function")
 
-        -- ---------- шапка: название и тумблеры ----------
+        -- ---------- шапка: название и тумблер ----------
+        -- v1.19.212: выбора «Проверка» здесь больше нет — режим проверки убран
+        -- целиком, поэтому в шапке остался только общий тумблер автопилота.
         ctx.uiText(x, y + 1, "Автопилот наказаний", hi, 0.98)
-        local tw = paW(ctx, "Автопилот наказаний", 0.98)
         local swX = x + w - 46
         if paSwitch(ctx, swX, y + 2, PA.on, "##grnd_pa_switch") then PA.set(not PA.on) end
-        local testLab = "Проверка"
-        local testW = 24 + paW(ctx, testLab, LABEL)
-        local testX = swX - 18 - testW
-        if testX > x + tw + 60 then
-            if paToggle(ctx, "##grnd_pa_test", testX, y + 4, PA.test, testLab, 18, LABEL) then
-                PA.test = not PA.test
-                PA.touch()
-                pcall(PA.save)
-                QR.toast(PA.test and "Режим проверки: команды НЕ отправляются"
-                    or "Режим проверки выключен", PA.test and "warn" or "ok", 2.8)
-            end
-        end
 
         -- ---------- вкладки ----------
         local tabH, tgap, tcw = 28, 6, 24
@@ -37904,11 +37906,10 @@ do
                     ctx.at(tx + tabW - 0.5, ty + tabH - 0.5),
                     sel and ctx.col32(ac[1], ac[2], ac[3], 170) or ctx.col32(255, 255, 255, 46), 6, 0, 1)
             end
-            local off = (PA.tabs[i].on == false)
             local lbl = fit(PA.tabLabel(i), tabW - tcw - 12, ctx.drawnW, 0.88)
             local lw = paW(ctx, lbl, 0.88)
             ctx.uiText(tx + math.floor((tabW - tcw - lw) / 2), ty + (tabH - lineH(ctx, 0.88)) / 2, lbl,
-                off and mut or (sel and hi or dim), 0.88)
+                sel and hi or dim, 0.88)
             local crossCol = crossHov and ctx.col32(255, 140, 140, 255) or ctx.col32(255, 255, 255, 110)
             if not paCross(ctx, tx + tabW - tcw / 2, ty + tabH / 2, 4, crossCol) then
                 ctx.uiText(tx + tabW - tcw / 2 - 3, ty + (tabH - lineH(ctx, 0.8)) / 2, "x", crossCol, 0.8)
@@ -37939,8 +37940,9 @@ do
         if delIdx then PA.tabDel(delIdx) return true end
 
         -- =================================================================
-        --  ДВЕ КОЛОНКИ. Слева — данные вкладки и скриншот, справа — проверка
-        --  строки, параметры, тумблеры и лента. Узкая страница → одна колонка.
+        --  ДВЕ КОЛОНКИ (v1.19.212). Слева — триггеры, команда наказания и
+        --  скриншот; справа — режим поиска и тумблеры. Узкая страница → одна
+        --  колонка.
         -- =================================================================
         local tab = PA.tab()
         local twoCol = (w >= 620)
@@ -37969,59 +37971,25 @@ do
                 tab.trigger = clampText(oneLine(utf(tv)), MAX_PTRIG)
                 PA.touch()
             end
-            yy1 = yy1 + ROW + 6
-            yy1 = yy1 + paHint(ctx, c1X, yy1, colW1,
-                "Ищем в тексте строки: «Ник: дм» — триггер «дм». Крик, обычный чат и «(( … ))» — одинаково.",
-                mut, 1)
-            yy1 = yy1 + BLOCK
-        end
-
-        if yy1 + 15 + ROW <= bottomY then
-            yy1 = label(yy1, c1X, "Режим поиска")
-            local items = {
-                { id = "word",  name = "В любом месте" },
-                { id = "exact", name = "Точное совпадение" },
-            }
-            local bw = math.floor((colW1 - 8) / 2)
-            for i = 1, #items do
-                if button(ctx, "##grnd_pa_mode_" .. items[i].id, c1X + (i - 1) * (bw + 8), yy1,
-                    bw, ROW, items[i].name, { selected = (tab.mode == items[i].id) }) then
-                    tab.mode = items[i].id
-                    PA.touch()
-                    pcall(PA.save)
-                end
-            end
             yy1 = yy1 + ROW + BLOCK
         end
 
         if yy1 + 15 + ROW <= bottomY then
-            yy1 = label(yy1, c1X, "Команда (уйдёт в чат при срабатывании)")
+            yy1 = label(yy1, c1X, "Команда наказания")
             local ckey = "paCmd" .. PA.sel
             field(ctx, "##grnd_pa_cmd", ckey, CMD_CAP, c1X, yy1, colW1, ROW,
-                "/mute {ID} 60 флуд", false, tab.cmd)
+                "/mute 60 2.1 ОП", false, tab.cmd)
             local cv = trim(bufText(ckey))
             if cv ~= tab.cmd then
                 tab.cmd = clampText(oneLine(utf(cv)), MAX_PCMD)
                 PA.touch()
             end
+            -- Подсказка одна и короткая: переменных в команде больше нет, а ID
+            -- игрока подставляется сам — без этой строки это неочевидно.
             yy1 = yy1 + ROW + 6
             yy1 = yy1 + paHint(ctx, c1X, yy1, colW1,
-                "{ID} {ник} {текст} {триггер} {мой_ник} {время} — подстановки. Без переменных команда "
-                .. "уходит ровно как написана.", mut, 2)
+                "ID игрока подставляется сам: /mute 60 2.1 ОП → /mute 7 60 2.1 ОП", mut, 2)
             yy1 = yy1 + BLOCK
-        end
-
-        if yy1 + 15 + ROW <= bottomY then
-            yy1 = label(yy1, c1X, "Команда после")
-            local akey = "paAfter" .. PA.sel
-            field(ctx, "##grnd_pa_after", akey, AFT_CAP, c1X, yy1, colW1, ROW,
-                "/sp {ID} — не обязательно", false, tab.after)
-            local av = trim(bufText(akey))
-            if av ~= tab.after then
-                tab.after = clampText(oneLine(utf(av)), MAX_PAFT)
-                PA.touch()
-            end
-            yy1 = yy1 + ROW + BLOCK
         end
 
         -- скриншот: тумблер, под ним папка (пусто — папка по умолчанию)
@@ -38059,46 +38027,31 @@ do
             yy1 = yy1 + BLOCK
         end
 
-        if yy1 + 24 <= bottomY then
-            local click, tw2 = paToggle(ctx, "##grnd_pa_tabon", c1X, yy1, tab.on ~= false,
-                "вкладка включена", 18, LABEL)
-            if click then
-                tab.on = not (tab.on ~= false)
-                PA.touch()
-                pcall(PA.save)
-            end
-            local st = PA.test and "режим проверки"
-                or (PA.on and "автопилот включён" or "автопилот выключен")
-            ctx.uiText(c1X + (tw2 or 170) + 18, yy1 + 4, st,
-                PA.test and warnC or (PA.on and okC or mut), 0.78)
-            yy1 = yy1 + 28
-        end
+        -- v1.19.212: нижней строки «вкладка включена / автопилот включён» больше
+        -- нет — состояние автопилота видно по тумблеру в шапке страницы.
 
         -- узкая страница: правая колонка начинается под левой
         if not twoCol then yy2 = yy1 + BLOCK end
 
-        -- ---------- ПРАВАЯ КОЛОНКА: проверка, параметры, лента ----------
+        -- ---------- ПРАВАЯ КОЛОНКА: режим поиска и тумблеры ----------
+        -- v1.19.212: «Проверка строки (образец строки чата)» с кнопкой
+        -- «Разобрать» убрана, а «Режим поиска» переехал сюда (был слева).
         if yy2 + 15 + ROW <= bottomY then
-            yy2 = label(yy2, c2X, "Проверка строки (образец строки чата)")
-            local bw = math.min(118, math.floor(colW2 * 0.42))
-            field(ctx, "##grnd_pa_tline", "paTestLine", 512, c2X, yy2,
-                math.max(90, colW2 - bw - 8), ROW, "Nik_Name: дм", false, PA.testLine or "")
-            if button(ctx, "##grnd_pa_tbtn", c2X + colW2 - bw, yy2, bw, ROW, "Разобрать",
-                { primary = true }) then
-                PA.testLine = trim(bufText("paTestLine"))
-                PA.testOut = PA.dryRun(PA.testLine)
+            yy2 = label(yy2, c2X, "Режим поиска")
+            local items = {
+                { id = "word",  name = "В любом месте" },
+                { id = "exact", name = "Точное совпадение" },
+            }
+            local bw = math.floor((colW2 - 8) / 2)
+            for i = 1, #items do
+                if button(ctx, "##grnd_pa_mode_" .. items[i].id, c2X + (i - 1) * (bw + 8), yy2,
+                    bw, ROW, items[i].name, { selected = (tab.mode == items[i].id) }) then
+                    tab.mode = items[i].id
+                    PA.touch()
+                    pcall(PA.save)
+                end
             end
-            yy2 = yy2 + ROW + 6
-            local out = PA.testOut
-            if out and out ~= "" then
-                yy2 = yy2 + paHint(ctx, c2X, yy2, colW2, out,
-                    (out:find("→", 1, true) and okC or warnC), 2)
-            else
-                ctx.uiText(c2X, yy2, fit("Ничего не отправляется — только разбор строки.",
-                    colW2, ctx.drawnW, TEXT), mut, TEXT)
-                yy2 = yy2 + TEXT_STEP
-            end
-            yy2 = yy2 + BLOCK
+            yy2 = yy2 + ROW + BLOCK
         end
 
         -- v1.19.211: полей «Пауза между выдачами» и «Повтор игроку» больше нет —
@@ -38110,12 +38063,12 @@ do
             yy2 = yy2 + BLOCK
         end
 
-        -- тумблеры: ровная сетка по два в ряд
+        -- тумблеры: ровная сетка по два в ряд (v1.19.212: «ID без переменных»
+        -- больше нет — ID подставляется в команду всегда)
         do
             local items = {
                 { key = "skipSelf",    label = "не трогать себя" },
                 { key = "skipAdmins",  label = "не трогать админов" },
-                { key = "autoId",      label = "ID без переменных" },
                 { key = "notify",      label = "уведомления" },
                 { key = "logOn",       label = "журнал выдач" },
                 { key = "watchSay",    label = "обычный чат" },
@@ -38140,29 +38093,6 @@ do
             end
             if rows > 0 then yy2 = yy2 + rows * 26 end
             yy2 = yy2 + BLOCK
-        end
-
-        -- лента последних выдач (не больше четырёх строк)
-        if yy2 + 15 + TEXT_STEP <= bottomY then
-            ctx.uiText(c2X, yy2, "Последние срабатывания (выдано: " .. tostring(PA.fired or 0) .. ")",
-                dim, LABEL)
-            yy2 = yy2 + 15
-            local feed = PA.feed or {}
-            if #feed == 0 then
-                ctx.uiText(c2X, yy2, "Пока пусто.", mut, TEXT)
-                yy2 = yy2 + TEXT_STEP
-            else
-                local shown = 0
-                for i = 1, #feed do
-                    if shown >= 4 or yy2 + lineH(ctx, TEXT) > bottomY then break end
-                    local f = feed[i]
-                    local text = tostring(f.at) .. "  " .. tostring(f.who) .. " → " .. tostring(f.cmd)
-                    ctx.uiText(c2X, yy2, fit(text, colW2, ctx.drawnW, TEXT),
-                        f.test and warnC or okC, TEXT)
-                    yy2 = yy2 + TEXT_STEP
-                    shown = shown + 1
-                end
-            end
         end
 
         -- диагностика: одна строка и только когда есть о чём сказать

@@ -3,8 +3,10 @@
 -- заглушками (GRND_CONFIG, QR.toast, samp*, GRND_LOG, ImGui) — без
 -- MoonLoader. Проверяет вкладки/конфиг, выдачу по трём видам строк, ОТСУТСТВИЕ
 -- задержек (v1.19.211: ни пауз, ни кулдаунов), предохранители
--- (себя/админов/каналы), режим проверки, dryRun, автоскриншот выдачи и
--- отрисовку страницы (буферы полей, кнопки, тумблеры, плюс/крестик).
+-- (себя/админов/каналы), автоскриншот выдачи и отрисовку страницы (буферы
+-- полей, кнопки, тумблеры, плюс/крестик). v1.19.212: режима проверки, «Команды
+-- после», ленты срабатываний и переменных команды больше нет, а триггер в
+-- кавычках не срабатывает.
 -- Путь к проверяемому скрипту: GRND_SCRIPT / рядом с тестом / текущий каталог.
 local function findScript()
     local cands = {}
@@ -290,28 +292,42 @@ eq("on.default", PA.on, false)
 eq("nodelay.pause", PA.pause, nil)
 eq("nodelay.cd", PA.cd, nil)
 eq("nodelay.cduntil", PA.cdUntil, nil)
-eq("autoId.default", PA.autoId, false)   -- команда уходит ровно как написана
+eq("no.test.mode", PA.test, nil)          -- режима проверки больше нет
+eq("no.autoId", PA.autoId, nil)           -- ID подставляется всегда, тумблера нет
+eq("no.feed", PA.feed, nil)               -- ленты срабатываний больше нет
 eq("shot.default", PA.shot, true)         -- автоскриншот после выдачи включён
 ok("shotDir.default", type(PA.shotDirDefault()) == "string" and #PA.shotDirDefault() > 0)
 
 -- ---------- сохранение/загрузка ----------
 PA.tabs[1].trigger = "дм, dm"
-PA.tabs[1].cmd = "/mute {ID} 60 флуд"   -- {ID} — документированный способ
+PA.tabs[1].cmd = "/mute 60 2.1 ОП"      -- v1.19.212: без переменных
 PA.tabs[1].mode = "word"
-PA.tabs[1].after = "/sp {ID}"
 PA.save()
 ok("saved.domain", CONFIG["grnd_punauto"] ~= nil)
 eq("saved.trigger", tostring(CONFIG["grnd_punauto"]["t1_trigger"]), "дм, dm")
-eq("saved.cmd", tostring(CONFIG["grnd_punauto"]["t1_cmd"]), "/mute {ID} 60 флуд")
-eq("saved.after", tostring(CONFIG["grnd_punauto"]["t1_after"]), "/sp {ID}")
+eq("saved.cmd", tostring(CONFIG["grnd_punauto"]["t1_cmd"]), "/mute 60 2.1 ОП")
+-- настроек, которых больше нет, в конфиг не пишем
+eq("saved.no.test", tostring(CONFIG["grnd_punauto"]["test"]), "nil")
+eq("saved.no.autoId", tostring(CONFIG["grnd_punauto"]["autoId"]), "nil")
+eq("saved.no.after", tostring(CONFIG["grnd_punauto"]["t1_after"]), "nil")
+eq("saved.no.tabon", tostring(CONFIG["grnd_punauto"]["t1_on"]), "nil")
 
 -- вторая вкладка
 eq("tab.add", type(PA.tabAdd()), "number")
 eq("tab.count", #PA.tabs, 2)
 PA.tabs[2].trigger = "аа"
-PA.tabs[2].cmd = "/jail {ID} 10 афк"
+PA.tabs[2].cmd = "/jail 10 афк"
 PA.tabs[2].mode = "exact"
 PA.save()
+
+-- старый конфиг (с переменными, «Командой после» и выключенной вкладкой)
+-- читается без ошибок, а лишние ключи просто игнорируются
+CONFIG["grnd_punauto"]["t1_cmd"] = "/mute {ID} 60 флуд"
+CONFIG["grnd_punauto"]["t1_after"] = "/sp {ID}"
+CONFIG["grnd_punauto"]["t1_on"] = "0"
+CONFIG["grnd_punauto"]["autoId"] = "1"
+CONFIG["grnd_punauto"]["pause"] = "1.00"
+CONFIG["grnd_punauto"]["test"] = "1"
 
 -- перезагрузка: новая сессия модуля читает то же
 QR.punAuto = {}
@@ -320,16 +336,19 @@ PA.load()
 eq("reload.tabs", #PA.tabs, 2)
 eq("reload.trigger1", PA.tabs[1].trigger, "дм, dm")
 eq("reload.mode2", PA.tabs[2].mode, "exact")
-eq("reload.after1", PA.tabs[1].after, "/sp {ID}")
+eq("reload.after1", PA.tabs[1].after, nil)     -- «Команды после» больше нет
+eq("reload.tabon", PA.tabs[1].on, nil)         -- тумблера вкладки больше нет
+eq("reload.test", PA.test, nil)                -- режима проверки больше нет
+eq("reload.oldcmd", PA.tabs[1].cmd, "/mute {ID} 60 флуд")   -- прочиталось как есть
 
 -- ---------- выдача ----------
 PA.on = true
-PA.test = false
+PA.tabs[1].cmd = "/mute 60 2.1 ОП"          -- команда без переменных
+PA.save()
 queued = {}
 PA.onChat("Nik_Name[7]: это дм!")
-eq("fire.count", #queued, 2)
-eq("fire.cmd", queued[1], "/mute 7 60 флуд")
-eq("fire.after", queued[2], "/sp 7")
+eq("fire.count", #queued, 1)                 -- «Команды после» больше нет
+eq("fire.cmd", queued[1], "/mute 7 60 2.1 ОП")   -- ID подставлен сам
 eq("fired.counter", PA.fired, 1)
 ok("logged", tostring(logged[#logged]):find("выдано", 1, true) ~= nil)
 ok("toast", toasts[#toasts] ~= nil)
@@ -338,13 +357,13 @@ ok("toast", toasts[#toasts] ~= nil)
 -- «Повтора игроку»; теперь та же строка от того же игрока выдаёт сразу.
 queued = {}
 PA.onChat("Nik_Name[7]: дм снова")
-eq("nodelay.repeat", #queued, 2)
-eq("nodelay.repeat.cmd", queued[1], "/mute 7 60 флуд")
+eq("nodelay.repeat", #queued, 1)
+eq("nodelay.repeat.cmd", queued[1], "/mute 7 60 2.1 ОП")
 
 -- и вторая строка подряд тоже выдаёт (никакой «паузы между выдачами»)
 queued = {}
 PA.onChat("Nik_Name[7]: и ещё дм")
-eq("nodelay.next.line", #queued, 2)
+eq("nodelay.next.line", #queued, 1)
 
 -- и уходит она НАПРЯМУЮ: медленная очередь репорта (0.35 с на строку) не
 -- трогается вовсе — иначе команда ждала бы своей очереди
@@ -356,8 +375,8 @@ connected[9] = "Vasya_Pupkin"
 _G.grndRosterSync()
 queued = {}
 PA.onChat("[12:00:05] Vasya_Pupkin крикнул: помогите дм")
-eq("shout.fire", #queued, 2)
-eq("shout.cmd", queued[1], "/mute 9 60 флуд")
+eq("shout.fire", #queued, 1)
+eq("shout.cmd", queued[1], "/mute 9 60 2.1 ОП")
 
 -- крик не отслеживается
 PA.watchShout = false
@@ -371,23 +390,35 @@ PA.watchShout = true
 PA.lastAt = os.clock() - 5
 queued = {}
 PA.onChat("(( Vasya_Pupkin: dm please ))")
-eq("ooc.fire", #queued, 2)
-eq("ooc.cmd", queued[1], "/mute 9 60 флуд")
+eq("ooc.fire", #queued, 1)
+eq("ooc.cmd", queued[1], "/mute 9 60 2.1 ОП")
 PA.lastAt = os.clock() - 5
 queued = {}
 PA.onChat("(( Vasya_Pupkin: dm please ))!!")   -- уже не ООС-обёртка
 ok("ooc.broken.parsed", PA.lastCheck ~= nil)
 
--- режим проверки: строки разбираются, но НЕ отправляются
-PA.test = true
-PA.lastAt = os.clock() - 5
-queued = {}
-local firedBefore = PA.fired
-PA.onChat("Nik_Name[7]: дм")
-eq("test.no.send", #queued, 0)
-eq("test.not.counted", PA.fired, firedBefore)
-ok("test.log", tostring(logged[#logged]):find("проверка", 1, true) ~= nil)
-PA.test = false
+-- v1.19.212: ТРИГГЕР В КАВЫЧКАХ НЕ СРАБАТЫВАЕТ — «он сказал "дм"» это цитата
+do
+    local variants = {
+        {"q.double", 'он сказал "дм" и всё'},
+        {"q.single", "он сказал 'дм'"},
+        {"q.guillemet", "он сказал «дм»"},
+        {"q.curly", "он сказал “дм”"},
+        {"q.only", "«дм»"},
+    }
+    for i = 1, #variants do
+        PA.lastAt = os.clock() - 5
+        queued = {}
+        PA.onChat("Nik_Name[7]: " .. variants[i][2])
+        eq(variants[i][1], #queued, 0)
+    end
+    -- тот же триггер ВНЕ кавычек в той же строке — работает
+    PA.lastAt = os.clock() - 5
+    queued = {}
+    PA.onChat('Nik_Name[7]: он сказал "привет" а это дм')
+    eq("q.outside", #queued, 1)
+    eq("q.outside.cmd", queued[1], "/mute 7 60 2.1 ОП")
+end
 
 -- выключено — не реагирует вовсе
 PA.on = false
@@ -438,19 +469,8 @@ queued = {}
 PA.onChat("Администратор Mixa: нарушение")
 eq("server.line.no", #queued, 0)
 
--- проверка строки со страницы (dryRun) ничего не отправляет
-queued = {}
-local out = PA.dryRun("Nik_Name[7]: дм")
-ok("dry.run.text", out:find("вкладка 1", 1, true) ~= nil and out:find("/mute 7 60", 1, true) ~= nil)
-eq("dry.run.no.send", #queued, 0)
-
--- вкладка выключена тумблером — молчит
-PA.lastAt = os.clock() - 5
-queued = {}
-PA.tabs[1].on = false
-PA.onChat("Nik_Name[7]: дм")
-eq("tab.off", #queued, 0)
-PA.tabs[1].on = true
+-- v1.19.212: «Проверки строки» (dryRun) на странице больше нет — функции тоже
+eq("no.dryrun", type(PA.dryRun), "nil")
 
 -- пустая команда — строка разобрана, но выдачи нет
 PA.lastAt = os.clock() - 5
@@ -459,23 +479,24 @@ PA.tabs[1].cmd = ""
 PA.onChat("Nik_Name[7]: дм пустая")
 eq("empty.cmd.no.send", #queued, 0)
 ok("empty.cmd.text", tostring(PA.lastCheck):find("Команда", 1, true) ~= nil)
-PA.tabs[1].cmd = "/mute {ID} 60 флуд"
 PA.save()
 
--- команда БЕЗ переменных: по умолчанию уходит ровно так, как написана
+-- v1.19.212: ПЕРЕМЕННЫХ НЕТ — что написали, то и уходит, а ID встаёт сразу
+-- после имени команды (тумблер «ID без переменных» больше не нужен)
 PA.lastAt = os.clock() - 5
 queued = {}
 PA.tabs[1].cmd = "/ban Nik_Name 3 дм"
 PA.onChat("Nik_Name[7]: дм наконец")
-eq("verbatim.send", queued[1], "/ban Nik_Name 3 дм")
--- тумблер «подставлять ID» — только тогда ID встаёт после имени команды
-PA.autoId = true
+eq("cmd.with.nick", queued[1], "/ban 7 Nik_Name 3 дм")
+
+-- команда из старого конфига с {ID}: скобки в чат не уходят, ID встаёт на место
 PA.lastAt = os.clock() - 5
 queued = {}
-PA.onChat("Nik_Name[7]: дм опять")
-eq("autoId.send", queued[1], "/ban 7 Nik_Name 3 дм")
-PA.autoId = false
 PA.tabs[1].cmd = "/mute {ID} 60 флуд"
+PA.onChat("Nik_Name[7]: дм из старого конфига")
+eq("cmd.old.var", queued[1], "/mute 7 60 флуд")
+
+PA.tabs[1].cmd = "/mute 60 2.1 ОП"
 PA.save()
 
 -- ---------- автоскриншот после выдачи (v1.19.204) ----------
@@ -1124,12 +1145,12 @@ eq("draw.res", drawRes, true)
 
 -- буферы полей пишутся в модель
 bufs["paTrig1"] = "дм, dm, помогите"
-bufs["paCmd1"] = "/mute {ID} 60 флуд"
-bufs["paAfter1"] = "/sp {ID}"
+bufs["paCmd1"] = "/mute 60 2.1 ОП"
+bufs["paAfter1"] = "/sp {ID}"          -- «Команды после» больше нет: буфер лишний
 pcall(QR.punAutoDraw, ctx)
 eq("draw.trig.sync", PA.tabs[1].trigger, "дм, dm, помогите")
-eq("draw.cmd.sync", PA.tabs[1].cmd, "/mute {ID} 60 флуд")
-eq("draw.after.sync", PA.tabs[1].after, "/sp {ID}")
+eq("draw.cmd.sync", PA.tabs[1].cmd, "/mute 60 2.1 ОП")
+eq("draw.after.gone", PA.tabs[1].after, nil)
 
 -- режим word/exact кнопками
 click["##grnd_pa_mode_exact"] = true
@@ -1141,13 +1162,14 @@ pcall(QR.punAutoDraw, ctx)
 click["##grnd_pa_mode_word"] = nil
 eq("draw.mode.back", PA.tabs[1].mode, "word")
 
--- тумблер «Проверка» и общий тумблер
-PA.test = false
+-- v1.19.212: выбора «Проверка» на странице больше нет — клик по нему ничего не
+-- делает (и самого элемента нет)
 click["##grnd_pa_test"] = true
 pcall(QR.punAutoDraw, ctx)
 click["##grnd_pa_test"] = nil
-eq("draw.test.toggle", PA.test, true)
-PA.test = false
+eq("draw.test.gone", PA.test, nil)
+
+-- общий тумблер автопилота в шапке
 local wasOn = PA.on
 click["##grnd_pa_switch"] = true
 pcall(QR.punAutoDraw, ctx)
@@ -1207,14 +1229,14 @@ else
 end
 PA.sel = savedSel
 
--- «Разобрать» — dryRun со страницы, ничего не отправляет
+-- «Проверка строки (образец строки чата)» убрана: её элементов на странице нет
 bufs["paTestLine"] = "Nik_Name[7]: дм"
 queued = {}
 click["##grnd_pa_tbtn"] = true
 pcall(QR.punAutoDraw, ctx)
 click["##grnd_pa_tbtn"] = nil
 eq("draw.testline.no.send", #queued, 0)
-ok("draw.testline.out", tostring(PA.testOut):find("вкладка 1", 1, true) ~= nil)
+eq("draw.testline.gone", PA.testOut, nil)
 
 -- ================== ВИДИМОСТЬ СТРАНИЦЫ В РЕАЛЬНОМ ОКНЕ ==================
 -- v1.19.203: страница рисуется в ДВЕ КОЛОНКИ и обязана помещаться в
@@ -1269,19 +1291,26 @@ end
 
 -- левая колонка: данные вкладки и скриншот
 ok("drawfit.triggers", drawSeen("Триггеры"))
-ok("drawfit.mode", drawSeen("Режим поиска"))
-ok("drawfit.cmd", drawSeen("Команда (уйдёт"))
-ok("drawfit.after", drawSeen("Команда после"))
+ok("drawfit.cmd", drawSeen("Команда наказания"))
+ok("drawfit.id.hint", drawSeen("ID игрока подставляется сам"))
 ok("drawfit.shot.toggle", drawSeen("скриншот после выдачи"))
 ok("drawfit.shot.dir", drawSeen("Папка для скриншотов"))
--- правая колонка: проверка строки, параметры, тумблеры, лента
-ok("drawfit.testline", drawSeen("Проверка строки"))
+-- правая колонка (v1.19.212): режим поиска переехал сюда, дальше тумблеры
+ok("drawfit.mode", drawSeen("Режим поиска"))
 ok("drawfit.nodelay", drawSeen("Задержек нет"))
+ok("drawfit.toggles", drawSeen("не трогать себя"))
+-- убранное со страницы (чтобы не вернулось правкой)
+eq("drawfit.no.after", drawSeen("Команда после") and "есть" or "нет", "нет")
+eq("drawfit.no.testline", drawSeen("Проверка строки") and "есть" or "нет", "нет")
+eq("drawfit.no.test.toggle", drawSeen("Проверка") and "есть" or "нет", "нет")
+eq("drawfit.no.tabon", drawSeen("вкладка включена") and "есть" or "нет", "нет")
+eq("drawfit.no.autopilot.line", drawSeen("автопилот включ") and "есть" or "нет", "нет")
+eq("drawfit.no.feed", drawSeen("Последние срабатывания") and "есть" or "нет", "нет")
+eq("drawfit.no.vars", drawSeen("подстановки") and "есть" or "нет", "нет")
+eq("drawfit.no.trig.hint", drawSeen("Ищем в тексте") and "есть" or "нет", "нет")
+eq("drawfit.no.autoId.toggle", drawSeen("ID без переменных") and "есть" or "нет", "нет")
 eq("drawfit.no.pause.field", drawSeen("Пауза между выдачами") and "есть" or "нет", "нет")
 eq("drawfit.no.cd.field", drawSeen("Повтор игроку") and "есть" or "нет", "нет")
-ok("drawfit.toggles", drawSeen("не трогать себя"))
-ok("drawfit.tabon", drawSeen("вкладка включена"))
-ok("drawfit.feed", drawSeen("Последние срабатывания"))
 
 -- ничего не нарисовано ниже карточки (y + h - 4 = 610)
 local lowest, lowTxt = 0, ""
