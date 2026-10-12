@@ -1,6 +1,30 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.210"
+GRND_SCRIPT_VERSION = "1.19.211"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.211 — правки по замечаниям (сохраняется, но тост говорил «не сохранён»):
+--   1) ЗАДЕРЖЕК БОЛЬШЕ НЕТ. Убраны и настройки, которыми они задавались
+--      («Пауза между выдачами, сек» и «Повтор игроку, сек»): раньше вторая
+--      подходящая строка молчала до паузы, а тот же игрок — до повтора, и это
+--      выглядело как «сообщения срабатывают через раз». Теперь каждая
+--      подходящая строка чата выдаёт наказание сразу;
+--   2) команда уходит НЕМЕДЛЕННО: раньше она ставилась в очередь репорта, та
+--      отправляет по одной строке за 0.35 с, а при открытом чате/диалоге
+--      очередь вообще стоит. Теперь отправка прямая (QR.sendChat →
+--      grndChatSend → sampSendChat), очередь — только аварийный запас;
+--   3) тост о кадре короткий и ровно про файл: «Скриншот сохранен» (при отказе —
+--      «Скриншот не сохранён»). Подробности (путь, способ, причина) — в журнале;
+--   4) ГЛАВНАЯ ПРИЧИНА, по которой тост расходился с диском. Свой кадр ждали
+--      1.5 с: если поток отрисовки отвечал позже (низкий FPS, свёрнутая игра,
+--      поздний монтаж хука), заявка уходила на запасной путь, а свой путь из
+--      проверки пропадал — кадр уже лежал в папке, но в чат уходило «не
+--      сохранён». Теперь кадры идут по одному, результат принимается только по
+--      номеру своей заявки, а свой путь и папка проверяются до самого конца;
+--   5) перед словом «не сохранён» папка кадра проверяется ещё раз — свежий файл
+--      находится даже при другом написании пути (UTF-8/ANSI), так что «сохранён»
+--      и «не сохранён» больше не расходятся с диском;
+--   6) дубль строки из двух серверных хуков гасится по «ник + текст»: одна
+--      строка = одна выдача (раньше формы «Ник[7]: текст» и «Ник: текст»
+--      не совпадали, и от двойной выдачи спасал только кулдаун).
 -- v1.19.210 — правки по замечаниям (кадр сохраняется, но не туда):
 --   1) Указанный в настройке путь теперь и есть путь кадра:
 --      * пусто — папка рядом со скриптом (resource/grnd/screenshots);
@@ -30825,8 +30849,6 @@ local QR = {
         test = false,      -- режим проверки: строки разбираем, но НЕ отправляем
         tabs = nil,        -- вкладки: { {trigger=, mode=, cmd=, after=, on=}, … }
         sel = 1,           -- выбранная вкладка
-        pause = 1.0,       -- пауза между выдачами, сек
-        cd = 10,           -- повтор одному игроку не чаще, сек (0 — без лимита)
         skipSelf = true,   -- не наказывать себя
         skipAdmins = true, -- не наказывать администраторов (список чекера)
         watchSay = true,   -- следить за обычным чатом
@@ -30842,10 +30864,12 @@ local QR = {
         lastLog = nil,     -- последняя запись журнала (диагностика)
         testOut = nil,     -- результат «Проверки строки» на странице
         feed = {},         -- последние срабатывания (до 6) — для страницы
-        cdUntil = {},      -- id → время, до которого повтор молчит
-        seenKey = nil,     -- текст последней строки: гасим дубль из двух хуков
+        -- v1.19.211: ни пауз между выдачами, ни кулдауна на игрока в модуле
+        -- больше НЕТ — каждая подходящая строка чата выдаёт наказание сразу.
+        -- Осталась только защита от двойного разбора ОДНОЙ строки: серверные
+        -- хуки отдают её дважды (и в разном виде), поэтому ключ — «ник + текст».
+        seenKey = nil,     -- «ник|текст» последней обработанной строки
         seenAt = 0,
-        cdClean = 0,       -- когда последний раз чистили кулдауны
         dirtyAt = nil,     -- есть несохранённые правки (пишем с задержкой)
         err = nil,         -- последняя ошибка (диагностика)
     },
@@ -35450,13 +35474,19 @@ do
     local AFT_CAP   = MAX_PAFT * 2 + 1
     local MAX_PTABS = 15       -- сколько вкладок можно завести
     local CMD_BYTES = 120      -- у строки чата SA-MP лимит 128 байт
-    local GAP_DEF   = 1.0      -- пауза между выдачами, сек
-    local CD_DEF    = 10       -- повтор одному игроку, сек
+    -- v1.19.211: пауз между выдачами и кулдауна на игрока больше НЕТ: каждая
+    -- подходящая строка чата выдаёт наказание сразу (как пришла — так и ушла).
+    -- Раньше вторая строка молчала до «Паузы между выдачами», а повтор одному
+    -- игроку — до «Повтора игроку»: это и было «задержками между сообщениями».
+    --
     -- v1.19.203: скриншот делается не в тот же кадр, а чуть позже: ответ
     -- сервера на команду успевает появиться в чате и попадает в кадр.
-    -- v1.19.204: и подтверждается — в чат идёт только найденный на диске файл.
+    -- v1.19.211: кадры идут ПО ОДНОМУ (следующий не начинается, пока не
+    -- закрыт предыдущий), поэтому результат одного кадра больше не теряется
+    -- в другом, а перед словом «не сохранён» папка проверяется ещё раз.
     local SHOT_DELAY = 0.6
     local SHOT_MAXDIR = 260    -- символов в пути к папке скриншотов
+    local SHOT_PREFIX = "grnd_" -- приставка имени своего кадра (поиск в папке)
 
     -- >>> GRND_PUNAUTO_LOGIC_BEGIN
     -- -----------------------------------------------------------------
@@ -35724,7 +35754,7 @@ do
     PA.newTab = paNewTab
 
     local PA_DEF = {
-        test = false, pause = GAP_DEF, cd = CD_DEF,
+        test = false,
         skipSelf = true, skipAdmins = true, watchSay = true, watchShout = true,
         watchOoc = true, autoId = false, notify = true, logOn = true,
         -- v1.19.203: автоскриншот сразу после выдачи (папка — shotDir)
@@ -35769,8 +35799,9 @@ do
         A.tabs = out
         A.sel = math.max(1, math.min(#out, math.floor(tonumber(A.sel) or 1)))
         A.on = paBool(A.on, false)
-        A.pause = math.max(0, math.min(120, tonumber(A.pause) or GAP_DEF))
-        A.cd = math.max(0, math.min(3600, tonumber(A.cd) or CD_DEF))
+        -- v1.19.211: настройки «Пауза между выдачами» и «Повтор игроку» убраны
+        -- вместе с самой задержкой — их значения из старого конфига просто
+        -- игнорируются (ключи pause/cd ниже не читаются).
         for i = 1, #PA_BOOLS do
             local k = PA_BOOLS[i]
             A[k] = paBool(A[k], PA_DEF[k])
@@ -35778,7 +35809,6 @@ do
         A.shotDir = clampText(oneLine(utf(A.shotDir or "")), SHOT_MAXDIR)
         A.fired = math.max(0, math.floor(tonumber(A.fired) or 0))
         if type(A.feed) ~= "table" then A.feed = {} end
-        if type(A.cdUntil) ~= "table" then A.cdUntil = {} end
         return A
     end
 
@@ -35865,8 +35895,8 @@ do
                         end
                     elseif k == "on" then PA.on = paBool(v, false)
                     elseif k == "sel" then sel = tonumber(v)
-                    elseif k == "pause" then PA.pause = tonumber(v)
-                    elseif k == "cd" then PA.cd = tonumber(v)
+                    -- ключи pause/cd из прошлых версий пропускаем: задержек
+                    -- в автопилоте больше нет (v1.19.211)
                     elseif k == "shotDir" then PA.shotDir = v
                     elseif PA_DEF[k] ~= nil then PA[k] = paBool(v, PA_DEF[k]) end
                 end
@@ -35894,8 +35924,6 @@ do
         local function w(k, v) f:write(k .. "=" .. tostring(v) .. "\n") end
         w("on", PA.on and 1 or 0)
         w("sel", tostring(PA.sel or 1))
-        w("pause", string.format("%.2f", tonumber(PA.pause) or GAP_DEF))
-        w("cd", tostring(math.floor(tonumber(PA.cd) or CD_DEF)))
         for i = 1, #PA_BOOLS do w(PA_BOOLS[i], PA[PA_BOOLS[i]] and 1 or 0) end
         w("shotDir", PA.shotDir or "")
         for i = 1, #PA.tabs do
@@ -36047,15 +36075,22 @@ do
     -- Отправка одной команды: та же очередь, что у ответов на репорт
     -- (по одной строке за тик, с переводом UTF-8 → CP1251 — иначе русская
     -- причина ушла бы «закорючками»).
+    -- Команда уходит НЕМЕДЛЕННО (v1.19.211). Раньше она шла через очередь
+    -- репорта: та отправляет по одной строке за 0.35 с, а пока открыт чат или
+    -- диалог — стоит вовсе. Для выдачи это лишняя задержка: строку автопилот
+    -- получил уже после отправки игроком, очередь только отодвигала команду.
+    -- Порядок способов: QR.sendChat (сразу) → grndChatSend → sampSendChat →
+    -- очередь репорта (только если прямые способы недоступны).
     local function paSend(cmd)
         cmd = tostring(cmd or "")
         if cmd == "" then return false end
-        if type(QR.queueCmd) == "function" then
-            local ok, res = pcall(QR.queueCmd, cmd)
+        if type(QR.sendChat) == "function" then
+            local ok, res = pcall(QR.sendChat, cmd)
             if ok and res ~= false then return true end
         end
-        if type(grndRepQueue) == "function" then
-            return pcall(grndRepQueue, cmd) and true or false
+        if type(grndChatSend) == "function" then
+            local ok, res = pcall(grndChatSend, cmd)
+            if ok and res ~= false then return true end
         end
         if type(sampSendChat) == "function" then
             local out = cmd
@@ -36064,6 +36099,15 @@ do
                 if okA and type(ansi) == "string" and ansi ~= "" then out = ansi end
             end
             return pcall(sampSendChat, out) and true or false
+        end
+        -- последний запас: очередь репорта (она медленнее — 0.35 с на строку,
+        -- поэтому идёт только после прямых способов)
+        if type(QR.queueCmd) == "function" then
+            local ok, res = pcall(QR.queueCmd, cmd)
+            if ok and res ~= false then return true end
+        end
+        if type(grndRepQueue) == "function" then
+            return pcall(grndRepQueue, cmd) and true or false
         end
         return false
     end
@@ -37053,6 +37097,15 @@ do
         return dir
     end
 
+    -- Папка, в которую ложится кадр: по ней ищем свежий свой файл (проверка
+    -- перед словом «не сохранён» — см. paShotFind).
+    local function paShotFileDir(path)
+        local dir = tostring(path or ""):match("^(.*)[/\\][^/\\]+$")
+        if dir == nil or dir == "" then return nil end
+        if dir:match("^%a:$") then dir = dir .. SHOT_SEP end
+        return dir
+    end
+
     -- Куда положить свой кадр: папку создаём и проверяем запись. Если указанную
     -- папку создать/писать нельзя — это ЧЕСТНЫЙ отказ с причиной, а не тихая
     -- подмена на другую папку.
@@ -37151,11 +37204,14 @@ do
         local job = PA.shotJob
         if type(job) ~= "table" then return end
         PA.shotJob = nil
+        -- id заявки обязателен: по нему тик понимает, ЧЬЁ это сохранение. Без
+        -- него результат вообще не принимался, и кадр оставался «не сохранён».
         local okC, okS, why, realPath = pcall(PA.shotGrab, job.path)
         if okC and okS then
             -- realPath — то написание пути, которым файл действительно записался
             -- (важно для путей с русскими буквами), поэтому проверяем именно его
-            PA.shotJobResult = { ok = true, path = (type(realPath) == "string" and realPath) or job.path,
+            PA.shotJobResult = { id = job.id, ok = true,
+                path = (type(realPath) == "string" and realPath) or job.path,
                 how = tostring(why or "") }
             return
         end
@@ -37163,7 +37219,7 @@ do
         -- Свой кадр не вышел. Запасной путь (плагин Screenshot.asi, штатная F8)
         -- НЕ трогаем здесь: это делает основной тик — require и нажатия клавиш
         -- должны идти из своего потока, а не из потока отрисовки.
-        PA.shotJobResult = { fallback = true, path = job.path,
+        PA.shotJobResult = { id = job.id, fallback = true, path = job.path,
             why = "свой кадр не вышел: " .. reason }
     end
 
@@ -37234,6 +37290,9 @@ do
                 plan.job = true
                 plan.paths = { target }
                 plan.expect = target
+                -- папка кадра: по ней ищем ЛЮБОЙ свежий свой файл (лишняя
+                -- проверка перед словом «не сохранён» — v1.19.211)
+                plan.dir = paShotFileDir(target)
                 plan.note = "свой кадр (D3D9)"
                 return true, plan
             end
@@ -37251,6 +37310,10 @@ do
     end
 
     -- Очередь кадра: PA.fire только ставит задачу, снимает — тик.
+    -- Кадр идёт как ОДНА ЗАЯВКА (PA.shotWait): пока она не закрыта — файл найден
+    -- или честный отказ, — следующая не начинается. Раньше заявки перекрывались
+    -- в одном слоте, результат одного кадра доставался другому, и в чат уходило
+    -- «не сохранён» при уже записанном файле.
     function PA.shotQueue(nick)
         if PA.shot == false then return false end
         PA.shotAt = os.clock() + SHOT_DELAY
@@ -37258,177 +37321,217 @@ do
         return true
     end
 
-    -- Одна точка отчёта: чат/журнал/тост + короткая строка на странице.
-    local function paShotReport(okFlag, short, full)
-        PA.shotLast = tostring(full or short)
+    -- Одна точка отчёта. Тост — всегда ровно про файл и одной короткой строкой:
+    -- «Скриншот сохранен» или «Скриншот не сохранён». Подробности (путь, способ,
+    -- причина, сборка) уходят в журнал скрипта — его видно в разделе «Журнал».
+    local function paShotReport(okFlag, last, logText)
+        PA.shotLast = tostring(last or "")
         PA.shotFail = (not okFlag) or nil
-        local prefix = okFlag and "скриншот сохранён: " or "скриншот не сохранён: "
         local tail = ""
         if not okFlag then
-            -- по строке в журнале сразу видно сборку и почему не вышло
             tail = " (v" .. tostring(GRND_SCRIPT_VERSION or "?")
                 .. (PA.shotSelfWhy and (", свой кадр: " .. tostring(PA.shotSelfWhy)) or "") .. ")"
         end
-        PA.log(prefix .. tostring(full or short) .. tail)
-        if not okFlag then
-        end
+        PA.log((okFlag and "скриншот сохранён: " or "скриншот не сохранён: ")
+            .. tostring(logText or last or "") .. tail)
         if PA.notify then
-            QR.toast("Автоскриншот: " .. tostring(short), okFlag and "ok" or "warn", okFlag and 3.4 or 5)
+            QR.toast(okFlag and "Скриншот сохранен" or "Скриншот не сохранён",
+                okFlag and "ok" or "warn", okFlag and 3.2 or 5)
         end
     end
 
+    -- Самый свежий СВОЙ кадр в папке. Имя кадра мог задать плагин, а написание
+    -- пути (UTF-8 в настройке / системная кодировка у файловых функций) —
+    -- разное, поэтому папку перебираем в обоих написаниях.
+    local function paShotFreshest(dir, afterT)
+        if type(dir) ~= "string" or dir == "" then return nil end
+        local lfs = libs and libs.lfs
+        if not (lfs and type(lfs.dir) == "function") then return nil end
+        local best, bestT, bestDir = nil, nil, nil
+        for _, variant in ipairs(paShotPathList(dir)) do
+            local okD, iter, obj = pcall(lfs.dir, variant)
+            if okD and type(iter) == "function" then
+                for file in iter, obj do
+                    file = tostring(file)
+                    if file ~= "." and file ~= ".."
+                        and file:sub(1, #SHOT_PREFIX) == SHOT_PREFIX then
+                        local full = variant .. SHOT_SEP .. file
+                        local okA, t = pcall(lfs.attributes, full, "modification")
+                        t = okA and tonumber(t) or nil
+                        if t and t >= (tonumber(afterT) or 0) and (not bestT or t >= bestT) then
+                            best, bestT, bestDir = file, t, variant
+                        end
+                    end
+                end
+            end
+        end
+        if best then return bestDir .. SHOT_SEP .. best end
+        return nil
+    end
+
+    -- Есть ли файл по этой заявке. Проверяем ВСЁ, что знаем: точные пути (свой
+    -- кадр и варианты плагина), затем свежий свой кадр в папке и, наконец,
+    -- папки штатных кадров SA-MP (кадр по F8). Найденный путь уходит в журнал.
+    local function paShotFind(W)
+        if type(W) ~= "table" then return nil end
+        local list = {}
+        if type(W.paths) == "table" then
+            for i = 1, #W.paths do list[#list + 1] = W.paths[i] end
+        end
+        if W.self then list[#list + 1] = W.self end
+        for i = 1, #list do
+            if paShotExists(list[i]) then return list[i] end
+        end
+        local dir = W.dir or paShotFileDir(W.self or (W.paths and W.paths[1]))
+        local f = paShotFreshest(dir, W.afterT or 0)
+        if f and paShotExists(f) then return f end
+        for i = 1, #(W.dirs or {}) do
+            local g = paShotFresh(W.dirs[i], W.afterT or 0)
+            if g then return g end
+        end
+        return nil
+    end
+
+    -- Закрыть заявку: файл найден (ok) или его нет ни по одному известному месту.
+    local function paShotClose(W, path, why)
+        PA.shotWait, PA.shotJob, PA.shotJobResult = nil, nil, nil
+        -- «…png.png» от старых версий плагина приводим к имени с одним
+        -- расширением, чтобы файл было легко найти
+        if path and path:sub(-8) == ".png.png" then
+            local nice = path:sub(1, #path - 4)
+            local okR, resR = pcall(os.rename, path, nice)
+            if okR and resR == true then path = nice end
+        end
+        local note = trim(tostring((W and W.note) or ""))
+        if path then
+            paShotReport(true, path, tostring(path) .. (note ~= "" and (" (" .. note .. ")") or ""))
+        else
+            local target = tostring((W and (W.expect or W.self)) or "")
+            local text = (target ~= "" and target or "папка кадра не задана")
+                .. (note ~= "" and ("; " .. note) or "")
+                .. (why and tostring(why) ~= "" and ("; " .. tostring(why)) or "")
+            paShotReport(false, text, text)
+        end
+        return true
+    end
+
+    -- Кадр выдачи: постановка (PA.shotQueue) → съёмка в потоке отрисовки
+    -- (PA.shotRender) → проверка файла на диске здесь.
     function PA.shotTick()
         local now = os.clock()
-        -- Фаза 1: пришло время снять кадр
+
+        -- Фаза 1: пришло время снимать кадр. Пока предыдущая заявка не закрыта,
+        -- следующую не начинаем — иначе её результат терялся бы в чужом.
         local at = tonumber(PA.shotAt)
-        if at then
-            if PA.shot == false then
-                PA.shotAt, PA.shotNick = nil, nil
-            elseif now >= at then
-                local nick = PA.shotNick or ""
-                PA.shotAt, PA.shotNick = nil, nil
+        if at and now >= at and PA.shotWait == nil then
+            PA.shotAt = nil
+            local nick = PA.shotNick or ""
+            PA.shotNick = nil
+            if PA.shot ~= false then
                 local okC, r1, r2 = pcall(PA.shotTake, nick)
                 if not okC then
-                    paShotReport(false, "ошибка запроса", tostring(r1))
-                elseif r1 == true and type(r2) == "table" and r2.noWait then
-                    paShotReport(false, "F8 нажат, но проверить нечем",
-                        "F8 нажат. Подтвердить сохранение нечем: папку кадров SA-MP "
-                        .. "находит только Screenshot.asi"
-                        .. (PA.shotSelfWhy and ("; свой кадр не вышел: " .. tostring(PA.shotSelfWhy)) or "")
-                        .. ". Ищите кадр в «Документы\\GTA San Andreas User Files\\SAMP\\screens»")
+                    paShotReport(false, "ошибка запроса", "ошибка запроса: " .. tostring(r1))
                 elseif r1 == true and type(r2) == "table" then
-                    -- свой кадр забирает обработчик onD3DPresent: его ждём
-                    -- недолго, а потом подстрахуемся плагином или F8
-                    r2.untilAt = now + (r2.job and SHOT_JOB_WAIT or SHOT_WAIT)
-                    PA.shotWait = r2
-                    if r2.job and r2.self then
-                        PA.shotJob = { path = r2.self, plan = r2 }
+                    local W = r2
+                    PA.shotId = (PA.shotId or 0) + 1
+                    W.id = PA.shotId
+                    W.untilAt = now + (W.job and SHOT_JOB_WAIT or SHOT_WAIT)
+                    W.selfAt = now + SHOT_JOB_WAIT     -- предел ожидания своего кадра
+                    -- заявка без своего кадра — это уже запасной путь: второй раз
+                    -- просить плагин/жать F8 не надо
+                    if not W.job then W.altTried = true end
+                    if W.job and W.self then
+                        PA.shotJob = { id = W.id, path = W.self }
+                    end
+                    PA.shotWait = W
+                    if W.noWait == true then
+                        -- F8 нажат, но проверить появление файла нечем: папку
+                        -- штатных кадров SA-MP находит только Screenshot.asi
+                        paShotClose(W, nil, "проверить сохранение нечем")
                     end
                 else
                     paShotReport(false, tostring(r2), tostring(r2))
                 end
             end
         end
-        -- Фаза 2: ждём файл — плагин сохраняет его не мгновенно
+
         local W = PA.shotWait
-        if W then
-            -- свой кадр: ждём ответ потока отрисовки
-            if W.job then
-                local J = PA.shotJobResult
-                if J then
-                    PA.shotJobResult = nil
-                    if J.ok then
-                        -- сохранили кадр — и сейчас же убеждаемся, что файл на
-                        -- месте: «сохранено» в чате должно совпадать с диском
-                        PA.shotWait, PA.shotJob = nil, nil
-                        if paShotExists(J.path) then
-                            paShotReport(true, (J.path:match("[^/\\]+$") or J.path) .. "  (свой кадр)", J.path)
-                        else
-                            paShotReport(false, "файл не появился после сохранения",
-                                tostring(J.path) .. " — D3DX отчитался об успехе, файла нет")
-                        end
-                        return true
+        if W == nil then return false end
+        now = os.clock()
+
+        -- Фаза 2: ответ потока отрисовки. Результат ЧУЖОЙ заявки (старый id)
+        -- не выдаём за текущий кадр — просто забираем, чтобы не мешал.
+        local J = PA.shotJobResult
+        if J then
+            PA.shotJobResult = nil
+            if tonumber(J.id) == tonumber(W.id) then
+                PA.shotJob = nil
+                W.job = nil
+                if J.ok then
+                    local how = trim(tostring(J.how or ""))
+                    if how ~= "" then W.note = trim(tostring(W.note or "") .. " · " .. how) end
+                    local p = tostring(J.path or W.self or "")
+                    if not paShotExists(p) then
+                        -- поток отчитался об успехе, а файла пока нет: не верим
+                        -- на слово — ищем кадр сами (ниже), лишь потом отказ
+                        W.note = trim(tostring(W.note or "") .. " · файла нет после записи")
                     end
-                    if J.fallback then
-                        -- съёмка не удалась — просим плагин или жмём F8 и ждём
-                        -- файл как обычно
-                        W.job = nil
-                        W.note = tostring(W.note or "") .. " · " .. tostring(J.why)
-                        local aOk, aWhy = paShotStartAlt(W)
-                        if not (aOk and (#(W.paths or {}) > 0 or #(W.dirs or {}) > 0)) then
-                            PA.shotWait = nil
-                            paShotReport(false, "кадр не сохранён",
-                                tostring(J.why) .. "; " .. tostring(aWhy or "запасной способ недоступен"))
-                            return true
-                        end
-                        W.untilAt = now + SHOT_WAIT
-                        return true
-                    end
-                    PA.shotWait = nil
-                    paShotReport(false, tostring(J.why or "кадр не сохранён"),
-                        tostring(J.path or "") .. " — " .. tostring(J.why or "?"))
-                    return true
+                else
+                    W.note = trim(tostring(W.note or "") .. " · " .. tostring(J.why or "свой кадр не вышел"))
+                    W.untilAt = now + SHOT_WAIT
+                    W.altTried = true
+                    -- запасной путь: плагин Screenshot.asi, а без него — F8
+                    paShotStartAlt(W)
                 end
-                if now >= (tonumber(W.untilAt) or 0) then
-                    -- обработчик не ответил (свёрнутая игра, другая сборка
-                    -- MoonLoader): даём шанс запасному пути и ждём файл ещё раз
-                    PA.shotJob = nil
-                    local aOk, aWhy = paShotStartAlt(W)
-                    if aOk and (#(W.paths or {}) > 0 or #(W.dirs or {}) > 0) then
-                        W.job = nil
-                        W.note = tostring(W.note or "") .. " · свой кадр: обработчик не ответил"
-                        W.untilAt = now + SHOT_WAIT
-                    else
-                        PA.shotWait = nil
-                        paShotReport(false, "кадр не снят",
-                            "свой кадр: обработчик onD3DPresent не ответил за "
-                            .. tostring(SHOT_JOB_WAIT) .. " с; "
-                            .. tostring(aWhy or "запасной способ недоступен"))
-                    end
-                    return true
-                end
+            end
+        end
+
+        -- Фаза 3: файл уже есть? (свой путь, пути плагина, свежий кадр в папке)
+        local found = paShotFind(W)
+        if found then return paShotClose(W, found) end
+
+        if now >= (tonumber(W.untilAt) or 0) then
+            -- своя заявка ещё ждёт поток отрисовки: даём ему время до предела
+            if W.job and PA.shotJob and now < (tonumber(W.selfAt) or 0) then
+                W.untilAt = now + 0.2
                 return true
             end
-            for i = 1, #(W.paths or {}) do
-                local p = W.paths[i]
-                if paShotExists(p) then
-                    -- «…png.png» от старых версий плагина приводим к имени
-                    -- с одним расширением, чтобы файл было легко найти
-                    if p:sub(-8) == ".png.png" then
-                        local nice = p:sub(1, #p - 4)
-                        local okR, resR = pcall(os.rename, p, nice)
-                        if okR and resR == true then p = nice end
-                    end
-                    PA.shotWait = nil
-                    paShotReport(true, (p:match("[^/\\]+$") or p) .. "  (" .. tostring(W.note or "") .. ")", p)
-                    return true
+            if W.job then
+                W.job = nil
+                PA.shotJob = nil
+                W.note = trim(tostring(W.note or "") .. " · поток отрисовки не ответил")
+            end
+            if W.altTried ~= true then
+                W.altTried = true
+                local aOk, aWhy = paShotStartAlt(W)
+                if not (aOk and (#(W.paths or {}) > 0 or #(W.dirs or {}) > 0)) then
+                    return paShotClose(W, nil, aWhy or "запасной способ недоступен")
                 end
+                W.untilAt = now + SHOT_WAIT
+                return true
             end
-            for i = 1, #(W.dirs or {}) do
-                local found = paShotFresh(W.dirs[i], W.afterT or 0)
-                if found then
-                    PA.shotWait = nil
-                    paShotReport(true, (found:match("[^/\\]+$") or found) .. "  (F8, папка SA-MP)", found)
-                    return true
-                end
-            end
-            if now >= (W.untilAt or 0) then
-                PA.shotWait = nil
-                -- подсказка должна быть короткой: многострочную «простыню» от
-                -- require («no file package.preload[lib.screenshot]…») в журнал
-                -- не тянем, оставляем только суть
-                local extra = PA.shotWhy and ("; плагин: " .. tostring(PA.shotWhy)) or ""
-                local whySelf = PA.shotSelfWhy and ("; свой кадр: " .. tostring(PA.shotSelfWhy)) or ""
-                paShotReport(false, "файл не появился (" .. tostring(W.note or "?") .. ")",
-                    tostring(W.expect) .. extra .. whySelf
-                    .. "; проверьте права на папку")
-            end
-            return true
+            -- Последняя проверка перед словом «не сохранён»: папка кадра ещё раз
+            -- — файл мог лечь позже или под другим написанием пути.
+            local late = paShotFind(W)
+            if late then return paShotClose(W, late) end
+            -- причины собираем БЕЗ дырок в таблице: table.concat с nil внутри
+            -- падает, а ошибку внутри кадра глушит pcall — кадр просто молчал бы
+            local extra = {}
+            if PA.shotWhy then extra[#extra + 1] = "плагин: " .. tostring(PA.shotWhy) end
+            if PA.shotSelfWhy then extra[#extra + 1] = "свой кадр: " .. tostring(PA.shotSelfWhy) end
+            return paShotClose(W, nil, table.concat(extra, "; "))
         end
-        return false
+        return true
     end
 
-    -- sameEvent: эту вкладку выдаёт та же СТРОКА, что и предыдущую — тогда
-    -- пауза между выдачами не мешает (иначе вторая совпавшая вкладка молчала
-    -- бы, хотя строка должна была сработать по обеим).
+    -- Выдача по подошедшей вкладке. v1.19.211: НИ паузы между выдачами, ни
+    -- кулдауна на игрока — строка пришла → наказание ушло сразу. Единственный
+    -- предохранитель остался на входе: одна и та же строка чата не должна
+    -- обрабатываться дважды (её отдают два серверных хука — см. PA.onChat).
+    -- sameEvent — та же СТРОКА подошла ещё и по другой вкладке: раз пауз нет,
+    -- обе вкладки просто выдают каждая свою команду.
     function PA.fire(tab, trigger, info, sameEvent)
         local now = os.clock()
-        local gap = tonumber(PA.pause) or GAP_DEF
-        local lastFired = tonumber(PA.lastAt) or 0
-        -- lastAt<=0 — ещё ни одной выдачи (и os.clock() отсчитывает время от
-        -- старта процесса): пустой отсчёт паузой не считаем, иначе первая
-        -- строка молчала бы до первой «секунды часов».
-        if not sameEvent and gap > 0 and lastFired > 0 and (now - lastFired) < gap then
-            PA.lastCheck = "пауза между выдачами (" .. tostring(gap) .. " с)"
-            return false
-        end
-        local cd = tonumber(PA.cd) or CD_DEF
-        local key = tostring(info.pid)
-        if cd > 0 and (PA.cdUntil[key] or 0) > now then
-            PA.lastCheck = "«" .. info.nick .. "» наказан недавно — повтор через "
-                .. tostring(math.ceil(PA.cdUntil[key] - now)) .. " с"
-            return false
-        end
         local cmd = PA_FN.buildCmd(tab.cmd, info, trigger, PA.autoId == true)
         if cmd == "" then
             PA.lastCheck = "во вкладке не заполнена «Команда»"
@@ -37454,7 +37557,6 @@ do
         end
         if after ~= "" and after ~= cmd then pcall(paSend, after) end
         PA.lastAt, PA.fired = now, (PA.fired or 0) + 1
-        PA.cdUntil[key] = now + cd
         -- v1.19.203: кадр-доказательство сразу после выдачи
         PA.shotQueue(info.nick)
         PA.lastCheck = "выдано: " .. cmd
@@ -37515,7 +37617,7 @@ do
         }
         PA.normalize()
         -- Сначала собираем совпавшие вкладки, потом выдаём: так видно, сколько
-        -- вкладок подошло, и пауза не режет вторую вкладку той же строки.
+        -- вкладок подошло. Все совпавшие выдают — задержек между выдачами нет.
         local hits, fired = {}, 0
         for i = 1, #PA.tabs do
             local tab = PA.tabs[i]
@@ -37540,10 +37642,18 @@ do
     function PA.onChat(text)
         if type(text) ~= "string" or text == "" then return false end
         PA.ensure()
-        -- одна и та же строка может прийти из двух хуков — гасим дубль
+        -- Одна и та же строка чата приходит из ДВУХ хуков, и в разном виде:
+        -- «Ник[7]: текст» (onChatMessage) и «Ник: текст» / «Ник крикнул: текст»
+        -- (onServerMessage). Ключ по одному тексту такие формы не связывает —
+        -- строка обрабатывалась дважды, и спасал только кулдаун на игрока.
+        -- Теперь ключ — «ник + текст», а кулдаунов больше нет (v1.19.211):
+        -- одна строка = ровно одна выдача, и никакой задержки между строками.
+        local nick, _, msg = PA_FN.parseLine(text)
+        local key = (nick and (paLower(paUtf(nick)) .. "|" .. tostring(msg)))
+            or PA_FN.one(PA_FN.plain(text))
         local now = os.clock()
-        if PA.seenKey == text and (now - (PA.seenAt or 0)) < 0.4 then return false end
-        PA.seenKey, PA.seenAt = text, now
+        if PA.seenKey == key and (now - (PA.seenAt or 0)) < 0.6 then return false end
+        PA.seenKey, PA.seenAt = key, now
         local ok, res = pcall(PA.check, text)
         if not ok then
             PA.err = tostring(res)
@@ -37580,17 +37690,18 @@ do
         return head .. " · " .. table.concat(hits, " | ")
     end
 
-    -- Тик из основного цикла: отложенное сохранение и чистка кулдаунов.
+    -- Тик из основного цикла: отложенное сохранение вкладок и кадр выдачи.
+    -- v1.19.211: чистить кулдауны больше нечего — их нет.
     function PA.tick()
         PA.ensure()
         local now = os.clock()
         if PA.dirtyAt and (now - PA.dirtyAt) > 0.6 then pcall(PA.save) end
-        pcall(PA.shotTick)
-        if now - (PA.cdClean or 0) > 10 then
-            PA.cdClean = now
-            for k, t in pairs(PA.cdUntil or {}) do
-                if (tonumber(t) or 0) <= now then PA.cdUntil[k] = nil end
-            end
+        -- ошибку кадра не глушим молча: иначе в игре он просто «ничего не делает»,
+        -- а причину не видно. Она ложится в PA.err (диагностика) и в журнал.
+        local okShot, errShot = pcall(PA.shotTick)
+        if not okShot then
+            PA.err = tostring(errShot)
+            PA.log("кадр: ошибка " .. tostring(errShot))
         end
         return true
     end
@@ -37990,29 +38101,13 @@ do
             yy2 = yy2 + BLOCK
         end
 
-        -- параметры: подпись слева, поле — у правого края, одной ширины
-        local PF = 64
-        if yy2 + 2 * (ROW + 2) <= bottomY then
-            local function param(yy, id, bufkey, lab, cap, def, val)
-                ctx.uiText(c2X, yy + 7, lab, dim, LABEL)
-                field(ctx, id, bufkey, cap, c2X + colW2 - PF, yy, PF, ROW, def, false, val)
-            end
-            param(yy2, "##grnd_pa_pause", "paPause", "Пауза между выдачами, сек", 8, "1",
-                string.format("%.1f", tonumber(PA.pause) or GAP_DEF))
-            local pv = tonumber((bufText("paPause"):gsub("[^%d%.%,]", ""):gsub(",", ".")))
-            if pv and math.abs(pv - (tonumber(PA.pause) or GAP_DEF)) > 0.001 then
-                PA.pause = math.max(0, math.min(120, pv))
-                PA.touch()
-            end
-            yy2 = yy2 + ROW + 2
-            param(yy2, "##grnd_pa_cd", "paCd", "Повтор игроку, сек", 8, "10",
-                tostring(math.floor(tonumber(PA.cd) or CD_DEF)))
-            local kv = tonumber((bufText("paCd"):gsub("%D", "")))
-            if kv and kv ~= math.floor(tonumber(PA.cd) or CD_DEF) then
-                PA.cd = math.max(0, math.min(3600, kv))
-                PA.touch()
-            end
-            yy2 = yy2 + ROW + BLOCK
+        -- v1.19.211: полей «Пауза между выдачами» и «Повтор игроку» больше нет —
+        -- задержек в автопилоте не осталось. Вместо двух полей одна короткая
+        -- строка: так сразу видно, как он теперь работает.
+        if yy2 + 15 <= bottomY then
+            yy2 = yy2 + paHint(ctx, c2X, yy2, colW2,
+                "Задержек нет: строка выдаёт наказание сразу.", mut, 1)
+            yy2 = yy2 + BLOCK
         end
 
         -- тумблеры: ровная сетка по два в ряд
@@ -38077,7 +38172,8 @@ do
             if PA.err then
                 msg = "Ошибка: " .. tostring(PA.err)
             elseif PA.shotFail and PA.shotLast then
-                msg = "Скриншот: " .. tostring(PA.shotLast)
+                -- строка появляется только при отказе: коротко и с путём
+                msg = "Кадр не сохранён: " .. tostring(PA.shotLast)
             end
             if msg and stY + lineH(ctx, TEXT) <= bottomY then
                 ctx.uiText(x, stY, fit(msg, w, ctx.drawnW, TEXT), warnC, TEXT)

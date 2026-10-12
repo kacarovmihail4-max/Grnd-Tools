@@ -1,8 +1,9 @@
 -- Интеграционный стенд модуля автопилота наказаний («Наказания» →
 -- «Автопилот»): вырезает do-блок из grnd_adm_tools.lua и гоняет его с
 -- заглушками (GRND_CONFIG, QR.toast, samp*, GRND_LOG, ImGui) — без
--- MoonLoader. Проверяет вкладки/конфиг, выдачу по трём видам строк, паузу и
--- кулдаун, предохранители (себя/админов/каналы), режим проверки, dryRun и
+-- MoonLoader. Проверяет вкладки/конфиг, выдачу по трём видам строк, ОТСУТСТВИЕ
+-- задержек (v1.19.211: ни пауз, ни кулдаунов), предохранители
+-- (себя/админов/каналы), режим проверки, dryRun, автоскриншот выдачи и
 -- отрисовку страницы (буферы полей, кнопки, тумблеры, плюс/крестик).
 -- Путь к проверяемому скрипту: GRND_SCRIPT / рядом с тестом / текущий каталог.
 local function findScript()
@@ -40,12 +41,19 @@ local queued = {}          -- отправленные команды
 local click = {}           -- id -> true: «нажатие» кнопки в текущем кадре
 local logged = {}          -- записи журнала
 local toasts = {}          -- уведомления
+local toastKinds = {}      -- вид уведомления (ok/warn/info) — цвет на экране
 local bufs = {}            -- QR.bufs
 
-local QR = { bufs = bufs, toast = function(t) toasts[#toasts+1] = t end,
+local queueCalls = 0       -- сколько раз команда ушла через МЕДЛЕННУЮ очередь
+local QR = { bufs = bufs,
+    toast = function(t, kind) toasts[#toasts+1] = t toastKinds[#toastKinds+1] = tostring(kind or "") end,
     path = function() return "C:\\samp\\grnd_repquick.cfg" end,
     myNick = function() return "Mixa" end,
-    queueCmd = function(cmd) queued[#queued+1] = cmd return true end }
+    queueCmd = function(cmd) queueCalls = queueCalls + 1 queued[#queued+1] = cmd return true end }
+-- v1.19.211: в игре grndChatSend сам переводит строку в CP1251 и отдаёт её в
+-- sampSendChat. В стенде — просто запись команды: проверки читают ТЕКСТ команды,
+-- а не транспорт, и отдельно следят, что медленная очередь не задействована.
+local grndChatSend = function(cmd) queued[#queued+1] = tostring(cmd) return true end
 QR.punAuto = {}
 
 local GRND_CONFIG = {}
@@ -108,6 +116,31 @@ end
 local function isConnected(id) return connected[id] ~= nil end
 local function nickOf(id) return connected[id] end
 local function myId() return 5 end
+
+-- ---------- lfs (минимум для поиска свежего кадра в папке) ----------
+-- Настоящий LuaFileSystem в стенде не поднять, а скрипту нужны только две
+-- функции: перебор файлов папки и время правки. Делаем их через оболочку.
+_G.libs = _G.libs or {}
+_G.libs.lfs = {
+    dir = function(path)
+        local p = io.popen("ls -1a '" .. tostring(path) .. "' 2>/dev/null")
+        if not p then return nil end
+        local files = {}
+        for line in p:lines() do files[#files + 1] = line end
+        p:close()
+        if #files == 0 then return nil end
+        local i = 0
+        return function() i = i + 1 return files[i] end
+    end,
+    attributes = function(path, what)
+        if what ~= "modification" then return nil end
+        local p = io.popen("stat -c %Y '" .. tostring(path) .. "' 2>/dev/null")
+        if not p then return nil end
+        local v = p:read("*l")
+        p:close()
+        return tonumber(v)
+    end,
+}
 
 -- ---------- заглушка Screenshot.asi ----------
 -- Скрипт берёт модуль только через require, а модуль этот ничего не
@@ -227,7 +260,7 @@ end
 -- ---------- загрузка блока ----------
 local chunk = "return function(QR, GRND_CONFIG, GRND_LOG, _G, os, string, table, math, pcall, print, type, tostring, tonumber,\n"
     .. "  theme, field, button, chip, lineH, fit, wrapW, bufText, utf8Len, clampText, oneLine, utf, trim, byteCut, utf8Cut,\n"
-    .. "  grndLowerUtf, grndUtf8Text, grndSessionReady, grndRepQueue, grndAnsiText,\n"
+    .. "  grndLowerUtf, grndUtf8Text, grndSessionReady, grndRepQueue, grndAnsiText, grndChatSend,\n"
     .. "  sampIsPlayerConnected, sampGetPlayerNickname, sampGetLocalPlayerId, sampSendChat)\n"
     .. block .. "\nend"
 -- ВАЖНО: чанк сам ВОЗВРАЩАЕТ тело-функцию, её и надо вызвать.
@@ -235,7 +268,7 @@ local makeBody = assert(loadstring(chunk, "@punauto_module"))
 local body = makeBody()
 body(QR, GRND_CONFIG, GRND_LOG, _G, os, string, table, math, pcall, logPrint, type, tostring, tonumber,
    theme, field, button, chip, lineH, fit, wrapW, bufText, utf8Len, clampText, oneLine, utf, trim, byteCut, utf8Cut,
-   grndLowerUtf, grndUtf8Text, grndSessionReady, grndRepQueue, grndAnsiText,
+   grndLowerUtf, grndUtf8Text, grndSessionReady, grndRepQueue, grndAnsiText, grndChatSend,
    sampIsPlayerConnected, sampGetPlayerNickname, sampGetLocalPlayerId, sampSendChat)
 
 local PA = QR.punAuto
@@ -253,8 +286,10 @@ local function ok(name, cond) eq(name, cond and "yes" or "no", "yes") end
 PA.ensure()
 eq("tabs.default", #PA.tabs, 1)
 eq("on.default", PA.on, false)
-eq("pause.default", PA.pause, 1.0)
-eq("cd.default", PA.cd, 10)
+-- v1.19.211: настройки задержек убраны вместе с самой задержкой
+eq("nodelay.pause", PA.pause, nil)
+eq("nodelay.cd", PA.cd, nil)
+eq("nodelay.cduntil", PA.cdUntil, nil)
 eq("autoId.default", PA.autoId, false)   -- команда уходит ровно как написана
 eq("shot.default", PA.shot, true)         -- автоскриншот после выдачи включён
 ok("shotDir.default", type(PA.shotDirDefault()) == "string" and #PA.shotDirDefault() > 0)
@@ -299,12 +334,23 @@ eq("fired.counter", PA.fired, 1)
 ok("logged", tostring(logged[#logged]):find("выдано", 1, true) ~= nil)
 ok("toast", toasts[#toasts] ~= nil)
 
--- кулдаун: тот же игрок сразу — повтор не уходит
+-- v1.19.211: ЗАДЕРЖЕК НЕТ. Раньше здесь стоял кулдаун и повтор молчал до
+-- «Повтора игроку»; теперь та же строка от того же игрока выдаёт сразу.
 queued = {}
 PA.onChat("Nik_Name[7]: дм снова")
-eq("cooldown", #queued, 0)
+eq("nodelay.repeat", #queued, 2)
+eq("nodelay.repeat.cmd", queued[1], "/mute 7 60 флуд")
 
--- другой игрок — срабатывает (пауза между выдачами вышла по времени)
+-- и вторая строка подряд тоже выдаёт (никакой «паузы между выдачами»)
+queued = {}
+PA.onChat("Nik_Name[7]: и ещё дм")
+eq("nodelay.next.line", #queued, 2)
+
+-- и уходит она НАПРЯМУЮ: медленная очередь репорта (0.35 с на строку) не
+-- трогается вовсе — иначе команда ждала бы своей очереди
+eq("nodelay.direct.queue", queueCalls, 0)
+
+-- другой игрок — срабатывает
 PA.lastAt = os.clock() - 5
 connected[9] = "Vasya_Pupkin"
 _G.grndRosterSync()
@@ -316,7 +362,6 @@ eq("shout.cmd", queued[1], "/mute 9 60 флуд")
 -- крик не отслеживается
 PA.watchShout = false
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.onChat("Vasya_Pupkin крикнул: дм")
 eq("watchShout.off", #queued, 0)
@@ -324,13 +369,11 @@ PA.watchShout = true
 
 -- ООС
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.onChat("(( Vasya_Pupkin: dm please ))")
 eq("ooc.fire", #queued, 2)
 eq("ooc.cmd", queued[1], "/mute 9 60 флуд")
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.onChat("(( Vasya_Pupkin: dm please ))!!")   -- уже не ООС-обёртка
 ok("ooc.broken.parsed", PA.lastCheck ~= nil)
@@ -338,7 +381,6 @@ ok("ooc.broken.parsed", PA.lastCheck ~= nil)
 -- режим проверки: строки разбираются, но НЕ отправляются
 PA.test = true
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 local firedBefore = PA.fired
 PA.onChat("Nik_Name[7]: дм")
@@ -350,7 +392,6 @@ PA.test = false
 -- выключено — не реагирует вовсе
 PA.on = false
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.onChat("Nik_Name[7]: дм")
 eq("off.no.send", #queued, 0)
@@ -358,7 +399,6 @@ PA.on = true
 
 -- админ из списка чекера не наказывается
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.onChat("Admin_One[400]: дм")
 eq("skipAdmin", #queued, 0)
@@ -366,14 +406,12 @@ ok("skipAdmin.text", tostring(PA.lastCheck):find("администратор", 1
 
 -- себя не наказываем
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.onChat("Mixa[5]: дм")
 eq("skipSelf", #queued, 0)
 
 -- защита от двойного хука: та же строка дважды подряд — один разбор
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.onChat("Nik_Name[7]: дм дубль")
 local n1 = #queued
@@ -382,7 +420,6 @@ ok("hook.dedupe", #queued == n1 and n1 > 0)
 
 -- сообщение без триггера иголку не ловит
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.onChat("Nik_Name[7]: дмитрий привет")
 eq("no.trigger", #queued, 0)
@@ -390,7 +427,6 @@ ok("no.trigger.text", tostring(PA.lastCheck):find("не найден", 1, true) 
 
 -- точное совпадение (режим exact у второй вкладки «аа»)
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.onChat("Nik_Name[7]: аа")
 eq("exact.fire", #queued, 1)
@@ -398,7 +434,6 @@ eq("exact.cmd", queued[1], "/jail 7 10 афк")
 
 -- серверные строки не трогаем
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.onChat("Администратор Mixa: нарушение")
 eq("server.line.no", #queued, 0)
@@ -411,7 +446,6 @@ eq("dry.run.no.send", #queued, 0)
 
 -- вкладка выключена тумблером — молчит
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.tabs[1].on = false
 PA.onChat("Nik_Name[7]: дм")
@@ -420,7 +454,6 @@ PA.tabs[1].on = true
 
 -- пустая команда — строка разобрана, но выдачи нет
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.tabs[1].cmd = ""
 PA.onChat("Nik_Name[7]: дм пустая")
@@ -431,7 +464,6 @@ PA.save()
 
 -- команда БЕЗ переменных: по умолчанию уходит ровно так, как написана
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.tabs[1].cmd = "/ban Nik_Name 3 дм"
 PA.onChat("Nik_Name[7]: дм наконец")
@@ -439,7 +471,6 @@ eq("verbatim.send", queued[1], "/ban Nik_Name 3 дм")
 -- тумблер «подставлять ID» — только тогда ID встаёт после имени команды
 PA.autoId = true
 PA.lastAt = os.clock() - 5
-PA.cdUntil = {}
 queued = {}
 PA.onChat("Nik_Name[7]: дм опять")
 eq("autoId.send", queued[1], "/ban 7 Nik_Name 3 дм")
@@ -463,8 +494,7 @@ do
     local shots = shotStub.shots
     PA.shotAt, PA.shotWait, PA.shotFail, PA.shotLast = nil, nil, nil, nil
     PA.shot = true
-    PA.cdUntil = {}
-
+    
     -- ---- 1. плагин сохранил файл: успех подтверждается проверкой ----
     shotStub.makeFile, shotStub.dupExt = true, false
     PA.shotDir = shotDir("a")
@@ -580,8 +610,7 @@ do
     PA.shotSelfReady = function() return true end
     PA.shotRenderReady = true
     PA.shot = true
-    PA.cdUntil = {}
-    PA.shotDir = shotDir("e")
+        PA.shotDir = shotDir("e")
     local dirE = PA.shotDir
     PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
     local grabbed = {}
@@ -609,7 +638,9 @@ do
     eq("self.saved", PA.shotFail, nil)
     eq("self.saved.path", PA.shotLast, grabbed[1])
     ok("self.saved.log", tostring(logged[#logged]):find("сохранён", 1, true) ~= nil)
-    ok("self.saved.toast", tostring(toasts[#toasts]):find("свой кадр", 1, true) ~= nil)
+    -- v1.19.211: тост короткий и ровно про файл — подробности в журнале
+    eq("self.saved.toast", tostring(toasts[#toasts]), "Скриншот сохранен")
+    eq("self.saved.toast.kind", toastKinds[#toastKinds], "ok")
     -- в moonloader.log по-прежнему ничего не пишем (v1.19.210: заказчик просил
     -- убрать диагностику из лога — итог виден в чате и в журнале скрипта)
     eq("log.quiet.after.save", #shotLog, 0)
@@ -619,14 +650,25 @@ do
     shotStub.makeFile = false
     PA.shotDir = shotDir("e2")
     PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
-    PA.lastAt = os.clock() - 5
     PA.tick()
     PA.shotAt = os.clock() - 1
     PA.tick()
     PA.shotRender()
     PA.tick()
+    -- «файла нет после записи» — не приговор: кадр мог лечь чуть позже, поэтому
+    -- скрипт ещё раз проверяет папку и молчит, пока не вышли сроки
+    eq("self.liar.waits", type(PA.shotWait), "table")
+    eq("self.liar.not.yet", PA.shotFail, nil)
+    PA.shotWait.untilAt, PA.shotWait.selfAt = os.clock() - 1, os.clock() - 1
+    PA.shotWait.altTried = true          -- запасной путь уже пробовали
+    PA.tick()
     eq("self.liar.flag", PA.shotFail, true)
     ok("self.liar.log", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
+    eq("self.liar.toast", tostring(toasts[#toasts]), "Скриншот не сохранён")
+    eq("self.liar.toast.kind", toastKinds[#toastKinds], "warn")
+    -- ошибку внутри кадра тик больше НЕ глушит молча (раньше из-за nil в
+    -- table.concat кадр просто ничего не делал, а причины не было видно)
+    eq("self.liar.no.err", PA.err, nil)
     os.execute("rm -rf /tmp/grnd_shot_e2")
 
     -- свой кадр не вышел: сразу подхватывает запасной путь (плагин), и в чат
@@ -645,7 +687,9 @@ do
     eq("self.fb.cleared", PA.shotWait and PA.shotWait.job or nil, nil)
     PA.tick()                                    -- плагин уже положил файл
     eq("self.fb.saved", PA.shotFail, nil)
-    ok("self.fb.reason", tostring(toasts[#toasts]):find("не вышел", 1, true) ~= nil)
+    eq("self.fb.toast", tostring(toasts[#toasts]), "Скриншот сохранен")
+    -- причина отказа своего кадра — в журнале скрипта, а не в тосте
+    ok("self.fb.reason", tostring(logged[#logged]):find("не вышел", 1, true) ~= nil)
     ok("self.fb.path", tostring(PA.shotLast):find(PA.shotDir, 1, true) ~= nil)
     shotStub.makeFile = false
 
@@ -662,8 +706,9 @@ do
     PA.shotWait.untilAt = os.clock() - 1         -- «прошло 5 секунд»
     PA.tick()                                    -- срок вышел: честный провал
     eq("self.both.fail", PA.shotFail, true)
-    ok("self.both.toast", tostring(toasts[#toasts]):find("не появился", 1, true) ~= nil)
+    eq("self.both.toast", tostring(toasts[#toasts]), "Скриншот не сохранён")
     ok("self.both.log", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
+    ok("self.both.path", tostring(PA.shotLast):find(PA.shotDir, 1, true) ~= nil)
     eq("log.quiet.after.fail", #shotLog, 0)
 
     -- обработчик кадра не ответил (свёрнутая игра, чужая сборка MoonLoader):
@@ -676,14 +721,110 @@ do
     PA.shotAt = os.clock() - 1
     PA.tick()                                    -- задача ждёт обработчик
     ok("self.t.waits", PA.shotJob ~= nil and PA.shotWait ~= nil and PA.shotWait.job ~= nil)
+    -- свой кадр ждём до selfAt, потом уходим на запасной путь
     PA.shotWait.untilAt = os.clock() - 1
+    PA.tick()
+    eq("self.t.still.waits", PA.shotWait and PA.shotWait.job or nil, true)
+    PA.shotWait.untilAt, PA.shotWait.selfAt = os.clock() - 1, os.clock() - 1
     PA.tick()                                    -- не дождались -> запасной путь
     eq("self.t.job.cleared", PA.shotJob, nil)
     eq("self.t.job.flag", PA.shotWait and PA.shotWait.job or nil, nil)
     PA.tick()                                    -- плагин уже положил файл
     eq("self.t.saved", PA.shotFail, nil)
-    ok("self.t.note", tostring(toasts[#toasts]):find("не ответил", 1, true) ~= nil)
+    eq("self.t.toast", tostring(toasts[#toasts]), "Скриншот сохранен")
+    ok("self.t.note", tostring(logged[#logged]):find("не ответил", 1, true) ~= nil)
     shotStub.makeFile = false
+
+    -- ФАЙЛ ЕСТЬ, А ИМЯ ДРУГОЕ. Ровно жалоба заказчика: кадр на диске, а в чат
+    -- уходило «не сохранён». Проверяем, что перед отказом папка проверяется ещё
+    -- раз и найденный файл идёт в отчёт как «сохранён».
+    do
+        PA.shotGrab = function() return true end         -- по нужному пути файла нет
+        PA.shotDir = shotDir("j")
+        local dirJ = PA.shotDir
+        PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
+        PA.tick()
+        PA.shotAt = os.clock() - 1
+        PA.tick()
+        PA.shotRender()
+        -- «свой» кадр лёг в папку другим файлом (другое написание пути/имя)
+        local alien = dirJ .. "/grnd_2026-10-12_12-00-00_Nik_Name.png"
+        local fA = io.open(alien, "wb")
+        if fA then fA:write("png") fA:close() end
+        PA.tick()
+        eq("find.alien.saved", PA.shotFail, nil)
+        eq("find.alien.path", PA.shotLast, alien)
+        ok("find.alien.log", tostring(logged[#logged]):find("сохранён", 1, true) ~= nil)
+        eq("find.alien.toast", tostring(toasts[#toasts]), "Скриншот сохранен")
+        os.execute("rm -rf " .. dirJ)
+    end
+
+    -- СЛУЧАЙ ЗАКАЗЧИКА (v1.19.211). Поток отрисовки записал файл ПОЗЖЕ срока
+    -- ожидания (низкий FPS, свёрнутая игра, поздний монтаж хука). Раньше заявка к
+    -- этому моменту уже уходила на запасной путь, а свой путь из проверки
+    -- пропадал — и в чат шло «не сохранён», хотя кадр лежал в указанной папке.
+    -- Теперь перед отказом путь и папка проверяются ещё раз: «сохранён».
+    do
+        PA.shotGrab = function(path)
+            local f = io.open(path, "wb")
+            if f then f:write("png") f:close() end
+            return true
+        end
+        shotStub.makeFile = false
+        PA.shotDir = shotDir("m")
+        PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
+        PA.tick()
+        PA.shotAt = os.clock() - 1
+        PA.tick()
+        ok("slow.plan", PA.shotJob ~= nil and PA.shotWait ~= nil)
+        -- сроки вышли, а поток отрисовки ещё молчит: заявка уходит на запасной путь
+        PA.shotWait.untilAt, PA.shotWait.selfAt = os.clock() - 1, os.clock() - 1
+        PA.tick()
+        eq("slow.job.dropped", PA.shotJob, nil)
+        -- ...и только теперь обработчик кадра успел записать свой файл
+        local latePath = tostring(PA.shotWait and PA.shotWait.self or "")
+        local fL = io.open(latePath, "wb")
+        if fL then fL:write("png") fL:close() end
+        PA.tick()
+        eq("slow.saved", PA.shotFail, nil)
+        eq("slow.saved.path", PA.shotLast, latePath)
+        eq("slow.saved.toast", tostring(toasts[#toasts]), "Скриншот сохранен")
+        os.execute("rm -rf /tmp/grnd_shot_m")
+        shotStub.makeFile = true
+    end
+
+    -- РЕЗУЛЬТАТ ЧУЖОГО КАДРА. Раньше заявки перекрывались в одном слоте, и отчёт
+    -- прошлого кадра выдавался за текущий. Теперь результат принимается только
+    -- по своему номеру: чужой просто забирается и ни на что не влияет.
+    do
+        PA.shotGrab = function(path)
+            local f = io.open(path, "wb")
+            if f then f:write("png") f:close() end
+            return true
+        end
+        PA.shotDir = shotDir("k")
+        PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
+        PA.tick()
+        PA.shotAt = os.clock() - 1
+        PA.tick()
+        ok("stale.plan", PA.shotJob ~= nil and PA.shotWait ~= nil)
+        PA.shotJobResult = { id = (tonumber(PA.shotWait.id) or 0) + 77, ok = true,
+            path = "/tmp/grnd_never.png" }
+        PA.tick()
+        eq("stale.result.dropped", PA.shotJobResult, nil)
+        eq("stale.result.waiting", type(PA.shotWait), "table")
+        eq("stale.result.no.report", PA.shotFail, nil)
+        eq("stale.result.no.last", PA.shotLast, nil)
+        -- и настоящий результат той же заявки по-прежнему принимается
+        PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
+        PA.shotAt = os.clock() - 1
+        PA.tick()
+        PA.shotRender()
+        PA.tick()
+        eq("stale.then.real", PA.shotFail, nil)
+        ok("stale.then.real.path", tostring(PA.shotLast):find("/tmp/grnd_shot_k/", 1, true) ~= nil)
+        os.execute("rm -rf /tmp/grnd_shot_k")
+    end
 
     -- своя папка не пишется: свой кадр уступает запасному пути (плагин или
     -- «App screens\grnd»), а причина видна в подписи способа
@@ -863,8 +1004,7 @@ do
     PA.shotSelfReady = function() return true end
     PA.shotRenderReady = true
     PA.shot = true
-    PA.cdUntil = {}
-    PA.lastAt = os.clock() - 5
+        PA.lastAt = os.clock() - 5
     PA.tabs[1].cmd = "/mute {ID} 60 флуд"
 
     -- папка игры: относительный путь должен разрешаться от неё
@@ -941,6 +1081,10 @@ eq("tab.del", PA.tabDel(2) and "yes" or "no", "yes")
 eq("tab.del.count", #PA.tabs, 1)
 eq("tab.del.save", tostring(CONFIG["grnd_punauto"]["t2_trigger"]), "nil")
 eq("tab.del.keys", tostring(CONFIG["grnd_punauto"]["t1_trigger"]), "дм, dm")
+-- v1.19.211: настройки задержек в конфиг не возвращаются (и старые значения
+-- из чужого конфига игнорируются при загрузке)
+eq("nodelay.not.saved.pause", tostring(CONFIG["grnd_punauto"]["pause"]), "nil")
+eq("nodelay.not.saved.cd", tostring(CONFIG["grnd_punauto"]["cd"]), "nil")
 
 
 -- ================= СМОУК-ТЕСТ СТРАНИЦЫ (заглушка ctx) =================
@@ -1132,8 +1276,9 @@ ok("drawfit.shot.toggle", drawSeen("скриншот после выдачи"))
 ok("drawfit.shot.dir", drawSeen("Папка для скриншотов"))
 -- правая колонка: проверка строки, параметры, тумблеры, лента
 ok("drawfit.testline", drawSeen("Проверка строки"))
-ok("drawfit.pause", drawSeen("Пауза между выдачами"))
-ok("drawfit.cd", drawSeen("Повтор игроку"))
+ok("drawfit.nodelay", drawSeen("Задержек нет"))
+eq("drawfit.no.pause.field", drawSeen("Пауза между выдачами") and "есть" or "нет", "нет")
+eq("drawfit.no.cd.field", drawSeen("Повтор игроку") and "есть" or "нет", "нет")
 ok("drawfit.toggles", drawSeen("не трогать себя"))
 ok("drawfit.tabon", drawSeen("вкладка включена"))
 ok("drawfit.feed", drawSeen("Последние срабатывания"))
@@ -1177,7 +1322,7 @@ do
     local body2 = assert(loadstring(chunk, "@punauto_module2"))()
     body2(QR2, GRND_CONFIG, GRND_LOG, _G, os, string, table, math, pcall, logPrint, type, tostring, tonumber,
         theme, field, button, chip, lineH, fit, wrapW, bufText, utf8Len, clampText, oneLine, utf, trim, byteCut, utf8Cut,
-        grndLowerUtf, grndUtf8Text, grndSessionReady, grndRepQueue, grndAnsiText,
+        grndLowerUtf, grndUtf8Text, grndSessionReady, grndRepQueue, grndAnsiText, grndChatSend,
         sampIsPlayerConnected, sampGetPlayerNickname, sampGetLocalPlayerId, sampSendChat)
     local P2 = QR2.punAuto
     P2.ensure()
@@ -1258,6 +1403,15 @@ do
     ok("hook.reverse", count("_G.grndShotHookInstall") >= 2)      -- и обратный вызов
     eq("hook.calls", count("pcall(_G.grndShotFrame)"), 3)         -- две обёртки + служебный кадр
     ok("hook.reason", count("нет хука кадра") == 1)
+    -- ЗАДЕРЖЕК НЕТ (v1.19.211): ни констант паузы/кулдауна, ни их полей —
+    -- чтобы «пауза между выдачами» не вернулась правкой.
+    eq("nodelay.no.gap.const", count("GAP_DEF") + count("CD_DEF"), 0)
+    eq("nodelay.no.cduntil", count("cdUntil"), 0)
+    eq("nodelay.no.pause.field", count("PA.pause"), 0)
+    -- команда уходит ПРЯМОЙ отправкой, а очередь репорта (0.35 с на строку) —
+    -- только последний запас
+    eq("nodelay.direct", count("if type(QR.sendChat) == \"function\" then"), 1)
+    eq("nodelay.queue.last", count("последний запас: очередь репорта"), 1)
     -- ТИПЫ МЕТОДОВ D3D9. Из-за записи без «(*)» в игре было
     -- «bad argument #1 to 'bind' (invalid C type)»: LuaJIT такие типы не
     -- принимает, и съёмка падала ещё до первого вызова D3D. Проверяем, что в
