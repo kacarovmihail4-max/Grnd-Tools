@@ -1,6 +1,19 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.205"
+GRND_SCRIPT_VERSION = "1.19.206"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.206 — правки по замечаниям (кадр выдачи опять не сохранялся):
+--   1) Кадр снимается в кадре ImGui (setupRender), а не по событию
+--      onD3DPresent: его поддерживают не все сборки MoonLoader, и именно
+--      поэтому свой кадр не снимался вовсе, а в журнал шло «нет
+--      Screenshot.asi (no file … lib.screenshot …)». Хук кадра ImGui есть
+--      всегда — меню же рисуется.
+--   2) Устройство D3D9 читается напрямую по адресу 0xC97C28 (RwD3DDevice,
+--      gta_sa.exe 1.0 US) — без модуля memory и без getD3DDevicePtr.
+--   3) Папка «Документы» спрашивается у Windows (shell32.SHGetFolderPathW),
+--      поэтому путь к кадрам SA-MP и относительные пути работают и БЕЗ
+--      Screenshot.asi: запасной путь (F8) теперь тоже можно проверить.
+--   4) В журнале о неудаче — одна строка: причина отказа своего кадра,
+--      версия скрипта и короткая причина плагина (без «простыни» require).
 -- v1.19.205 — правки по замечаниям:
 --   1) Автоскриншот выдачи снимает САМ СКРИПТ (D3D9: задний буфер -> системная
 --      поверхность -> PNG штатной d3dx9). Доустанавливать ничего не нужно:
@@ -36026,6 +36039,23 @@ do
     --      свежий файл (имя задаёт игра, угадать его нельзя).
     local SHOT_WAIT = 5          -- сколько секунд ждём файл после запроса
     local SHOT_SEP = package.config:sub(1, 1)
+
+    -- Ошибку require («no file package.preload[lib.screenshot]…») нельзя тащить
+    -- в журнал целиком: это три строки шума. Оставляем суть, одна строка.
+    -- LuaJIT-FFI есть в MoonLoader всегда: им и работаем с D3D9/Screenshot.asi
+    local function paShotLibs()
+        local okF, ffi = pcall(require, "ffi")
+        if okF and type(ffi) == "table" then return ffi end
+        return nil
+    end
+
+    local function paShotClean(v)
+        local t = tostring(v or "")
+        t = t:gsub("\r", ""):gsub("\n.*$", "")
+        t = t:gsub("^%s+", ""):gsub("%s+$", "")
+        if #t > 120 then t = t:sub(1, 117) .. "…" end
+        return t
+    end
     local SHOT_MOD, SHOT_TRIED = nil, false
     local function paShotModule()
         if SHOT_TRIED then return SHOT_MOD end
@@ -36036,7 +36066,7 @@ do
             SHOT_MOD = mod
         else
             -- чаще всего здесь «ffi.load: Screenshot.asi: не найден»
-            PA.shotWhy = tostring(mod)
+            PA.shotWhy = paShotClean(mod)
         end
         return SHOT_MOD
     end
@@ -36093,6 +36123,56 @@ do
         return nil
     end
 
+    -- Широкая строка (UTF-16) -> UTF-8.
+    local function paShotUtf8(wide)
+        local out, i = {}, 0
+        while true do
+            local c = tonumber(wide[i]) or 0
+            if c == 0 then break end
+            if c < 0x80 then
+                out[#out + 1] = string.char(c)
+            elseif c < 0x800 then
+                out[#out + 1] = string.char(0xC0 + math.floor(c / 0x40), 0x80 + (c % 0x40))
+            elseif c >= 0xD800 and c < 0xDC00 then
+                -- суррогатная пара
+                local lo = tonumber(wide[i + 1]) or 0
+                local cp = 0x10000 + (c - 0xD800) * 0x400 + (lo - 0xDC00)
+                out[#out + 1] = string.char(0xF0 + math.floor(cp / 0x40000),
+                    0x80 + (math.floor(cp / 0x1000) % 0x40),
+                    0x80 + (math.floor(cp / 0x40) % 0x40), 0x80 + (cp % 0x40))
+                i = i + 1
+            else
+                out[#out + 1] = string.char(0xE0 + math.floor(c / 0x1000),
+                    0x80 + (math.floor(c / 0x40) % 0x40), 0x80 + (c % 0x40))
+            end
+            i = i + 1
+        end
+        return table.concat(out)
+    end
+
+    -- Папка «Документы» через Windows (shell32). Нужна, когда Screenshot.asi не
+    -- установлен: только так можно найти относительные пути («App screens») и
+    -- папку штатных кадров SA-MP («Документы\GTA San Andreas User Files\SAMP\screens»),
+    -- где ищется кадр по F8.
+    local function paShotDocsDir()
+        local ffi = paShotLibs()
+        if not ffi then return nil end
+        local okD = pcall(ffi.cdef, [[
+            int __stdcall SHGetFolderPathW(void* hwnd, int csidl, void* hToken,
+                unsigned long dwFlags, uint16_t* pszPath);
+        ]])
+        if not okD then return nil end
+        local okS, shell = pcall(ffi.load, "shell32")
+        if not (okS and shell and shell.SHGetFolderPathW) then return nil end
+        local buf = ffi.new("uint16_t[?]", 512)
+        -- CSIDL_PERSONAL = 5 — «Документы»; SA-MP кладёт свои файлы именно рядом
+        local hr = shell.SHGetFolderPathW(nil, 5, nil, 0, buf)
+        if (tonumber(hr) or 0) ~= 0 then return nil end
+        local got = paShotUtf8(buf)
+        if got == "" then return nil end
+        return (got:gsub("[/\\]+$", ""))
+    end
+
     -- «Документы\GTA San Andreas User Files» — этот путь отдаёт сам плагин;
     -- он нужен и для относительных путей («App screens»), и для поиска кадра
     -- по F8.
@@ -36111,7 +36191,8 @@ do
                 return (tostring(v):gsub("[/\\]+$", ""))
             end
         end
-        return nil
+        -- плагина нет: «Документы» спрашиваем у самой Windows
+        return paShotDocsDir()
     end
 
     -- Создать папку вместе с родителями: createDirectory делает только один
@@ -36272,12 +36353,6 @@ do
     local D3DXIFF_PNG = 3          -- D3DXIMAGE_FILEFORMAT
     local SHOT_JOB_WAIT = 1.5      -- сколько ждём поток отрисовки, затем запасной путь
 
-    local function paShotLibs()
-        local okF, ffi = pcall(require, "ffi")
-        if okF and type(ffi) == "table" then return ffi end
-        return nil
-    end
-
     -- Библиотека D3DX: годится любая d3dx9_*.dll — функции в них одни и те же,
     -- а какой именно версии файл лежит в системе, зависит от сборки DirectX.
     local function paShotD3dx()
@@ -36324,22 +36399,46 @@ do
     local function paShotDevice()
         local ffi = paShotLibs()
         if not ffi then return nil end
+        local function asPtr(v)
+            if v == nil then return nil end
+            local okC, p = pcall(ffi.cast, "void*", v)
+            if okC and p ~= nil and p ~= ffi.NULL then return p end
+            return nil
+        end
+        -- 1) штатная функция MoonLoader (её же зовёт mimgui)
         if type(getD3DDevicePtr) == "function" then
             local ok, dev = pcall(getD3DDevicePtr)
-            if ok and dev ~= nil then
-                local okC, p = pcall(ffi.cast, "void*", dev)
-                if okC and p ~= nil and p ~= ffi.NULL then return p end
+            if ok then
+                local p = asPtr(dev)
+                if p then return p end
             end
         end
+        -- 2) указатель лежит по этому адресу в gta_sa.exe 1.0 US (RwD3DDevice;
+        --    MoonLoader работает только с ней). Читаем напрямую через ffi-адрес.
+        local okR, ptr = pcall(function() return ffi.cast("void**", 0xC97C28)[0] end)
+        if okR and ptr ~= nil and ptr ~= ffi.NULL then
+            local p = asPtr(ptr)
+            if p then return p end
+        end
+        -- 3) запас: чтение через модуль memory (имена функций у сборок разные)
         local mem = libs and libs.memory
-        if mem and type(mem.read) == "function" then
-            -- Адрес из gta_sa.exe 1.0 US (MoonLoader работает только с ней):
-            -- это ячейка, в которой лежит указатель на устройство.
-            local ok, v = pcall(mem.read, 0xC97C28, 4, false)
-            v = ok and tonumber(v) or nil
+        if mem then
+            local v
+            if type(mem.read) == "function" then
+                local ok1, r1 = pcall(mem.read, 0xC97C28, 4, false)
+                if ok1 then v = tonumber(r1) end
+            end
+            if not v and type(mem.getuint32) == "function" then
+                local ok2, r2 = pcall(mem.getuint32, 0xC97C28, false)
+                if ok2 then v = tonumber(r2) end
+            end
+            if not v and type(mem.readuint32) == "function" then
+                local ok3, r3 = pcall(mem.readuint32, 0xC97C28)
+                if ok3 then v = tonumber(r3) end
+            end
             if v and v > 0x10000 and v < 0x80000000 then
-                local okC, p = pcall(ffi.cast, "void*", v)
-                if okC and p ~= nil and p ~= ffi.NULL then return p end
+                local p = asPtr(v)
+                if p then return p end
             end
         end
         return nil
@@ -36525,27 +36624,30 @@ do
             -- расширение плагину передавать НЕ надо: «.png» он добавляет сам
             local call = viaMod and function(fname) return mod.requestEx(dir, fname) end
                 or function(fname) return asi.RequestScreenshotEx(dir, fname) end
+            local function note(s)
+                plan.note = (plan.note and (tostring(plan.note) .. " · ") or "") .. s
+            end
             local ok, err = pcall(call, name)
             if ok then
-                plan.note = viaMod and "Screenshot.asi" or "Screenshot.asi (напрямую)"
+                note(viaMod and "Screenshot.asi" or "Screenshot.asi (напрямую)")
             else
                 -- некоторые сборки плагина ждут имя вместе с расширением
                 local ok2 = pcall(call, name .. ".png")
                 if not ok2 then
                     return false, "запрос плагина не удался (" .. tostring(err) .. ")"
                 end
-                plan.note = "Screenshot.asi (имя с .png)"
+                note("Screenshot.asi (имя с .png)")
             end
         elseif mod and type(mod.request) == "function" then
             local ok, err = pcall(mod.request)
             if not ok then return false, "Screenshot.asi не отвечает: " .. tostring(err) end
-            plan.note = "Screenshot.asi (штатный кадр)"
+            plan.note = ((plan.note and (tostring(plan.note) .. " · ")) or "") .. "Screenshot.asi (штатный кадр)"
         elseif asi and asi.RequestScreenshot then
             local ok, err = pcall(asi.RequestScreenshot)
             if not ok then return false, "Screenshot.asi не отвечает: " .. tostring(err) end
-            plan.note = "Screenshot.asi (штатный кадр, напрямую)"
+            plan.note = ((plan.note and (tostring(plan.note) .. " · ")) or "") .. "Screenshot.asi (штатный кадр, напрямую)"
         elseif paShotPressF8() then
-            plan.note = "клавиша F8"
+            plan.note = ((plan.note and (tostring(plan.note) .. " · ")) or "") .. "клавиша F8"
             -- папку скриншотов SA-MP находит плагин (getUserDirectoryPath), а
             -- без него проверить кадр нечем — честно скажем об этом сразу
             if #plan.dirs == 0 then plan.noWait = true end
@@ -36569,33 +36671,34 @@ do
             return
         end
         local reason = (not okC) and ("ошибка: " .. tostring(okS)) or tostring(why)
-        -- Свой кадр не вышел — просим плагин или жмём F8: это уже не требует
-        -- потока отрисовки, а файл дальше ищет обычный тик.
-        local plan = job.plan
-        local aOk, aWhy = false, "план кадра потерян"
-        if type(plan) == "table" then aOk, aWhy = paShotStartAlt(plan) end
-        if aOk then
-            PA.shotJobResult = { fallback = true, why = "свой кадр не вышел: " .. reason }
-        else
-            PA.shotJobResult = { ok = false, path = job.path,
-                why = "свой кадр не вышел: " .. reason .. "; " .. tostring(aWhy) }
-        end
+        -- Свой кадр не вышел. Запасной путь (плагин Screenshot.asi, штатная F8)
+        -- НЕ трогаем здесь: это делает основной тик — require и нажатия клавиш
+        -- должны идти из своего потока, а не из потока отрисовки.
+        PA.shotJobResult = { fallback = true, path = job.path,
+            why = "свой кадр не вышел: " .. reason }
     end
 
     PA.shotGrab = paShotGrabReal     -- стенд может подменить саму съёмку
     PA.shotWide = paShotWide         -- преобразование пути (проверяется стендом)
+    PA.shotUtf8 = paShotUtf8         -- обратное преобразование (UTF-16 -> UTF-8)
+
+    -- Кадр снимается только из потока отрисовки, поэтому нужен «хук кадра».
+    -- Основной — кадр ImGui: меню рисуется всегда, значит кадр есть всегда
+    -- (см. setupRender: он и выставляет shotFrameHook). Событие onD3DPresent
+    -- поддерживают не все сборки MoonLoader, поэтому оно — только добавка.
+    PA.shotFrameHook = false
     PA.shotRenderReady = false
-    -- Обработчик кадра ставим сразу: он же и признак того, что свой кадр вообще
-    -- возможен (без него снимать кадр неоткуда).
     if type(addEventHandler) == "function" then
         PA.shotRenderReady = pcall(addEventHandler, "onD3DPresent",
             function() pcall(PA.shotRender) end) and true or false
     end
+    -- рендер-модуль мог подняться раньше нас — просим его про хук кадра
+    if type(_G.grndShotHookInstall) == "function" then pcall(_G.grndShotHookInstall) end
 
-    -- Готов ли свой кадр: нужен обработчик кадра, d3dx9 и живое устройство.
+    -- Готов ли свой кадр: нужен хук кадра, d3dx9 и живое устройство.
     PA.shotSelfReady = function()
-        if PA.shotRenderReady ~= true or type(PA.shotGrab) ~= "function" then
-            PA.shotSelfWhy = "нет обработчика кадра onD3DPresent"
+        if type(PA.shotGrab) ~= "function" then
+            PA.shotSelfWhy = "нет функции съёмки"
             return false
         end
         if not paShotD3dx() then
@@ -36603,7 +36706,11 @@ do
             return false
         end
         if paShotDevice() == nil then
-            PA.shotSelfWhy = "не найдено устройство D3D9"
+            PA.shotSelfWhy = "не найдено устройство D3D9 (адрес 0xC97C28)"
+            return false
+        end
+        if PA.shotFrameHook ~= true and PA.shotRenderReady ~= true then
+            PA.shotSelfWhy = "нет хука кадра (ImGui/onD3DPresent ещё не поднялся)"
             return false
         end
         return true
@@ -36653,7 +36760,14 @@ do
     local function paShotReport(okFlag, short, full)
         PA.shotLast = tostring(full or short)
         PA.shotFail = (not okFlag) or nil
-        PA.log("скриншот " .. (okFlag and "сохранён" or "не сохранён") .. ": " .. tostring(full or short))
+        local prefix = okFlag and "скриншот сохранён: " or "скриншот не сохранён: "
+        local tail = ""
+        if not okFlag then
+            -- по строке в журнале сразу видно сборку и почему не вышло
+            tail = " (v" .. tostring(GRND_SCRIPT_VERSION or "?")
+                .. (PA.shotSelfWhy and (", свой кадр: " .. tostring(PA.shotSelfWhy)) or "") .. ")"
+        end
+        PA.log(prefix .. tostring(full or short) .. tail)
         if PA.notify then
             QR.toast("Автоскриншот: " .. tostring(short), okFlag and "ok" or "warn", okFlag and 3.4 or 5)
         end
@@ -36710,14 +36824,18 @@ do
                         return true
                     end
                     if J.fallback then
-                        -- запасной путь уже запрошен — дальше ищем файл как обычно
+                        -- съёмка не удалась — просим плагин или жмём F8 и ждём
+                        -- файл как обычно
                         W.job = nil
                         W.note = tostring(W.note or "") .. " · " .. tostring(J.why)
-                        if #(W.paths or {}) == 0 and #(W.dirs or {}) == 0 then
+                        local aOk, aWhy = paShotStartAlt(W)
+                        if not (aOk and (#(W.paths or {}) > 0 or #(W.dirs or {}) > 0)) then
                             PA.shotWait = nil
                             paShotReport(false, "кадр не сохранён",
-                                tostring(J.why) .. "; запасной способ тоже не сработал")
+                                tostring(J.why) .. "; " .. tostring(aWhy or "запасной способ недоступен"))
+                            return true
                         end
+                        W.untilAt = now + SHOT_WAIT
                         return true
                     end
                     PA.shotWait = nil
@@ -36770,10 +36888,14 @@ do
             end
             if now >= (W.untilAt or 0) then
                 PA.shotWait = nil
+                -- подсказка должна быть короткой: многострочную «простыню» от
+                -- require («no file package.preload[lib.screenshot]…») в журнал
+                -- не тянем, оставляем только суть
                 local extra = PA.shotWhy and ("; плагин: " .. tostring(PA.shotWhy)) or ""
+                local whySelf = PA.shotSelfWhy and ("; свой кадр: " .. tostring(PA.shotSelfWhy)) or ""
                 paShotReport(false, "файл не появился (" .. tostring(W.note or "?") .. ")",
-                    tostring(W.expect) .. extra
-                    .. "; проверьте, что папка доступна для записи и что Screenshot.asi установлен")
+                    tostring(W.expect) .. extra .. whySelf
+                    .. "; проверьте права на папку")
             end
             return true
         end
@@ -48178,6 +48300,26 @@ function grndMainBody()
             end
             renderRegistered = true
             uiFontRegister()
+            -- v1.19.206: кадр скриншота выдачи снимается в потоке отрисовки —
+            -- только здесь можно трогать устройство D3D9. Хук кадра ImGui есть
+            -- всегда (меню же рисуется), поэтому свой кадр больше НЕ зависит от
+            -- события onD3DPresent: его поддерживают не все сборки MoonLoader,
+            -- и из-за этого кадр раньше вовсе не снимался (в журнал шло
+            -- «покадровый обработчик не ответил»/«нет Screenshot.asi»).
+            -- порядок загрузки не важен: функция идемпотентная, её же может
+            -- позвать модуль автопилота, если он поднимется позже
+            local function installShotHook()
+                local shotPA = QR and QR.punAuto
+                if type(shotPA) == "table" and type(shotPA.shotRender) == "function" then
+                    _G.grndShotFrame = shotPA.shotRender            -- что звать
+                    _G.grndShotWant = function() return shotPA.shotJob ~= nil end -- когда нужен кадр
+                    shotPA.shotFrameHook = true
+                    return true
+                end
+                return false
+            end
+            _G.grndShotHookInstall = installShotHook
+            installShotHook()
             local function safeDraw()
                 local ok, res = pcall(drawAll)
                 if ok then return res end
@@ -48198,6 +48340,9 @@ function grndMainBody()
             end
             if imKind == "moonimgui" then
                 im.OnDrawFrame = function()
+                    -- v1.19.206: кадр скриншота первым делом — до отрисовки меню,
+                    -- чтобы в доказательство не попал открытый раздел
+                    if _G.grndShotFrame ~= nil then pcall(_G.grndShotFrame) end
                     -- v1.19.158: добор угла обзора в фазе рендера («рыбий глаз»)
                     pcall(grndFovRenderTick)
                     GRND_UIFRAME = (GRND_UIFRAME or 0) + 1
@@ -48239,6 +48384,7 @@ function grndMainBody()
                             formUi = true
                         end
                         return GRND_INPUT.wanted() or GRND_LOG.wanted() or menu.open or menu.anim > 0 or #queue > 0 or GRND_TAB.open
+                            or (_G.grndShotWant ~= nil and _G.grndShotWant() == true)
                             or scoreboard.anim > 0
                             or (GRND_KL and (GRND_KL.enabled or GRND_KL.moving))
                             or (GRND_REP and GRND_REP.open)
@@ -48250,6 +48396,8 @@ function grndMainBody()
                             or plainCursorOn or ((clw ~= nil) and clw.aiming)
                     end,
                     function(self)
+                        -- v1.19.206: кадр скриншота первым делом (см. moonimgui выше)
+                        if _G.grndShotFrame ~= nil then pcall(_G.grndShotFrame) end
                         GRND_UIFRAME = (GRND_UIFRAME or 0) + 1
                         pcall(grndMouseFrameBegin)   -- v1.19.67: клик прошлого кадра гаснет
                         endDepth, styleDepth, colorDepth = 0, 0, 0
@@ -48272,8 +48420,12 @@ function grndMainBody()
                 -- (В 1.19.158/159 кадр зеркализал GRND_KEYS.cursorOn, но тот
                 -- устаревал при закрытом меню и курсор зависал включённым.)
                 pcall(im.OnFrame,
-                    function() return GRND_CAM and GRND_CAM.fovOn == true end,
+                    function()
+                        return (GRND_CAM and GRND_CAM.fovOn == true)
+                            or (_G.grndShotWant ~= nil and _G.grndShotWant() == true)
+                    end,
                     function(self)
+                        if _G.grndShotFrame ~= nil then pcall(_G.grndShotFrame) end
                         pcall(grndFovRenderTick)
                         if self then self.HideCursor = true end
                     end)

@@ -110,12 +110,15 @@ local function myId() return 5 end
 -- Скрипт берёт модуль только через require, а модуль этот ничего не
 -- возвращает; поэтому подменяем его один раз на весь стенд и по-настоящему
 -- пишем файл, когда это нужно проверке.
-local shotStub = { shots = {}, makeFile = false, dupExt = false }
+local shotStub = { shots = {}, makeFile = false, dupExt = false, msg = nil }
+_G.GRND_SCRIPT_VERSION = "1.19.206"   -- как в шапке скрипта
 do
     local origRequire = require
     require = function(name)
         if name == "lib.screenshot" then
-            if shotStub.broken then error("module 'lib.screenshot' not found", 2) end
+            if shotStub.broken then
+                error(shotStub.msg or "module 'lib.screenshot' not found", 2)
+            end
             return {
                 getUserDirectoryPath = function() return "/tmp/grnd_user_files" end,
                 requestEx = function(dir, file)
@@ -486,6 +489,8 @@ do
     eq("shot.fail.flag", PA.shotFail, true)
     ok("shot.fail.path", tostring(PA.shotLast):find(PA.shotDir, 1, true) ~= nil)
     ok("shot.fail.log", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
+    ok("shot.fail.version", tostring(logged[#logged]):find("(v1.19.", 1, true) ~= nil)
+    ok("shot.fail.oneline", tostring(logged[#logged]):find("\n", 1, true) == nil)
 
     -- ---- 4. своя папка уходит в плагин как есть ----
     shotStub.makeFile = true
@@ -535,6 +540,7 @@ do
     eq("self.wide.cyr", tonumber(wide[3]), 0x418) -- И
     eq("self.wide.cyr2", tonumber(wide[4]), 0x433) -- г
     eq("self.wide.nul", tonumber(wide[16]), 0)    -- терминатор на месте
+    eq("self.wide.back", PA.shotUtf8(wide), "C:\\Игра\\кадр.png")   -- и обратно
 
     -- дальше работаем с подменённой съёмкой
     PA.shotSelfReady = function() return true end
@@ -614,8 +620,9 @@ do
     PA.shotAt = os.clock() - 1
     PA.tick()
     PA.shotRender()
-    PA.shotWait.untilAt = os.clock() - 1
-    PA.tick()                                    -- запасной путь уже запрошен
+    PA.tick()                                    -- просьба к плагину/F8
+    ok("self.both.waits", PA.shotWait ~= nil and PA.shotWait.job == nil)
+    PA.shotWait.untilAt = os.clock() - 1         -- «прошло 5 секунд»
     PA.tick()                                    -- срок вышел: честный провал
     eq("self.both.fail", PA.shotFail, true)
     ok("self.both.toast", tostring(toasts[#toasts]):find("не появился", 1, true) ~= nil)
@@ -885,6 +892,10 @@ ctx.w, ctx.h = 700, 560
 -- ровно та ситуация, из-за которой в чат уходило «сохранено», а файла не было.
 do
     shotStub.broken = true
+    -- ровно то, что видно в журнале игрока: require отдаёт три строки с путями
+    shotStub.msg = "module 'lib.screenshot' not found:\n"
+        .. "\tno file 'C:\\Users\\?\\Desktop\\moonloader\\lib\\lib\\screenshot.lua'\n"
+        .. "\tno file 'C:\\Users\\?\\Desktop\\moonloader\\lib\\lib\\screenshot\\init.lua'"
     local QR2 = { bufs = {}, toast = function() end,
         path = function() return "C:\\x.cfg" end,
         myNick = function() return "Mixa" end,
@@ -904,6 +915,9 @@ do
     P2.tick()
     -- причина неудачи видна в тексте: почему модуль не загрузился
     ok("shot2.why", tostring(P2.shotWhy):find("lib.screenshot", 1, true) ~= nil)
+    ok("shot2.why.oneline", tostring(P2.shotWhy):find("\n", 1, true) == nil)
+    ok("shot2.why.short", #tostring(P2.shotWhy) <= 121)
+    ok("shot2.report.oneline", tostring(logged[#logged]):find("\n", 1, true) == nil)
     eq("shot2.fail", P2.shotFail, true)
     ok("shot2.reason", tostring(P2.shotLast):find("нет Screenshot.asi", 1, true) ~= nil)
     ok("shot2.no.claim", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
@@ -919,11 +933,64 @@ do
     ok("shot2.f8.text", tostring(P2.shotLast):find("F8", 1, true) ~= nil)
     _G.setVirtualKeyDown = nil
 
-    -- 3. выключенный тумблер — запроса нет вообще
+    -- 3. ни один вход не должен звать необъявленную функцию: в Lua это
+    --    «attempt to call global '...' (a nil value)» — такую правку стенд
+    --    обязан ловить (уже ловил: paShotLibs объявлялся позже первого вызова)
+    local function noLuaError(fn, ...)
+        local pack = { pcall(fn, ...) }
+        for i = 1, #pack do
+            local v = tostring(pack[i] or "")
+            if v:find("attempt to call", 1, true) or v:find("nil value", 1, true)
+                or v:find("attempt to index", 1, true) then
+                return false, v
+            end
+        end
+        return pack[1] == true, tostring(pack[2] or "")
+    end
+    local okPath, pathErr = noLuaError(P2.shotTake, "Nik_Name")
+    eq("shot2.take.clean", okPath and "да" or pathErr, "да")
+    local okDir = noLuaError(P2.shotDirDefault)
+    ok("shot2.dir.clean", okDir)
+    ok("shot2.dirpath.clean", (noLuaError(P2.shotDirPath)))
+    ok("shot2.take.empty", (noLuaError(P2.shotTake, "")))
+
+    -- 4. выключенный тумблер — запроса нет вообще
     P2.shot = false
     eq("shot2.off", P2.shotQueue("X"), false)
     P2.shot = true
     shotStub.broken = false
+    shotStub.msg = nil
+end
+
+-- ======== хук кадра: кадр снимается в потоке отрисовки ========
+-- Без него устройство D3D9 трогать нельзя, а событие onD3DPresent есть не во
+-- всех сборках MoonLoader — поэтому кадр привязан к кадру ImGui (меню рисуется
+-- всегда). Проверяем, что проводка на месте и её не выкинут правкой.
+do
+    local function count(needle)
+        local n, i = 0, 1
+        while true do
+            local a, b = src:find(needle, i, true)
+            if not a then break end
+            n = n + 1
+            i = b + 1
+        end
+        return n
+    end
+    ok("hook.set", count("_G.grndShotFrame = shotPA.shotRender") == 1)
+    ok("hook.want", count("_G.grndShotWant = function() return shotPA.shotJob ~= nil end") == 1)
+    ok("hook.flag", count("shotPA.shotFrameHook = true") == 1)
+    ok("hook.install", count("_G.grndShotHookInstall = installShotHook") == 1)
+    ok("hook.reverse", count("_G.grndShotHookInstall") >= 2)      -- и обратный вызов
+    eq("hook.calls", count("pcall(_G.grndShotFrame)"), 3)         -- две обёртки + служебный кадр
+    ok("hook.reason", count("нет хука кадра") == 1)
+    -- paShotLibs должен быть объявлен до первого использования, иначе в игре
+    -- это «attempt to call global 'paShotLibs' (a nil value)»
+    local declPos = src:find("local function paShotLibs()", 1, true)
+    local firstUse = src:find("paShotLibs()", 1, true)
+    ok("hook.libs.order", declPos ~= nil and firstUse ~= nil and declPos < firstUse)
+    -- готовность кадра проверяет и хук, и устройство, и d3dx9
+    ok("hook.ready.self", count("PA.shotSelfWhy = \"не найдено устройство D3D9") == 1)
 end
 
 print(string.format("--- модуль автопилота: %d/%d ok ---", total - fails, total))
