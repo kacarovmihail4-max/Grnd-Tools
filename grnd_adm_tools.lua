@@ -1,6 +1,12 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.217"
+GRND_SCRIPT_VERSION = "1.19.218"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.218 — «ВЫДАЧА В РАДИУСЕ» + все ползунки меню:
+--   1) шестерёнки сдвинуты к кнопкам: кликовая зона примыкает к краю
+--      кнопки (на кнопку не налегает), значок — сразу за ней;
+--   2) ползунки (grndUiSlider) — как на макете, в наших цветах: высокая
+--      дорожка-«стекло», ползунок — светлая вертикальная «пилюля»,
+--      заливки нет (значение — в тексте ряда; зелёного фолбэка больше нет).
 -- v1.19.217 — «ВЫДАЧА В РАДИУСЕ»: шестерёнка без подложки (только значок,
 --   hover меняет его цвет — как у шестерёнок панели), широкая кнопка
 --   «Телепорт всех к себе» сдвинута ниже сетки (отступ 12 px).
@@ -25719,13 +25725,11 @@ function grndUiSlider(ctx, id, x, y, w, h, ratio)
     local function u32(t) return col32(t[1], t[2], t[3], t[4] or 255) end
     ratio = math.max(0, math.min(1, ratio or 0))
     local ty = y + h / 2
-    roundRect(dl, at(x, ty - 3), at(x + w, ty + 3), col32(255, 255, 255, 14), 3)
-    local fw = math.max(4, w * ratio)
-    if ctx.gradRect and TH.accent and TH.accent2 then
-        ctx.gradRect(dl, at(x, ty - 3), at(x + fw, ty + 3), u32(TH.accent), u32(TH.accent2), 3)
-    else
-        roundRect(dl, at(x, ty - 3), at(x + fw, ty + 3), col32(0, 214, 170, 255), 3)
-    end
+    -- v1.19.218: вид — как на макете заказчика: высокая дорожка-«стекло»
+    -- и светлая вертикальная «пилюля»-ползунок; заливки нет — значение
+    -- читается из текста ряда. Цвета — только наши (зелёного нет).
+    local trH = 8
+    roundRect(dl, at(x, ty - trH), at(x + w, ty + trH), col32(255, 255, 255, 30), 5)
     im.SetCursorPos(im.ImVec2(x - 4, y))
     im.InvisibleButton(id, im.ImVec2(w + 8, h))
     local act = (im.IsItemActive and im.IsItemActive()) or false
@@ -25747,7 +25751,9 @@ function grndUiSlider(ctx, id, x, y, w, h, ratio)
         end
     end
     local kx = x + w * ratio
-    roundRect(dl, at(kx-5,ty-7), at(kx+5,ty+7), u32(TH.accent), 3)
+    -- светлая «пилюля» 10×12 (макет), чуть короче дорожки
+    roundRect(dl, at(kx - 5, ty - 6), at(kx + 5, ty + 6),
+        col32(232, 234, 244, 245), 4)
     return newRatio
 end
 
@@ -38628,8 +38634,9 @@ do
             if a.gear then
                 -- v1.19.217: подложки под значком нет — та же шестерёнка
                 -- панели (gearButton): кликовая зона 30×30, hover меняет
-                -- только цвет значка.
-                local gx, gy = bx + bw + gap + 15, by + abh / 2
+                -- только цвет значка. v1.19.218: зона примыкает к краю
+                -- кнопки (на кнопку не налегает), значок — сразу за ней.
+                local gx, gy = bx + bw + 15, by + abh / 2
                 if type(R.gearButton) == "function" then
                     local clicked =
                         R.gearButton("rt_gear_" .. a.id, gx, gy, false)

@@ -276,6 +276,100 @@ before = #sent
 RT3.doAction("spawn")
 check(#sent == before, "нет подключения: чат не трогаем")
 
+-- ---------- стиль ползунка (grndUiSlider): как на макете, в наших цветах ----------
+-- Извлекаем функцию из файла и гоняем на фейковом ctx с записью отрисовки.
+do
+    local s0 = src:find("function grndUiSlider(ctx, id, x, y, w, h, ratio)",
+        1, true) -- plain: скобки в сигнатуре — не шаблон
+    local s1 = s0 and src:find("\nend\n", s0)
+    check(s0 ~= nil and s1 ~= nil, "grndUiSlider: функция найдена в файле")
+    if s0 and s1 then
+        local fnText = src:sub(s0, s1 + 4)
+        local slOk, slFn = pcall(function()
+            return assert(load("return (function()\n" .. fnText
+                .. "\n    return grndUiSlider\nend)()", "@slider"))()
+        end)
+        check(slOk, "grndUiSlider: загружена: " .. tostring(slFn))
+        if slOk then
+            local function pack(r, g, b, a)
+                return r * 16777216 + g * 65536 + b * 256 + (a or 255)
+            end
+            -- тема как в меню: градиентная заливка (основной путь)
+            _G.grndUiTheme = function()
+                return { accent = { 164, 112, 224, 255 },
+                    accent2 = { 196, 156, 255, 255 } }
+            end
+            local draws = {}
+            local fctx = {
+                im = {
+                    SetCursorPos = function() end,
+                    ImVec2 = function(x, y) return { x = x, y = y } end,
+                    InvisibleButton = function() end,
+                    IsItemActive = function() return false end,
+                },
+                dl = {},
+                at = function(x, y) return { x = x, y = y } end,
+                col32 = pack,
+                roundRect = function(_, a, b, col, r)
+                    table.insert(draws, { t = "rr", a = a, b = b, col = col,
+                        r = r })
+                end,
+                gradRect = function(_, a, b, c1, c2, r)
+                    table.insert(draws, { t = "grad", a = a, b = b,
+                        c1 = c1, c2 = c2, r = r })
+                end,
+            }
+            local w, h, ratio, x0, y0s = 100, 26, 0.5, 0, 0
+            slFn(fctx, "##bench_sl", x0, y0s, w, h, ratio)
+            local ty = y0s + h / 2
+            local kx = x0 + w * ratio
+            -- 1) ровно два слоя: дорожка + «пилюля» (заливки нет — макет)
+            check(#draws == 2,
+                "ползунок: только дорожка и «пилюля» (без заливки): "
+                .. #draws)
+            local track = draws[1]
+            check(track and track.t == "rr"
+                and track.a.x == x0 and track.a.y == ty - 8
+                and track.b.x == x0 + w and track.b.y == ty + 8
+                and track.col == pack(255, 255, 255, 30),
+                "ползунок: дорожка 16 px «стекло»")
+            -- 2) «пилюля»: светлая, вертикальная, чуть короче дорожки
+            local pill = draws[2]
+            check(pill and pill.t == "rr"
+                and math.abs(pill.a.x - (kx - 5)) < 0.01
+                and math.abs(pill.b.x - (kx + 5)) < 0.01
+                and math.abs(pill.a.y - (ty - 6)) < 0.01
+                and math.abs(pill.b.y - (ty + 6)) < 0.01
+                and pill.col == pack(232, 234, 244, 245)
+                and (pill.b.y - pill.a.y) < (track.b.y - track.a.y),
+                "ползунок: светлая «пилюля» 10×12 в центре по ratio")
+            -- 3) ratio 0 и 1 — у краёв
+            local function knobX(rratio)
+                draws = {}
+                slFn(fctx, "##bench_sl_k", x0, y0s, w, h, rratio)
+                return draws[2] and draws[2].a.x, draws[2] and draws[2].b.x
+            end
+            local l0, r0 = knobX(0)
+            check(l0 ~= nil and math.abs(l0 - (x0 - 5)) < 0.01
+                and math.abs(r0 - (x0 + 5)) < 0.01,
+                "ползунок: ratio 0 — «пилюля» у левого края")
+            local l1, r1 = knobX(1)
+            check(l1 ~= nil and math.abs(l1 - (x0 + w - 5)) < 0.01
+                and math.abs(r1 - (x0 + w + 5)) < 0.01,
+                "ползунок: ratio 1 — «пилюля» у правого края")
+            -- 4) зелёного нигде
+            local noGreen = true
+            for i = 1, #draws do
+                if draws[i].col == pack(0, 214, 170, 255) then
+                    noGreen = false
+                end
+            end
+            check(noGreen, "ползунок: зелёного фолбэка нет")
+            _G.grndUiTheme = nil
+        end
+    end
+end
+
 -- ---------- страница RT.page на стаб-рендерере ----------
 local drawn, clicks, gears, sliders = {}, {}, {}, {}
 local function mkR(allow)
@@ -362,7 +456,8 @@ for i = 1, #actIdx do
     end
 end
 check(evenOk, "page: все 9 кнопок одной ширины")
--- шестерёнки: БЕЗ подложки (не в списке кнопок), значок за краем кнопки
+-- шестерёнки: БЕЗ подложки (не в списке кнопок), значок вплотную
+-- за краем кнопки (зона 30×30 начинается от края: +15 до центра)
 local gearKeys = {}
 for i = 1, #gears do gearKeys[i] = gears[i].key end
 check(table.concat(gearKeys, ",")
@@ -373,12 +468,12 @@ local gearOut = true
 for i = 1, 4 do
     local btn, ic = clicks[gearBtnIdx[i]], gears[i]
     if btn == nil or ic == nil
-        or math.abs(ic.x - (btn.x + btn.w + 23)) > 0.01
+        or math.abs(ic.x - (btn.x + btn.w + 15)) > 0.01
         or math.abs(ic.y - (btn.y + 13)) > 0.01 then
         gearOut = false
     end
 end
-check(gearOut, "page: значок шестерёнки за краем своей кнопки")
+check(gearOut, "page: значок вплотную за краем кнопки (без налёта)")
 local joined = {}
 for i = 1, #drawn do joined[i] = drawn[i].t end
 joined = table.concat(joined, "\n")
