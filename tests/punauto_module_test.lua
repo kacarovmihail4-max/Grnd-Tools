@@ -192,7 +192,12 @@ local grndRepQueue = function(cmd) queued[#queued+1] = "rep:" .. tostring(cmd) e
 -- заглушка конвертера UTF-8 -> CP1251: помечает строку, чтобы стенд видел,
 -- что диагностика лога идёт через конвертер (без него в moonloader.log
 -- получались «закорючки»)
-local function grndAnsiTextImpl(s) return "[ANSI]" .. tostring(s) end
+local function grndAnsiTextImpl(s)
+    s = tostring(s)
+    -- как в игре: ASCII остаётся как есть, кириллица переводится в CP1251
+    if not s:find("[\128-\255]") then return s end
+    return "[ANSI]" .. s
+end
 local grndAnsiText = grndAnsiTextImpl
 _G.grndAnsiText = grndAnsiTextImpl
 local sampIsPlayerConnected = isConnected
@@ -201,8 +206,8 @@ local sampGetLocalPlayerId = myId
 local sampSendChat = function(cmd) queued[#queued+1] = "raw:" .. tostring(cmd) end
 
 -- ---------- вывод в moonloader.log ----------
--- Модуль печатает диагностику скриншота обычным print — MoonLoader пишет его
--- в moonloader.log. Перехватываем, чтобы проверить строки стендом.
+-- Перехватываем print: MoonLoader пишет его в moonloader.log. Стенд проверяет,
+-- что скриншот НЕ оставляет там строк (v1.19.210 диагностику убрали).
 local shotLog = {}
 local function logPrint(...)
     local parts = {}
@@ -605,14 +610,9 @@ do
     eq("self.saved.path", PA.shotLast, grabbed[1])
     ok("self.saved.log", tostring(logged[#logged]):find("сохранён", 1, true) ~= nil)
     ok("self.saved.toast", tostring(toasts[#toasts]):find("свой кадр", 1, true) ~= nil)
-    -- то же самое уходит в moonloader.log
-    ok("log.way", logHas("способ: свой кадр (D3D9)") ~= nil)
-    ok("log.grab", logHas("снимаю кадр:") ~= nil)
-    ok("log.saved", logHas("СОХРАНЕНО:") ~= nil)
-    -- перевод в CP1251: в заглушке grndAnsiText мечает строку, поэтому видим,
-    -- что лог идёт через конвертер, а не сырым UTF-8
-    ok("log.ansi.called", logHas("[ANSI]") ~= nil)
-    ok("log.saved.path", logHas(grabbed[1]) ~= nil)
+    -- в moonloader.log по-прежнему ничего не пишем (v1.19.210: заказчик просил
+    -- убрать диагностику из лога — итог виден в чате и в журнале скрипта)
+    eq("log.quiet.after.save", #shotLog, 0)
 
     -- съёмка «удалась», но файла нет — в чат тоже не уходит «сохранён»
     PA.shotGrab = function() return true end                  -- врём: файл не пишем
@@ -664,9 +664,7 @@ do
     eq("self.both.fail", PA.shotFail, true)
     ok("self.both.toast", tostring(toasts[#toasts]):find("не появился", 1, true) ~= nil)
     ok("self.both.log", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
-    ok("log.fail", logHas("НЕ СОХРАНЕНО:") ~= nil)
-    ok("log.fail.reason", logHas("причина:") ~= nil)
-    ok("log.self.fail", logHas("свой кадр не вышел:") ~= nil)
+    eq("log.quiet.after.fail", #shotLog, 0)
 
     -- обработчик кадра не ответил (свёрнутая игра, чужая сборка MoonLoader):
     -- тик не висит, а просит запасной путь и ждёт файл ещё раз
@@ -696,7 +694,6 @@ do
     eq("self.nowrite.take", tookOk, true)
     ok("self.nowrite.reason", tostring(tookPlan and tookPlan.note):find("не вышел", 1, true) ~= nil)
     ok("self.nowrite.note", tostring(tookPlan and tookPlan.note):find("записи", 1, true) ~= nil)
-    ok("log.nowrite", logHas("свой кадр не готов:") ~= nil)
     shotStub.makeFile = false
 
     PA.shotDir = ""
@@ -853,6 +850,90 @@ do
 
     ok("png.used.back", cnt("paShotSelfWrite(dst[0], fmt, w, h, nil, path)") == 1)
     ok("png.used.front", cnt("paShotSelfWrite(dst[0], D3D_A8R8G8B8,") == 1)
+end
+
+-- ======== путь для кадров (v1.19.210) ========
+-- Жалоба: «указываю путь, а файлов там нет». Причины были две:
+--   1) относительный путь уходил в «Документы\GTA San Andreas User Files\App
+--      screens» вместо папки игры — его там никто не искал;
+--   2) путь с русскими буквами (а у заказчика и логин «Я») в UTF-8 не открывался
+--      файловыми функциями Windows, которым нужна системная кодировка (CP1251).
+do
+    local shots = shotStub.shots
+    PA.shotSelfReady = function() return true end
+    PA.shotRenderReady = true
+    PA.shot = true
+    PA.cdUntil = {}
+    PA.lastAt = os.clock() - 5
+    PA.tabs[1].cmd = "/mute {ID} 60 флуд"
+
+    -- папка игры: относительный путь должен разрешаться от неё
+    local GAME = "/tmp/grnd_shot_game"
+    os.execute("rm -rf " .. GAME .. "; mkdir -p " .. GAME)
+    _G.getWorkingDirectory = function() return GAME end
+
+    local function targetFor(dir)
+        PA.shotDir = dir
+        PA.shotWait, PA.shotFail, PA.shotLast, PA.shotJob, PA.shotJobResult = nil, nil, nil, nil, nil
+        local okTake, plan = PA.shotTake("Mik")
+        return okTake, plan
+    end
+
+    -- 1. пусто: папка рядом со скриптом (в стенде это «resource/grnd/screenshots»)
+    -- в игре папку создаёт createDirectory, в стенде — mkdir оболочки
+    PA.shotDir = ""
+    PA.shotDirShownRaw, PA.shotDirShownVal = nil, nil
+    os.execute("mkdir -p '" .. PA.shotDirShow() .. "'")
+    local okEmpty, planEmpty = targetFor("")
+    eq("dir.empty.take", okEmpty, true)
+    ok("dir.empty.self", tostring(planEmpty and planEmpty.self):find("resource" .. "/" .. "grnd", 1, true) ~= nil)
+    os.execute("rm -rf " .. GAME .. "/\\.*resource*")
+
+    -- 2. относительный путь: от ПАПКИ ИГРЫ, а не от «Документов»
+    os.execute("mkdir -p " .. GAME .. "/Скрины")
+    local okRel, planRel = targetFor("Скрины")
+    eq("dir.rel.take", okRel, true)
+    eq("dir.rel.path", tostring(planRel and planRel.self),
+        GAME .. "/Скрины/" .. tostring(planRel and planRel.self):match("([^/]+)$"))
+    ok("dir.rel.not.documents", tostring(planRel and planRel.self):find("App screens", 1, true) == nil)
+
+    -- 3. кавычки по краям (частая вставка из проводника) снимаются
+    os.execute("mkdir -p " .. GAME .. "/quoted")
+    local okQuote, planQuote = targetFor('"' .. GAME .. '/quoted"')
+    eq("dir.quotes.take", okQuote, true)
+    eq("dir.quotes.path", tostring(planQuote and planQuote.self):match("^(.*)/[^/]+$"), GAME .. "/quoted")
+
+    -- 4. полный путь берётся как есть (тот же каталог, что и указан)
+    os.execute("mkdir -p " .. GAME .. "/abs")
+    local okAbs, planAbs = targetFor(GAME .. "/abs")
+    eq("dir.abs.take", okAbs, true)
+    eq("dir.abs.path", tostring(planAbs and planAbs.self):match("^(.*)/[^/]+$"), GAME .. "/abs")
+
+    -- 5. два написания пути: как в настройке и в системной кодировке
+    local many = PA.shotPathList(GAME .. "/Скрины")
+    eq("dir.variants.count", #many, 2)
+    eq("dir.variants.first", many[1], GAME .. "/Скрины")
+    ok("dir.variants.second", tostring(many[2]) ~= tostring(many[1]))
+    eq("dir.variants.ascii", #PA.shotPathList(GAME .. "/screens"), 1)
+
+    -- 6. недоступная папка — честный отказ с причиной (никакой тихой подмены)
+    local okBad, planBad = targetFor("/proc/grnd_no_such_dir")
+    eq("dir.bad.take", okBad, true)                       -- кадр всё равно будет
+    ok("dir.bad.reason", tostring(planBad and planBad.note):find("записи", 1, true) ~= nil)
+    ok("dir.bad.keeps.path", tostring(planBad and planBad.self) == "" or planBad.self == nil)
+
+    -- 7. на странице показан тот путь, куда файл реально ляжет
+    PA.shotDir = "Скрины"
+    PA.shotDirShownRaw, PA.shotDirShownVal = nil, nil
+    eq("dir.shown", PA.shotDirShow(), GAME .. "/Скрины")
+    PA.shotDir = ""
+    PA.shotDirShownRaw, PA.shotDirShownVal = nil, nil
+    ok("dir.shown.empty", tostring(PA.shotDirShow()):find("resource", 1, true) ~= nil)
+
+    _G.getWorkingDirectory = nil
+    PA.shotDir = ""
+    PA.shotSelfReady = function() return false end
+    os.execute("rm -rf " .. GAME)
 end
 
 -- удаление вкладки
@@ -1113,16 +1194,7 @@ do
     eq("shot2.fail", P2.shotFail, true)
     ok("shot2.reason", tostring(P2.shotLast):find("нет Screenshot.asi", 1, true) ~= nil)
     ok("shot2.no.claim", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
-    ok("log.shot2.fail", logHas("НЕ СОХРАНЕНО:") ~= nil)
-    ok("log.shot2.fallback", logHas("запасной путь не сработал:") ~= nil)
-    -- в логе не должно быть многострочной «простыни» require
-    for i = 1, #shotLog do
-        if tostring(shotLog[i]):find("init.lua", 1, true) then
-            ok("log.shot2.nostack", false)
-            break
-        end
-    end
-    ok("log.shot2.nostack", true)
+    eq("log.quiet.no.plugin", #shotLog, 0)   -- и без плагина в лог ничего не идёт
 
     -- 2. F8 нажали, но проверить негде — тоже без «сохранено»
     _G.setVirtualKeyDown = function() return true end

@@ -1,6 +1,24 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.209"
+GRND_SCRIPT_VERSION = "1.19.210"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.210 — правки по замечаниям (кадр сохраняется, но не туда):
+--   1) Указанный в настройке путь теперь и есть путь кадра:
+--      * пусто — папка рядом со скриптом (resource/grnd/screenshots);
+--      * «Скрины», «shots» — от ПАПКИ ИГРЫ (рядом с moonloader), а не от
+--        «Документы\GTA San Andreas User Files\App screens», где файлов никто
+--        не искал (это и была причина «указываю путь, а их там нет»);
+--      * «C:\Скрины», «D:/shots», «\\сервер\папка» — как указано;
+--      * кавычки по краям (вставка из проводника) снимаются;
+--      * если папку нельзя создать или писать — честный отказ с причиной,
+--        без тихой подмены на другую папку;
+--   2) пути с русскими буквами работают: настройка хранит UTF-8, а файловые
+--      функции Windows ждут системную кодировку — обе операции пробуют оба
+--      написания и проверяют, каким файл записался;
+--   3) на странице под полем видно, куда кадр ляжет на самом деле
+--      («Файлы: <полный путь>»);
+--   4) диагностика скриншота из moonloader.log убрана по просьбе заказчика:
+--      в лог MoonLoader про кадры больше не пишется ничего (итог — в чате и в
+--      журнале скрипта).
 -- v1.19.209 — правки по замечаниям (в логе игрока видно точное место):
 --   1) D3DXSaveSurfaceToFile на этой сборке отвечает D3DXERR_INVALIDDATA
 --      (0x88760B59) и на заднем, и на переднем буфере: кадр снят и лежит в
@@ -23,10 +41,9 @@ script_version(GRND_SCRIPT_VERSION)
 --      с переднего буфера и обрезается по окну игры; свёрнутая игра — честный
 --      отказ вместо белого кадра.
 -- v1.19.207 — правки по замечаниям (кадр выдачи всё ещё не сохранялся):
---   1) вся диагностика скриншота пишется в moonloader.log (moonloader\moonloader.log)
---      строками «[GRND] скриншот: …»: способ съёмки, путь, причина отказа своего
---      кадра, ошибки D3D с кодами HRESULT и итог (СОХРАНЕНО/НЕ СОХРАНЕНО).
---      Повторы подряд не печатаются, многострочные ошибки require схлопываются;
+--   1) диагностика скриншота шла в moonloader.log строками «[GRND] скриншот: …»;
+--      в v1.19.210 эти строки убраны по просьбе заказчика — в логе MoonLoader
+--      больше ничего про скриншоты не пишется (итог виден в чате и в журнале);
 --   2) добавлен запасной путь съёмки — передний буфер (GetFrontBufferData,
 --      снимок клиентской части окна игры) на случай, если драйвер не отдаёт
 --      задний буфер (сглаживание, ENB): так делают проверенные моды;
@@ -36072,30 +36089,6 @@ do
     local SHOT_WAIT = 5          -- сколько секунд ждём файл после запроса
     local SHOT_SEP = package.config:sub(1, 1)
 
-    -- Диагностика в moonloader.log. По этим строкам видно, что именно не вышло,
-    -- даже если журнал чата недоступен или его неудобно смотреть: игру
-    -- перезапускать не нужно, лог открывается в блокноте
-    -- (moonloader\moonloader.log). Повторы подряд не печатаем.
-    function PA.logFile(msg)
-        local line = "[GRND] скриншот: " .. tostring(msg)
-        if PA.logFileLast == line then return end
-        PA.logFileLast = line
-        -- MoonLoader пишет print() в moonloader.log в системной кодировке
-        -- (CP1251), поэтому переводим строку тем же конвертером, что и текст для
-        -- чата: иначе вместо русских слов в логе «закорючки» (v1.19.208).
-        for _, name in ipairs({ "grndAnsiText", "grndToAnsi", "grndUtf8ToCp1251" }) do
-            local fn = _G[name]
-            if type(fn) == "function" then
-                local ok, c = pcall(fn, line)
-                if ok and type(c) == "string" and c ~= "" then
-                    line = c
-                    break
-                end
-            end
-        end
-        if type(print) == "function" then pcall(print, line) end
-    end
-
     -- Ошибку require («no file package.preload[lib.screenshot]…») нельзя тащить
     -- в журнал целиком: это три строки шума. Оставляем суть, одна строка.
     -- LuaJIT-FFI есть в MoonLoader всегда: им и работаем с D3D9/Screenshot.asi
@@ -36251,17 +36244,36 @@ do
         return paShotDocsDir()
     end
 
+    -- Путь к папке может быть записан в UTF-8 (так его хранит настройка и так
+    -- его видно в поле ввода), а файловые функции Windows ждут системную
+    -- кодировку (CP1251). Русские буквы в пути — обычное дело
+    -- («C:\Users\Михаил\Desktop\Скрины»), поэтому каждую операцию
+    -- пробуем обоими написаниями: сначала как в настройке, потом в ANSI.
+    local function paShotPathList(path)
+        local list = { tostring(path or "") }
+        local ansi = _G.grndAnsiText
+        if type(ansi) == "function" then
+            local ok, v = pcall(ansi, list[1])
+            if ok and type(v) == "string" and v ~= "" and v ~= list[1] then
+                list[#list + 1] = v
+            end
+        end
+        return list
+    end
+
     -- Создать папку вместе с родителями: createDirectory делает только один
     -- уровень, а «…\resource\grnd\screenshots» может не существовать целиком.
     local function paShotMkdir(dir)
         if type(dir) ~= "string" or dir == "" then return end
         if type(createDirectory) ~= "function" then return end
-        dir = dir:gsub("[/\\]+$", "")
-        local prefix = dir:match("^%a:") or ((dir:sub(1, 2) == "\\\\") and "\\\\" or "")
-        local cursor = prefix
-        for part in dir:sub(#prefix + 1):gmatch("[^/\\]+") do
-            cursor = (cursor == "") and part or (cursor .. SHOT_SEP .. part)
-            pcall(createDirectory, cursor)
+        for _, variant in ipairs(paShotPathList(dir)) do
+            local d = variant:gsub("[/\\]+$", "")
+            local prefix = d:match("^%a:") or ((d:sub(1, 2) == "\\\\") and "\\\\" or "")
+            local cursor = prefix
+            for part in d:sub(#prefix + 1):gmatch("[^/\\]+") do
+                cursor = (cursor == "") and part or (cursor .. SHOT_SEP .. part)
+                pcall(createDirectory, cursor)
+            end
         end
     end
 
@@ -36294,23 +36306,29 @@ do
     -- «Program Files», и плагин молча не может сохранить туда кадр.
     local function paShotWritable(dir)
         if type(dir) ~= "string" or dir == "" then return false end
-        local probe = dir .. SHOT_SEP .. "grnd_write_test.tmp"
-        local f = io.open(probe, "wb")
-        if not f then return false end
-        f:close()
-        pcall(os.remove, probe)
-        return true
+        for _, variant in ipairs(paShotPathList(dir)) do
+            local probe = variant .. SHOT_SEP .. "grnd_write_test.tmp"
+            local f = io.open(probe, "wb")
+            if f then
+                f:close()
+                pcall(os.remove, probe)
+                return true
+            end
+        end
+        return false
     end
 
     -- Файл есть? doesFileExist — штатная функция MoonLoader, io.open — запас.
     local function paShotExists(path)
         if type(path) ~= "string" or path == "" then return false end
-        if type(doesFileExist) == "function" then
-            local ok, v = pcall(doesFileExist, path)
-            if ok and v then return true end
+        for _, variant in ipairs(paShotPathList(path)) do
+            if type(doesFileExist) == "function" then
+                local ok, v = pcall(doesFileExist, variant)
+                if ok and v then return true end
+            end
+            local f = io.open(variant, "rb")
+            if f then f:close() return true end
         end
-        local f = io.open(path, "rb")
-        if f then f:close() return true end
         return false
     end
 
@@ -36340,8 +36358,19 @@ do
     local function paShotFresh(dir, afterT)
         local lfs = libs and libs.lfs
         if not (lfs and type(lfs.dir) == "function") then return nil end
-        local okD, iter, obj = pcall(lfs.dir, dir)
-        if not okD or type(iter) ~= "function" then return nil end
+        local d = dir
+        local okD, iter, obj = pcall(lfs.dir, d)
+        if not (okD and type(iter) == "function") then
+            -- папка с русскими буквами может быть записана в UTF-8, а lfs ждёт ANSI
+            for _, variant in ipairs(paShotPathList(dir)) do
+                local ok2, it2, ob2 = pcall(lfs.dir, variant)
+                if ok2 and type(it2) == "function" then
+                    d, iter, obj = variant, it2, ob2
+                    break
+                end
+            end
+        end
+        if type(iter) ~= "function" then return nil end
         local best, bestT = nil, nil
         for file in iter, obj do
             if file ~= "." and file ~= ".." then
@@ -36352,7 +36381,7 @@ do
                 end
             end
         end
-        if best then return dir .. SHOT_SEP .. best end
+        if best then return d .. SHOT_SEP .. best end
         return nil
     end
 
@@ -36778,12 +36807,24 @@ do
         local raw = table.concat(parts)
         local okPng, png = pcall(PNG.bytes, raw, wOut, #rows)
         if not okPng then return false, "сборка PNG: " .. tostring(png) end
-        local f = io.open(path, "wb")
-        if not f then return false, "файл не открылся на запись" end
-        local okW, werr = pcall(function() f:write(png) end)
-        pcall(f.close, f)
-        if not okW then return false, "запись файла: " .. tostring(werr) end
-        return true, string.format("%dx%d, %d КБ", wOut, #rows, math.floor(#png / 1024))
+        -- Путь с русскими буквами: настройка хранит UTF-8, Windows ждёт ANSI —
+        -- пробуем оба написания и запоминаем то, которым файл реально записался.
+        local opened = nil
+        for _, variant in ipairs(paShotPathList(path)) do
+            local f = io.open(variant, "wb")
+            if f then
+                local okW, werr = pcall(function() f:write(png) end)
+                pcall(f.close, f)
+                if okW and paShotExists(variant) then
+                    opened = variant
+                    break
+                end
+            end
+        end
+        if not opened then
+            return false, "файл не открылся на запись: " .. tostring(path)
+        end
+        return true, string.format("%dx%d, %d КБ", wOut, #rows, math.floor(#png / 1024)), opened
     end
 
     -- Адрес окна игры (gta_sa.exe 1.0 US) — нужен только запасному пути съёмки.
@@ -36875,10 +36916,10 @@ do
                         else
                             -- 1) свой PNG (здесь и был затык: D3DX отвечал
                             --    D3DXERR_INVALIDDATA на обоих буферах)
-                            local okPng, pngNote = paShotSelfWrite(dst[0], fmt, w, h, nil, path)
+                            local okPng, pngNote, pngPath = paShotSelfWrite(dst[0], fmt, w, h, nil, path)
                             if okPng then
                                 release(dst[0])
-                                return true, nil, "свой PNG, задний буфер " .. tostring(pngNote)
+                                return true, nil, "свой PNG, задний буфер " .. tostring(pngNote), pngPath
                             end
                             bad[#bad + 1] = "свой PNG: " .. tostring(pngNote)
                             -- 2) запасной — D3DX (если LockRect не сработал)
@@ -36946,7 +36987,7 @@ do
                             crop = { left = tonumber(rc[0].left), top = tonumber(rc[0].top),
                                 right = tonumber(rc[0].right), bottom = tonumber(rc[0].bottom) }
                         end
-                        local okPng, pngNote = paShotSelfWrite(dst[0], D3D_A8R8G8B8,
+                        local okPng, pngNote, pngPath = paShotSelfWrite(dst[0], D3D_A8R8G8B8,
                             sw or 0, sh or 0, crop, path)
                         if not okPng then
                             hr = lib.D3DXSaveSurfaceToFileW(wide, D3DXIFF_PNG, dst[0], nil, rectPtr)
@@ -36958,7 +36999,7 @@ do
                         end
                         release(dst[0])
                         if okPng then
-                            return true, nil, string.format("передний буфер: %s", tostring(pngNote))
+                            return true, nil, string.format("передний буфер: %s", tostring(pngNote)), pngPath
                         end
                         bad[#bad + 1] = "передний буфер: " .. tostring(pngNote)
                     end
@@ -36970,38 +37011,59 @@ do
         return false, table.concat(bad, "; ")
     end
 
-    -- Куда положить свой кадр. Путь разворачиваем в абсолютный сами: относительный
-    -- читается так же, как у плагина, — от «GTA San Andreas User Files\App screens».
-    -- Папку создаём и проверяем, что в неё можно писать (игра в «Program Files»
-    -- писать в свою папку не может).
+    -- Разбор того, что человек написал в поле «Папка для скриншотов»:
+    -- кавычки по краям (частая вставка из проводника) снимаем, пробелы и
+    -- хвостовые разделители убираем. Возвращаем написанное «как есть» —
+    -- приведением к абсолютному пути занимается paShotAbsDir (v1.19.210).
+    local function paShotCleanDir(v)
+        local dir = trim(tostring(v or ""))
+        dir = dir:gsub('^"(.*)"$', "%1"):gsub("^'(.*)'$", "%1")
+        return trim(dir)
+    end
+
+    -- Полный путь папки:
+    --   * пусто -> папка рядом со скриптом (resource/grnd/screenshots);
+    --   * «C:\Скрины», «D:/shots», «\\сервер\папка» -> как указано;
+    --   * «Скрины», «shots» -> от ПАПКИ ИГРЫ (рядом с moonloader).
+    -- Раньше относительный путь уходил в «Документы\GTA San Andreas User
+    -- Files\App screens» — там его никто не искал: это и было причиной
+    -- «указываю путь, а файлов нет».
+    local function paShotAbsDir(dir)
+        dir = paShotCleanDir(dir)
+        if dir == "" then return PA.shotDirDefault() end
+        if dir:match("^%a:[/\\]") or dir:sub(1, 2) == "\\\\" or dir:sub(1, 1) == "/" then
+            return dir
+        end
+        local wd = (type(getWorkingDirectory) == "function")
+            and tostring(getWorkingDirectory() or "") or ""
+        if wd == "" then return nil, "не понять, куда писать кадр" end
+        return wd:gsub("[/\\]+$", "") .. SHOT_SEP .. dir
+    end
+
+    -- Куда именно ляжет файл — для показа на странице (один и тот же путь не
+    -- пересчитываем каждый кадр).
+    function PA.shotDirShow()
+        local raw = tostring(PA.shotDir or "")
+        if PA.shotDirShownRaw == raw and PA.shotDirShownVal then return PA.shotDirShownVal end
+        local dir = paShotAbsDir(raw)
+        dir = tostring(dir or "")
+        -- для показа приводим разделители к «папочному» виду Windows
+        if dir:match("^%a:") then dir = dir:gsub("/", "\\") end
+        PA.shotDirShownRaw, PA.shotDirShownVal = raw, dir
+        return dir
+    end
+
+    -- Куда положить свой кадр: папку создаём и проверяем запись. Если указанную
+    -- папку создать/писать нельзя — это ЧЕСТНЫЙ отказ с причиной, а не тихая
+    -- подмена на другую папку.
     local function paShotSelfTarget(name)
-        local dir = trim(tostring(PA.shotDir or ""))
-        local user = nil
-        if dir == "" then
-            dir = PA.shotDirDefault()
-        else
-            local abs = dir:match("^%a:[/\\]") ~= nil or dir:sub(1, 2) == "\\\\" or dir:sub(1, 1) == "/"
-            if not abs then
-                user = paShotUserDir()
-                if user then dir = user .. SHOT_SEP .. "App screens" .. SHOT_SEP .. dir end
-            end
-        end
-        if not (dir:match("^%a:[/\\]") or dir:sub(1, 2) == "\\\\" or dir:sub(1, 1) == "/") then
-            local wd = (type(getWorkingDirectory) == "function")
-                and tostring(getWorkingDirectory() or "") or ""
-            if wd == "" then return nil, "не понять, куда писать кадр" end
-            dir = wd:gsub("[/\\]+$", "") .. SHOT_SEP .. dir
-        end
+        local dir, why = paShotAbsDir(PA.shotDir)
+        if not dir then return nil, why end
         dir = dir:gsub("[/\\]+$", "")
         paShotMkdir(dir)
         if not paShotWritable(dir) then
-            local alt = (user or paShotUserDir())
-            alt = alt and (alt .. SHOT_SEP .. "App screens" .. SHOT_SEP .. "grnd") or nil
-            if alt then paShotMkdir(alt) end
-            if not (alt and paShotWritable(alt)) then
-                return nil, "папка недоступна для записи: " .. tostring(dir)
-            end
-            dir = alt:gsub("[/\\]+$", "")
+            return nil, "папка недоступна для записи: " .. tostring(dir)
+                .. " (проверьте путь и права; для папок внутри «Program Files» нужен администратор)"
         end
         return dir .. SHOT_SEP .. name .. ".png", nil
     end
@@ -37089,9 +37151,12 @@ do
         local job = PA.shotJob
         if type(job) ~= "table" then return end
         PA.shotJob = nil
-        local okC, okS, why = pcall(PA.shotGrab, job.path)
+        local okC, okS, why, realPath = pcall(PA.shotGrab, job.path)
         if okC and okS then
-            PA.shotJobResult = { ok = true, path = job.path, how = tostring(why or "") }
+            -- realPath — то написание пути, которым файл действительно записался
+            -- (важно для путей с русскими буквами), поэтому проверяем именно его
+            PA.shotJobResult = { ok = true, path = (type(realPath) == "string" and realPath) or job.path,
+                how = tostring(why or "") }
             return
         end
         local reason = (not okC) and ("ошибка: " .. tostring(okS)) or tostring(why)
@@ -37100,7 +37165,6 @@ do
         -- должны идти из своего потока, а не из потока отрисовки.
         PA.shotJobResult = { fallback = true, path = job.path,
             why = "свой кадр не вышел: " .. reason }
-        PA.logFile("свой кадр не вышел: " .. tostring(reason))
     end
 
     PA.shotGrab = paShotGrabReal     -- стенд может подменить саму съёмку
@@ -37109,6 +37173,7 @@ do
     PA.pngUtil = PNG                 -- сборщик PNG (проверяется стендом)
     PA.pngRows = PIX.rows            -- чтение пикселей поверхности (стенд)
     PA.pngWrite = paShotSelfWrite    -- поверхность -> PNG -> файл (стенд)
+    PA.shotPathList = paShotPathList -- написания пути: UTF-8 и системная кодировка
 
     -- Кадр снимается только из потока отрисовки, поэтому нужен «хук кадра».
     -- Основной — кадр ImGui: меню рисуется всегда, значит кадр есть всегда
@@ -37155,7 +37220,6 @@ do
     -- ВНИМАНИЕ: PA.shot — тумблер (bool), поэтому функция зовётся shotTake.
     function PA.shotTake(nick)
         if PA.shot == false then
-            PA.logFile("тумблер выключен — кадр не делаем")
             return false, "выключено"
         end
         local plan = { nick = tostring(nick or ""), expect = nil, note = nil,
@@ -37171,19 +37235,15 @@ do
                 plan.paths = { target }
                 plan.expect = target
                 plan.note = "свой кадр (D3D9)"
-                PA.logFile("способ: свой кадр (D3D9), файл " .. tostring(target))
                 return true, plan
             end
             plan.selfWhy = whySelf
-            PA.logFile("свой кадр не готов: " .. tostring(whySelf))
         end
         -- Путь 2: плагин Screenshot.asi, а без него — штатная F8.
         local okA, whyA = paShotStartAlt(plan)
         if not okA then
-            PA.logFile("запасной путь не сработал: " .. tostring(whyA))
             return false, whyA
         end
-        PA.logFile("способ: " .. tostring(plan.note) .. ", ждём файл " .. tostring(plan.expect))
         if plan.selfWhy then
             plan.note = tostring(plan.note or "") .. " · свой кадр не вышел: " .. tostring(plan.selfWhy)
         end
@@ -37204,7 +37264,6 @@ do
         PA.shotFail = (not okFlag) or nil
         local prefix = okFlag and "скриншот сохранён: " or "скриншот не сохранён: "
         local tail = ""
-        PA.logFile((okFlag and "СОХРАНЕНО: " or "НЕ СОХРАНЕНО: ") .. tostring(full or short))
         if not okFlag then
             -- по строке в журнале сразу видно сборку и почему не вышло
             tail = " (v" .. tostring(GRND_SCRIPT_VERSION or "?")
@@ -37212,7 +37271,6 @@ do
         end
         PA.log(prefix .. tostring(full or short) .. tail)
         if not okFlag then
-            PA.logFile("причина: " .. tostring(full or short) .. tail)
         end
         if PA.notify then
             QR.toast("Автоскриншот: " .. tostring(short), okFlag and "ok" or "warn", okFlag and 3.4 or 5)
@@ -37245,7 +37303,6 @@ do
                     PA.shotWait = r2
                     if r2.job and r2.self then
                         PA.shotJob = { path = r2.self, plan = r2 }
-                        PA.logFile("снимаю кадр: " .. tostring(r2.self))
                     end
                 else
                     paShotReport(false, tostring(r2), tostring(r2))
@@ -37266,7 +37323,6 @@ do
                         PA.shotWait, PA.shotJob = nil, nil
                         if paShotExists(J.path) then
                             paShotReport(true, (J.path:match("[^/\\]+$") or J.path) .. "  (свой кадр)", J.path)
-                            PA.logFile("кадр снят: " .. tostring(J.how or ""))
                         else
                             paShotReport(false, "файл не появился после сохранения",
                                 tostring(J.path) .. " — D3DX отчитался об успехе, файла нет")
@@ -37872,16 +37928,23 @@ do
         if PA.shot ~= false and yy1 + 15 + ROW <= bottomY then
             yy1 = label(yy1, c1X, "Папка для скриншотов")
             field(ctx, "##grnd_pa_shotdir", "paShotDir", SHOT_MAXDIR * 2 + 1, c1X, yy1, colW1, ROW,
-                PA.shotDirDefault(), false, PA.shotDir or "")
+                "resource\\grnd\\screenshots", false, PA.shotDir or "")
             local sv = trim(bufText("paShotDir"))
             if sv ~= (PA.shotDir or "") then
                 PA.shotDir = clampText(oneLine(utf(sv)), SHOT_MAXDIR)
                 PA.touch()
             end
-            yy1 = yy1 + ROW + 6
+            yy1 = yy1 + ROW + 4
+            -- Куда кадр ляжет на самом деле — ровно две строки (столько же,
+            -- сколько занимала прежняя подсказка): полный путь и напоминание,
+            -- что можно писать (v1.19.210)
+            local shown = trim(tostring(PA.shotDirShow() or ""))
             yy1 = yy1 + paHint(ctx, c1X, yy1, colW1,
-                "Пусто — resource/grnd/screenshots: папку скрипт создаст сам. Кадр "
-                .. "снимает он же (D3D9), Screenshot.asi не обязателен.", mut, 2)
+                shown ~= "" and ("Файлы: " .. shown) or "Файлы: папка рядом со скриптом",
+                mut, 1)
+            yy1 = yy1 + paHint(ctx, c1X, yy1, colW1,
+                "Пусто — папка рядом со скриптом; можно имя папки или полный путь, например D:\\Скрины.",
+                mut, 1)
             yy1 = yy1 + BLOCK
         end
 
@@ -48769,12 +48832,7 @@ function grndMainBody()
                 return false
             end
             _G.grndShotHookInstall = installShotHook
-            if installShotHook() then
-                -- видно в moonloader.log: кадр вообще может сниматься в этой сборке
-                if type(print) == "function" then
-                    pcall(print, "[GRND] скриншот: хук кадра подключён (" .. tostring(imKind) .. ")")
-                end
-            end
+            installShotHook()
             local function safeDraw()
                 local ok, res = pcall(drawAll)
                 if ok then return res end
