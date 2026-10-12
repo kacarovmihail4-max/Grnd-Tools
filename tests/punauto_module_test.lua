@@ -303,7 +303,7 @@ eq("fixed.watchOoc", PA.watchOoc, true)
 eq("fixed.notify", PA.notify, true)
 eq("fixed.logOn", PA.logOn, true)
 eq("fixed.skipSelf", PA.skipSelf, false)
-eq("fixed.skipAdmins", PA.skipAdmins, false)
+eq("fixed.skipAdmins", PA.skipAdmins, true)   -- v1.19.214: админов не трогаем
 eq("shot.default", PA.shot, true)         -- автоскриншот после выдачи включён
 ok("shotDir.default", type(PA.shotDirDefault()) == "string" and #PA.shotDirDefault() > 0)
 
@@ -361,7 +361,7 @@ eq("reload.watchOoc", PA.watchOoc, true)
 eq("reload.notify", PA.notify, true)
 eq("reload.logOn", PA.logOn, true)
 eq("reload.skipSelf", PA.skipSelf, false)
-eq("reload.skipAdmins", PA.skipAdmins, false)
+eq("reload.skipAdmins", PA.skipAdmins, true)
 
 -- ---------- выдача ----------
 PA.on = true
@@ -452,13 +452,13 @@ PA.onChat("Nik_Name[7]: дм")
 eq("off.no.send", #queued, 0)
 PA.on = true
 
--- v1.19.213: предохранители «не трогать админов» и «не трогать себя» пока
--- ВЫКЛЮЧЕНЫ — наказание уходит и администратору, и себе
+-- v1.19.214: «не трогать админов» ВКЛЮЧЁН по умолчанию — администратору
+-- наказания нет, а себе (предохранитель пока выключен) — есть
 PA.lastAt = os.clock() - 5
 queued = {}
 PA.onChat("Admin_One[400]: дм")
-eq("skipAdmin.off", #queued, 1)
-eq("skipAdmin.off.cmd", queued[1], "/mute 400 60 2.1 ОП")
+eq("skipAdmin.on", #queued, 0)
+ok("skipAdmin.on.text", tostring(PA.lastCheck):find("администратор", 1, true) ~= nil)
 
 PA.lastAt = os.clock() - 5
 queued = {}
@@ -466,19 +466,17 @@ PA.onChat("Mixa[5]: дм")
 eq("skipSelf.off", #queued, 1)
 eq("skipSelf.off.cmd", queued[1], "/mute 5 60 2.1 ОП")
 
--- ...а когда предохранители включат (позже), они обязаны работать по-прежнему
-PA.skipSelf, PA.skipAdmins = true, true
+-- а если «не трогать админов» снять вручную — наказание опять уйдёт,
+-- и normalize вернёт фиксированное значение обратно
+PA.skipAdmins = false
 PA.lastAt = os.clock() - 5
 queued = {}
 PA.onChat("Admin_One[400]: дм")
-eq("skipAdmin.on", #queued, 0)
-ok("skipAdmin.on.text", tostring(PA.lastCheck):find("администратор", 1, true) ~= nil)
-PA.lastAt = os.clock() - 5
-queued = {}
-PA.onChat("Mixa[5]: дм")
-eq("skipSelf.on", #queued, 0)
+eq("skipAdmin.off.manual", #queued, 1)
+eq("skipAdmin.off.manual.cmd", queued[1], "/mute 400 60 2.1 ОП")
 PA.normalize()          -- фиксированные значения возвращаются
-eq("skip.off.again", PA.skipSelf, false)
+eq("skipAdmin.again", PA.skipAdmins, true)
+eq("skipSelf.still.off", PA.skipSelf, false)
 
 -- защита от двойного хука: та же строка дважды подряд — один разбор
 PA.lastAt = os.clock() - 5
@@ -1229,7 +1227,7 @@ eq("draw.toggles.gone.watchSay", PA.watchSay, true)
 eq("draw.toggles.gone.watchShout", PA.watchShout, true)
 eq("draw.toggles.gone.watchOoc", PA.watchOoc, true)
 eq("draw.toggles.gone.skipSelf", PA.skipSelf, false)
-eq("draw.toggles.gone.skipAdmins", PA.skipAdmins, false)
+eq("draw.toggles.gone.skipAdmins", PA.skipAdmins, true)
 
 -- скриншот: тумблер и поле папки на странице
 pcall(QR.punAutoDraw, ctx)
