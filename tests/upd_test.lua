@@ -24,9 +24,9 @@ local a1 = assert(src:find("-- >>> GRND_UPDATE_BEGIN"))
 local a2 = assert(src:find("-- <<< GRND_UPDATE_END"))
 local block = src:sub(a1, a2 - 1)
 
-local V = "1.19.228"       -- текущая версия скрипта
-local NEW = "1.19.229"     -- версия в канале
-local OLD = "1.19.227"     -- что отдаёт зеркало из кэша
+local V = "1.19.229"       -- текущая версия скрипта
+local NEW = "1.19.230"     -- версия в канале
+local OLD = "1.19.228"     -- что отдаёт зеркало из кэша
 
 local SCRIPT_PATH = "/game/moonloader/grnd_adm_tools.lua"
 local CFG_PATH = "/game/moonloader/config/grnd_tools/grnd_update.cfg"
@@ -50,7 +50,13 @@ local reloaded = 0
 _G.thisScript = function()
     return {
         path = SCRIPT_PATH,
-        reload = function() reloaded = reloaded + 1 return true end,
+        reload = function(self)
+            -- метод LuaScript обязан получить self: вызов без него валит
+            -- скрипт ошибкой «cannot resume non-suspended coroutine»
+            assert(self and self.path == SCRIPT_PATH, "перезапуск без self")
+            reloaded = reloaded + 1
+            return true
+        end,
     }
 end
 _G.getWorkingDirectory = function() return "/game/moonloader/" end
@@ -502,13 +508,22 @@ succeed(3, blobJson(newBody(NEW, "установка прошла")))
 U.tick()
 check(U.state == "ready", "установка: состояние ready")
 check(U.installed == true, "установка: флаг installed")
-check(U.window == true, "установка: окно со списком изменений открыто")
+check(U.window == false, "установка: окно ещё не открыто (его покажет новая версия)")
+check(U.reloadPending == true, "установка: сразу просим перезапуск (без кнопок)")
+check(reloaded == 0, "установка: в кадре перезапуска нет")
 check(hasToast("Обновление " .. NEW .. " установлено"), "установка: тост об установке")
 check(FS[SCRIPT_PATH]:find('GRND_SCRIPT_VERSION = "' .. NEW .. '"', 1, true) ~= nil,
     "установка: новый файл встал на место")
 check(FS[SCRIPT_PATH .. ".bak"] == "-- старый скрипт\n", "установка: старый — в .bak")
 check(FS[SCRIPT_PATH .. ".new"] == nil, "установка: .new больше нет")
 check(#(U.notes or {}) == 1, "установка: список изменений разобран")
+check((gconf.sections.update or ""):find("updatedVer=" .. NEW, 1, true) ~= nil,
+    "установка: отметка о новой версии записана в настройки")
+check((gconf.sections.update or ""):find("updatedFrom=" .. V, 1, true) ~= nil,
+    "установка: прежняя версия записана для списка изменений")
+U.tick()
+check(reloaded == 1, "установка: перезапуск выполнен тиком")
+check(U.reloadPending == false, "установка: просьба снята")
 
 -- ---------- 6. исполнение по тексту: адреса зеркал ----------
 resetU()
@@ -675,6 +690,21 @@ U.tick()
 check(U.state == "error", "чужая версия: не ставим")
 check(FS[SCRIPT_PATH] == "-- старый скрипт\n", "чужая версия: файл цел")
 
+-- api отдал сам скрипт JSON-ом (файл меньше мегабайта, содержимое в JSON):
+-- на место скрипта должен встать РАСПАКОВАННЫЙ скрипт, а не JSON-обёртка
+resetU()
+U.CHANNELS = { CHA }
+U.check("manual")
+succeed(1, apiJson(NEW))
+U.tick()
+succeed(2, apiJson(newBody(NEW, "из JSON")))
+U.tick()
+check(U.state == "ready", "JSON: установка из содержимого JSON прошла")
+check(FS[SCRIPT_PATH]:sub(1, 12) == "script_name(", "JSON: на месте скрипт, а не JSON-обёртка")
+check(FS[SCRIPT_PATH]:find('"encoding"', 1, true) == nil, "JSON: обёртки в файле нет")
+check(FS[SCRIPT_PATH]:find('GRND_SCRIPT_VERSION = "' .. NEW .. '"', 1, true) ~= nil,
+    "JSON: версия в установленном файле")
+
 -- штатная установка (не api, зеркало) — для полноты
 resetU()
 U.CHANNELS = { CH1 }
@@ -798,21 +828,53 @@ local function mkCtx(im)
 end
 check(U.draw(mkCtx(mkIm())) == false, "окно: закрыто — не рисуется")
 
+-- полный цикл: нашли версию → скачали → сами перезапустились,
+-- а окно со списком изменений открывает УЖЕ НОВАЯ версия (как в игре)
 U.check("manual")
 succeed(1, apiJson(NEW))
 U.tick()
 succeed(2, blobJson(newBody(NEW, "в окне видно")))
 U.tick()
-check(U.window == true, "окно: открылось после установки")
+check(U.reloadPending == true, "цикл: после установки сразу просим перезапуск")
+check(reloaded == 0, "цикл: перезапуск не в кадре, а в главном цикле")
+U.tick()
+check(reloaded == 1, "цикл: перезапуск выполнен")
+check(U.window == false, "цикл: старая версия окно не показывает")
+
+-- после перезапуска запускается НОВЫЙ файл: он читает отметку и сам
+-- открывает окно «что изменилось»
+_G.GRND_SCRIPT_VERSION = NEW
+_G.GRND_UPDATE = nil -- настоящий перезапуск начинает состояние с чистого листа
+local U3 = mkModule()()
+U3.io = stubIO
+U3.moonDl = downloadStub
+U3.CHANNELS = { CHA, CH1, CH2, CH3 }
+U3.inetLoad = function() return nil end
+U3.inet, U3.inetErr, U3.road = nil, nil, nil
+U3.cfgLoaded = false
+U3.tick()
+check(U3.cur == NEW, "после перезапуска: версия — новая")
+check(U3.window == true, "после перезапуска: окно изменений открылось само")
+check(U3.justUpdated and U3.justUpdated.from == V and U3.justUpdated.to == NEW,
+    "после перезапуска: известно, с какой версии обновились")
+check(#(U3.notes or {}) >= 1, "после перезапуска: список изменений собран")
+check(table.concat(U3.notes[1] and U3.notes[1].lines or {}, " "):find("в окне видно", 1, true) ~= nil,
+    "после перезапуска: в списке — строки новой версии")
+check(hasToast("Обновление " .. NEW .. " включено"),
+    "после перезапуска: тост про включённую версию")
+check((gconf.sections.update or ""):find("updatedVer", 1, true) == nil,
+    "после перезапуска: отметка снята (окно покажем один раз)")
+
 local im = mkIm()
-check(U.draw(mkCtx(im)) == true, "окно: нарисовалось")
-check(im.began and im.began:find("АВТООБНОВЛЕНИЕ", 1, true) ~= nil,
-    "окно: заголовок «АВТООБНОВЛЕНИЕ»")
+check(U3.draw(mkCtx(im)) == true, "окно: нарисовалось")
+check(im.began and im.began:find("Grnd Tools", 1, true) ~= nil,
+    "окно: называется «Grnd Tools»")
 check(im.ended == 1, "окно: End вызван один раз")
 check(im.children == 0, "окно: все блоки закрыты (EndChild парный)")
 local body = table.concat(im.texts, "\n")
 check(body:find("ОБНОВЛЕНИЕ СКРИПТА", 1, true) ~= nil, "окно: наш заголовок")
 check(body:find("Установлена версия " .. NEW, 1, true) ~= nil, "окно: было/стало")
+check(body:find("Была " .. V, 1, true) ~= nil, "окно: прежняя версия видна")
 check(body:find("ЧТО ИЗМЕНИЛОСЬ", 1, true) ~= nil, "окно: подзаголовок изменений")
 check(body:find("в окне видно", 1, true) ~= nil, "окно: строка изменений")
 check(body:find("v" .. NEW, 1, true) ~= nil, "окно: номер версии в списке")
@@ -820,19 +882,16 @@ check(body:find("Диагностика", 1, true) == nil, "окно: диагн
 check(body:find("Канал:", 1, true) == nil, "окно: служебного «Канал:» нет")
 check(body:find("grnd_update.log", 1, true) == nil, "окно: про лог не пишем")
 local labels = table.concat(im.buttons, "|")
-check(labels:find("Перезагрузить скрипт", 1, true) ~= nil, "окно: кнопка перезагрузки")
-check(labels:find("Позже", 1, true) ~= nil, "окно: кнопка «Позже»")
+check(labels:find("Закрыть", 1, true) ~= nil, "окно: кнопка «Закрыть»")
+check(select(2, labels:gsub("|", "")) == 0, "окно: кнопка всего одна")
+check(labels:find("Перезагрузить", 1, true) == nil,
+    "окно: кнопки перезапуска больше нет (обновление включается само)")
+check(labels:find("Позже", 1, true) == nil, "окно: кнопки «Позже» больше нет")
+im.clicked["Закрыть##grnd_upd_close"] = true
+U3.draw(mkCtx(im))
+check(U3.window == false, "окно: «Закрыть» закрывает окно")
 
-im.clicked["Перезагрузить скрипт##grnd_upd_reload"] = true
-U.draw(mkCtx(im))
-check(U.reloadPending == true, "окно: кнопка перезагрузки ставит просьбу")
-check(reloaded == 0, "окно: в кадре скрипт НЕ перезапускается")
-U.tick()
-check(reloaded == 1, "тик: перезапуск выполнен из главного цикла")
-check(U.reloadPending == false, "тик: просьба снята")
-check(U.window == false, "окно: после перезагрузки окно закрыто")
-
--- «уже самая свежая» — окно ручной проверки, кнопки повторной проверки
+-- «уже самая свежая» — окно ручной проверки, тоже одна кнопка
 resetU()
 U.window, U.state = true, "uptodate"
 local im3 = mkIm()
@@ -840,10 +899,9 @@ check(U.draw(mkCtx(im3)) == true, "окно: рисуется и без изме
 check(table.concat(im3.texts, " "):find("самая свежая версия", 1, true) ~= nil,
     "окно: текст «самая свежая версия»")
 local labels3 = table.concat(im3.buttons, "|")
-check(labels3:find("Проверить снова", 1, true) ~= nil,
-    "окно: кнопка повторной проверки")
-check(labels3:find("Проверить каналы", 1, true) ~= nil,
-    "окно: кнопка обхода каналов")
+check(labels3:find("Закрыть", 1, true) ~= nil, "окно: кнопка «Закрыть» и здесь")
+check(labels3:find("Проверить", 1, true) == nil,
+    "окно: кнопок проверки больше нет")
 check(table.concat(im3.texts, " "):find("Диагностика", 1, true) == nil,
     "окно: служебных логов тут тоже нет")
 

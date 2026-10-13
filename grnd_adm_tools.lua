@@ -1,6 +1,21 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.228"
+GRND_SCRIPT_VERSION = "1.19.229"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.229 — АВТООБНОВЛЕНИЕ: включается само, окно «Grnd Tools» и починка
+--  падения при перезапуске:
+--   1) ИСПРАВЛЕН КРАШ: перезапуск скрипта вызывался как pcall(sc.reload) — без
+--      self. У методов LuaScript это валит скрипт ошибкой «cannot resume
+--      non-suspended coroutine»; теперь self передаётся;
+--   2) ИСПРАВЛЕНО: файл скрипта, пришедший от api.github.com как JSON с
+--      содержимым в base64, переименовывался на место скрипта вместе с
+--      обёрткой — игра получила бы JSON вместо скрипта. Теперь содержимое
+--      распаковывается и записывается в файл до замены;
+--   3) обновление включается САМО: скачали → сразу перезапуск, кнопки
+--      «Перезагрузить скрипт» больше нет;
+--   4) окно со списком изменений открывает уже НОВАЯ версия: отметка «только
+--      что обновились с версии X» лежит в настройках, поэтому окно появляется
+--      после перезапуска; проверка на заходе сразу после него его не стирает;
+--   5) окно называется «Grnd Tools» и в нём одна кнопка — «Закрыть».
 -- v1.19.228 — АВТООБНОВЛЕНИЕ: тост вместо строк в чате и чистая сборка:
 --   1) ТОСТЫ теперь настоящие: раньше модуль звал GRND_QR.toast, а он молчит,
 --      если сессия ещё не «готова» — сообщение про проверку обновлений на
@@ -39463,8 +39478,9 @@ do
         end
 
         -- ---------- автообновление (v1.19.223) ----------
-        -- Текущая версия всегда на виду; кнопка одна и зависит от состояния:
-        -- есть что перезагрузить — «Перезагрузить скрипт», иначе — проверка.
+        -- Текущая версия всегда на виду. Обновление ставится и включается
+        -- само (v1.19.229), поэтому кнопка одна — «Проверить обновления»;
+        -- когда окно с изменениями открыто, вместо неё «Что нового?».
         do
             local U = _G.GRND_UPDATE
             if type(U) == "table" then
@@ -39474,8 +39490,8 @@ do
                 R.uiText(cx, y, "ОБНОВЛЕНИЯ", muted, 0.9)
                 local status, scol
                 if U.installed then
-                    status, scol = "скачана " .. tostring(U.newVer or "?")
-                        .. " — нужен перезапуск", hi
+                    status, scol = "обновление " .. tostring(U.newVer or "?")
+                        .. " включается…", hi
                 elseif U.state == "downloading" then
                     status, scol = "обновляюсь до " .. tostring(U.newVer or "?")
                         .. "…", hi
@@ -39488,14 +39504,7 @@ do
                 end
                 R.uiText(cx + cw - W(status, 0.9), y, status, scol, 0.9)
                 y = y + 18
-                if U.installed then
-                    if R.button("rt_upd_reload", cx, y, cw, 26,
-                        "Перезагрузить скрипт", { cutW = cw - 16 }) then
-                        if type(U.requestReload) == "function" then
-                            U.requestReload()
-                        end
-                    end
-                elseif U.window then
+                if U.window then
                     if R.button("rt_upd_show", cx, y, cw, 26,
                         "Что нового?", { cutW = cw - 16 }) then
                         if type(_G.ensureRender) == "function" then
@@ -39839,6 +39848,25 @@ local function grndUpdInit()
         return data
     end
 
+    -- Первые байты файла (список изменений живёт в шапке, весь файл читать
+    -- незачем — он весит мегабайты).
+    function U.readHead(path, bytes)
+        bytes = bytes or 16384
+        if type(U.io.open) ~= "function" then return nil end
+        local f = U.io.open(path, "rb")
+        if not f then return nil end
+        local data
+        local ok, res = pcall(f.read, f, bytes)
+        if ok and type(res) == "string" then
+            data = res
+        else
+            ok, res = pcall(f.read, f, "*a")
+            if ok and type(res) == "string" then data = res:sub(1, bytes) end
+        end
+        pcall(f.close, f)
+        return data
+    end
+
     function U.writeFile(path, data)
         if type(U.io.open) ~= "function" then return false end
         local f = U.io.open(path, "wb")
@@ -40124,6 +40152,8 @@ local function grndUpdInit()
                 if n and n >= 0 then U.period = n end
             end
             if k == "last" then U.lastAt = tonumber(v) or U.lastAt end
+            if k == "updatedVer" then U.updatedVer = v end
+            if k == "updatedFrom" then U.updatedFrom = v end
             if k == "channel" then U.activeId = v end
             -- своё зеркало: сначала оно, потом наши
             if k == "repo" or k == "mirror" then
@@ -40151,6 +40181,10 @@ local function grndUpdInit()
         out[#out + 1] = "period=" .. tostring(math.floor(U.period))
         out[#out + 1] = "last=" .. tostring(math.floor(U.lastAt or 0))
         if U.activeId then out[#out + 1] = "channel=" .. tostring(U.activeId) end
+        if U.updatedVer then
+            out[#out + 1] = "updatedVer=" .. tostring(U.updatedVer)
+            out[#out + 1] = "updatedFrom=" .. tostring(U.updatedFrom or "0.0.0")
+        end
         -- свои зеркала из конфига не теряем при перезаписи
         for i = 1, #U.CHANNELS do
             local c = U.CHANNELS[i]
@@ -40279,14 +40313,15 @@ local function grndUpdInit()
 
     -- ---------- разбор списка изменений ----------
     -- Заголовки из шапки нового файла: «-- v1.19.226 — …» и строки под ним.
-    function U.changelogOf(body)
+    function U.changelogOf(body, minVer)
+        local min = minVer and U.verNum(minVer) or U.verNum(U.cur)
         local out, cur, seen = {}, nil, 0
         for line in tostring(body or ""):gmatch("[^\r\n]+") do
             seen = seen + 1
             if seen > 600 then break end -- весь changelog живёт в шапке
             local ver = line:match("^%-%- v(%d+%.%d+%.%d+)")
             if ver then
-                if U.verNum(ver) > U.verNum(U.cur) then
+                if U.verNum(ver) > min then
                     cur = ver
                     out[#out + 1] = { ver = ver, lines = {} }
                     local head = line:match("^%-%- v[%d%.]+%s*[—%-]?%s*(.*)$")
@@ -40306,6 +40341,36 @@ local function grndUpdInit()
             end
         end
         return out
+    end
+
+    -- ---------- отметка «только что обновились» ----------
+    -- Нужна, чтобы ПОСЛЕ перезапуска новая версия сама открыла окно со списком
+    -- изменений: старая версия оставляет from/to в настройках, новая читает.
+    function U.markInstalled(fromVer, toVer)
+        U.updatedFrom, U.updatedVer = tostring(fromVer), tostring(toVer)
+        U.saveCfg()
+    end
+
+    -- Читаем отметку (после перезапуска) и готовим окно «что изменилось».
+    function U.markSeen()
+        if U.markChecked then return end
+        U.markChecked = true
+        U.loadCfg()
+        local to, from = U.updatedVer, U.updatedFrom
+        if not to or U.verNum(to) ~= U.verNum(U.cur) then return end
+        local body = U.readHead(U.scriptPath(), 16384)
+        local notes = body and U.changelogOf(body, from) or nil
+        if not notes or #notes == 0 then notes = U.savedNotes or {} end
+        U.notes = notes
+        U.justUpdated = { from = from or "?", to = to }
+        U.state, U.window = "ready", true
+        U.updatedVer, U.updatedFrom = nil, nil
+        -- автопроверка на этом же заходе уже не нужна: версию поставили только
+        -- что (зазор 20 с гасит повторный тост)
+        U.lastAt = math.floor(U.io.time())
+        U.saveCfg() -- окно показываем один раз
+        U.notify("Обновление " .. to .. " включено", "ok", 3)
+        U.refreshFrame()
     end
 
     -- ---------- итоги ----------
@@ -40377,6 +40442,14 @@ local function grndUpdInit()
             local b64 = U.jsonField(body, "content")
             if b64 and #b64 > 0 then
                 body = U.b64decode(b64)
+                -- ВАЖНО: на место скрипта переименовывается файл, значит в нём
+                -- должен лежать уже РАСПАКОВАННЫЙ скрипт, а не JSON-обёртка
+                -- (иначе игра получила бы вместо скрипта JSON).
+                if not (body and U.writeFile(job.path, body)) then
+                    pcall(U.io.remove, job.path)
+                    U.diag("не смог записать распакованный файл — иду по зеркалам")
+                    return U.dlScript()
+                end
             else
                 local sha = U.jsonField(body, "sha")
                 pcall(U.io.remove, job.path)
@@ -40411,10 +40484,14 @@ local function grndUpdInit()
                 .. U.cur .. " на месте")
             return false
         end
-        U.state, U.installed, U.window = "ready", true, true
+        U.state, U.installed = "ready", true
         U.diag("установлено: " .. tostring(U.newVer) .. " (" .. #body .. " байт)")
         U.notify("Обновление " .. tostring(U.newVer) .. " установлено", "ok", 3)
-        U.refreshFrame()
+        -- Окно со списком изменений покажет УЖЕ НОВАЯ версия после
+        -- перезапуска: отметку про только что установленную версию кладём в
+        -- настройки, а перезапускаемся сразу — от человека ничего не требуется.
+        U.markInstalled(U.cur, tostring(U.newVer))
+        U.requestReload()
         return true
     end
 
@@ -40505,7 +40582,11 @@ local function grndUpdInit()
         U.loadCfg()
         if U.probing or U.job then return false, "уже проверяю" end
         U.state, U.err = "checking", nil
-        U.installed, U.window, U.notes = false, false, nil
+        -- если мы только что обновились и показываем список изменений, окно и
+        -- список не трогаем: проверка стартует сразу после перезапуска
+        if not U.justUpdated then
+            U.installed, U.window, U.notes = false, false, nil
+        end
         U.staleSeen = nil
         U.lastAt = math.floor(U.io.time())
         U.saveCfg()
@@ -40529,9 +40610,18 @@ local function grndUpdInit()
 
     -- ---------- тик (зовётся из основного цикла) ----------
     function U.tick()
+        if not U.markChecked then U.markSeen() end
         if U.reloadPending then
             U.reloadPending = false
-            return U.reload()
+            -- перезапуск делаем из главного цикла (не из кадра ImGui)
+            if U.reload() then return true end
+            -- не вышло — файл уже новый, включать его будет следующий запуск,
+            -- а человеку показываем, что изменилось
+            U.window, U.installed = true, true
+            U.notify("Обновление скачано — включится при следующем запуске игры",
+                "warn", 4)
+            U.refreshFrame()
+            return false
         end
         local now = U.io.clock()
 
@@ -40579,11 +40669,16 @@ local function grndUpdInit()
     end
 
     function U.reload()
+        -- ВАЖНО: reload — метод объекта LuaScript, ему нужен self. Вызов
+        -- pcall(sc.reload) без self валит скрипт с «cannot resume
+        -- non-suspended coroutine» (та же ловушка, что thisScript().unload()).
         if type(thisScript) == "function" then
             local ok, sc = pcall(thisScript)
             if ok and sc and type(sc.reload) == "function" then
-                pcall(sc.reload)
-                return true
+                local okR = pcall(sc.reload, sc)
+                if okR then return true end
+                U.diag("перезапуск не удался: файл уже обновлён, новая "
+                    .. "версия включится при следующем запуске игры")
             end
         end
         return false
@@ -40658,7 +40753,7 @@ local function grndUpdInit()
             local okF, f = pcall(H.wf, "NoResize", "NoCollapse", "NoSavedSettings")
             if okF and tonumber(f) then flags = tonumber(f) end
         end
-        local okB, shown = pcall(H.begin, "АВТООБНОВЛЕНИЕ##grnd_upd", flags)
+        local okB, shown = pcall(H.begin, "Grnd Tools##grnd_upd", flags)
         if okB and shown then
             local okD, err = pcall(function()
                 -- 1) заголовок окна и состояние
@@ -40666,11 +40761,13 @@ local function grndUpdInit()
                 local head, sub
                 if U.probeLines then
                     head = "Проверка связи с каналами"
+                elseif U.justUpdated then
+                    head = "Установлена версия " .. tostring(U.justUpdated.to)
+                    sub = "Была " .. tostring(U.justUpdated.from)
+                        .. ". Новая версия уже работает."
                 elseif U.installed then
-                    head = "Установлена версия " .. tostring(U.newVer)
-                    sub = "Была " .. U.cur .. ". Нажмите «Перезагрузить скрипт», "
-                        .. "чтобы включить сразу — иначе она включится при "
-                        .. "следующем запуске игры."
+                    head = "Обновление " .. tostring(U.newVer) .. " установлено"
+                    sub = "Включаю новую версию…"
                 elseif U.state == "error" then
                     head = "Не удалось проверить обновления"
                     sub = "Сервер не ответил. Это не страшно: проверка идёт "
@@ -40713,25 +40810,11 @@ local function grndUpdInit()
                 end
                 sep(im)
 
-                -- 3) кнопки (диагностики и логов в окне нет вовсе)
-                if U.installed then
-                    if btn(im, "Перезагрузить скрипт##grnd_upd_reload", 220) then
-                        U.requestReload()
-                        return
-                    end
-                elseif U.state ~= "downloading" and U.state ~= "checking"
-                    and not U.probing and not U.probeLines then
-                    if btn(im, "Проверить снова##grnd_upd_again", 180) then
-                        U.window = false
-                        U.check("manual")
-                    end
-                    if btn(im, "Проверить каналы##grnd_upd_probe", 170) then
-                        U.probeLines = nil
-                        U.probe()
-                    end
-                end
-                if btn(im, "Позже##grnd_upd_later", 120) then
+                -- 3) кнопка одна: обновление ставится и включается само,
+                -- окно — просто «что изменилось»
+                if btn(im, "Закрыть##grnd_upd_close", 140) then
                     U.window = false
+                    U.probeLines = nil
                 end
             end)
             if not okD then U.err = tostring(err) end

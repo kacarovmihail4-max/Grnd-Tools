@@ -1113,11 +1113,10 @@ _G.GRND_UPDATE = {
 }
 local yUpd = RT.page(mkR(), 10, y0, cw)
 check(keys(clicks):find("rt_upd_check") ~= nil, "обновления: кнопка проверки")
-check(table.concat({ (function()
-    local s = {}
-    for _, d in ipairs(drawn) do s[#s + 1] = tostring(d.t) end
-    return table.concat(s, "|")
-end)() }, ""):find("ОБНОВЛЕНИЯ", 1, true) ~= nil, "обновления: заголовок строки")
+local updHead = {}
+for _, d in ipairs(drawn) do updHead[#updHead + 1] = tostring(d.t) end
+check(table.concat(updHead, "|"):find("ОБНОВЛЕНИЯ", 1, true) ~= nil,
+    "обновления: заголовок строки")
 check(table.concat((function()
     local s = {}
     for _, d in ipairs(drawn) do s[#s + 1] = tostring(d.t) end
@@ -1131,15 +1130,18 @@ RT.page(mkR({ rt_upd_check = true }), 10, y0, cw)
 check(updCheck == 1, "обновления: клик запускает проверку")
 check(_G.GRND_UPDATE.window == true, "обновления: окно статуса открыто")
 
--- Скачано: кнопка меняется на перезагрузку скрипта, релоад вызывается.
+-- Обновление скачано: кнопки перезапуска больше нет (v1.19.229 — обновление
+-- включается само), в строке видно, что оно включается.
 resetDrawn()
 _G.GRND_UPDATE.installed, _G.GRND_UPDATE.state = true, "ready"
 _G.GRND_UPDATE.newVer = "1.19.224"
 RT.page(mkR({ rt_upd_reload = true }), 10, y0, cw)
-check(updReload == 1, "обновления: кнопка перезагрузки скрипта")
-check(_G.GRND_UPDATE.reloadPending == true,
-    "обновления: перезапуск не в кадре — просьбу исполняет главный цикл")
-check(keys(clicks):find("rt_upd_reload") ~= nil, "обновления: подпись кнопки перезагрузки")
+check(updReload == 0, "обновления: кнопка перезагрузки убрана (перезапуск сам)")
+check(keys(clicks):find("rt_upd_reload") == nil, "обновления: кнопки перезагрузки нет")
+local updTexts = {}
+for _, d in ipairs(drawn) do updTexts[#updTexts + 1] = tostring(d.t) end
+check(table.concat(updTexts, "|"):find("включается", 1, true) ~= nil,
+    "обновления: статус говорит, что версия включается")
 
 -- Ошибка сети: статус честно говорит, что связи нет.
 resetDrawn()
