@@ -1,18 +1,25 @@
 -- =====================================================================
--- Стенд v1.19.215: раздел «ВЫДАЧА В РАДИУСЕ» (GRND_RT).
+-- Стенд v1.19.220: раздел «ВЫДАЧА В РАДИУСЕ» (GRND_RT).
 --
 -- Загружает блок do...end между якорями GRND_RADTOOLS_* как функцию
 -- (то же, что для автопилота): игровые функции и конфиг — аргументы,
--- _G.GRND_QR / _G.PLAYER_PED — глобальные стабы. Гоняем:
+-- _G.GRND_QR / _G.PLAYER_PED / _G.GRND_AO — глобальные стабы. Гоняем:
 --   * чистую логику RT.fn (дистанция, скан: сортировка/граница/интерьер,
 --     заполнение шаблона {id}/{ник}/{дист}, % без поломок);
 --   * живой скан по стабам MoonLoader (включая игрока вне стрима);
 --   * радиус: смена ±, клип 1..200, сохранение/загрузка конфига;
---   * выдачу: «команда ещё не назначена» (честно, без выдуманных команд),
---     шаблон с {id} — по игроку, без {id} — одна строка на всех,
---     пустой радиус, падение отправки, нет подключения;
+--   * команды v1.19.220: /spawn, /freeze, /unfreeze, /gun, /setskin,
+--     /hpall, /arm, /spcars — точный текст команды;
+--   * уровень из списка чекера «Админы в сети» (GRND_AO.list): не
+--     хватает — тост «Нет доступа к данной команде, нужен N-й уровень»;
+--   * очередь выдачи: по одной команде за 150 мс (RT.tick);
+--   * настройки шестерёнок (панель вместо сетки): оружие (ползунок по
+--     именам + патроны), скин (поле ввода), броня (1..100), транспорт
+--     (3 кнопки) + сохранение в конфиг;
 --   * страницу RT.page на стаб-рендерере (кнопки, шестерёнки, радиус,
---     статус, «−»/«+» по клику, «Было: …», y растёт).
+--     статус, «−»/«+» по клику, «Было: …», y растёт);
+--   * стиль ползунка grndUiSlider: полустеклянная дорожка + светлая
+--     «пилюля», зелёного нет (v1.19.218/220).
 -- =====================================================================
 
 local results = { pass = 0, fail = 0 }
@@ -141,6 +148,20 @@ end
 resetCfg()
 local RT = assert(mkModule()(unpack(mkStubs())))
 
+-- виртуальные часы очереди (150 мс): шаг кадра — 50 мс
+local tq = 0
+RT.clock = function() return tq end
+local function pump(step)
+    local ticks = 0
+    for _ = 1, 400 do
+        if not RT.queue then return ticks end
+        tq = tq + (step or 0.05)
+        RT.tick()
+        ticks = ticks + 1
+    end
+    return ticks
+end
+
 -- ---------- чистая логика RT.fn ----------
 check(RT.fn ~= nil, "RT.fn есть")
 check(RT.fn.dist(0, 0, 0, 3, 4, 0) == 5, "dist 3-4-0 = 5")
@@ -182,11 +203,11 @@ check(type(_G.grndRadTick) == "function", "глобальный _G.grndRadTick")
 check(RT.radius == 25, "радиус по умолчанию 25")
 
 local list = RT.scan()
-local ids = {}
-for i = 1, #list do ids[i] = list[i].id end
+local scanIds = {}
+for i = 1, #list do scanIds[i] = list[i].id end
 check(#list == 3, "скан: 3 игрока (30 м за границей, себя не берём)")
-check(table.concat(ids, ",") == "7,4,2",
-    "скан: порядок " .. table.concat(ids, ","))
+check(table.concat(scanIds, ",") == "7,4,2",
+    "скан: порядок " .. table.concat(scanIds, ","))
 check(math.abs(list[1].dist - 10) < 1e-6, "скан: 10 м")
 check(math.abs(list[2].dist - math.sqrt(200)) < 1e-6,
     "скан: выстримившийся — последние координаты")
@@ -206,78 +227,241 @@ check(cfgfile.writes >= 1
     and tostring(cfgfile.content):find("radius=77", 1, true),
     "конфиг: radius=77 записан")
 
--- новый экземпляр читает конфиг
-resetCfg("radius=63\n")
-local RT2 = assert(mkModule()(unpack(mkStubs())))
-RT2.load()
-check(RT2.radius == 63, "конфиг: radius=63 загружен")
+-- ---------- уровни: список чекера «Админы в сети» ----------
+check(RT.myLevel() == nil, "уровень: чекера нет → nil")
+_G.GRND_AO = { list = { { nick = "Self", id = 1, lvl = 2 },
+    { nick = "Other", id = 9, lvl = 8 } } }
+check(RT.myLevel() == 2, "уровень: свой из списка чекера (по ID)")
+_G.GRND_AO.list[1] = { nick = "  sELf ", lvl = 4 }
+check(RT.myLevel() == 4,
+    "уровень: поиск по нику (регистр/пробелы) — если ID не совпал")
+_G.GRND_AO.list[1] = { nick = "Self", id = 1, lvl = 2 }
+-- требования уровня по кнопкам (v1.19.220)
+local lvMap = {}
+for i = 1, #RT.actions do
+    lvMap[RT.actions[i].id] = RT.actions[i].level or 0
+end
+check(lvMap.spawn == 2 and lvMap.freeze == 2 and lvMap.unfreeze == 2,
+    "уровни: спавн/заморозка/разморозка — 2-й")
+check(lvMap.weapon == 5, "уровни: оружие — 5-й")
+check(lvMap.skin == 4 and lvMap.hp == 4 and lvMap.armor == 4,
+    "уровни: скин/хп/броня — 4-й")
+check(lvMap.vehicle == 0 and lvMap.takeoff == 0,
+    "уровни: транспорт и «отобрать оружие» — без требования")
+check(RT.actById("hp") ~= nil and RT.actById("xp") == nil,
+    "кнопка «Выдать XP» переименована в «Выдать HP»")
+check(RT.actById("hp").label == "Выдать HP", "подпись «Выдать HP»")
 
--- ---------- выдача ----------
+-- ---------- команды: точный текст ----------
 RT.setRadius(25) -- в радиусе: 7, 4, 2
-local before = #sent
-check(RT.doAction("weapon") == false and #sent == before,
-    "выдача без команды: чат не трогаем")
-local lastToast = toasts[#toasts]
-check(lastToast and lastToast.text:find("ещё не назначена", 1, true),
-    "выдача без команды: тост «ещё не назначена»")
-check(RT.lastAct and RT.lastAct:find("команда не назначена", 1, true),
-    "«Было:» — команда не назначена")
-check(RT.lastAct:find("в радиусе 3", 1, true),
-    "«Было:» видно, сколько было в радиусе")
+local p7 = { id = 7, nick = "Nick7", dist = 10 }
+check(RT.cmdFor("spawn", p7) == "/spawn 7", "команда: /spawn ID")
+check(RT.cmdFor("freeze", p7) == "/freeze 7", "команда: /freeze ID")
+check(RT.cmdFor("unfreeze", p7) == "/unfreeze 7", "команда: /unfreeze ID")
+check(RT.cmdFor("weapon", p7) == "/gun 7 22 30",
+    "команда: /gun ID {ид оружия} {патроны} (по умолчанию)")
+check(RT.weapons[1].id == 22 and RT.weapons[1].name == "Пистолет",
+    "оружие: первый — Пистолет (22)")
+check(RT.weapons[3].id == 24 and RT.weapons[3].name == "Дезерт Игл",
+    "оружие: третий — Дезерт Игл (24)")
+RT.settings.weapon.sel = 3
+RT.settings.weapon.ammo = 150
+check(RT.cmdFor("weapon", p7) == "/gun 7 24 150",
+    "команда: /gun — ID оружия из ползунка: " .. tostring(RT.cmdFor("weapon", p7)))
+RT.settings.skin.num = ""
+check(RT.cmdFor("skin", p7) == nil,
+    "команда: скин без номера → nil")
+RT.settings.skin.num = "1540"
+check(RT.cmdFor("skin", p7) == "/setskin 7 1540",
+    "команда: /setskin ID {ид скина}")
+RT.settings.armor.amount = 100
+check(RT.cmdFor("armor", p7) == "/arm 7 100", "команда: /arm ID {броня}")
+check(RT.cmdFor("hp", nil) == "/hpall", "команда: /hpall (одна на всех)")
+check(RT.cmdFor("hp", p7) == "/hpall", "команда: /hpall не зависит от игрока")
+RT.settings.vehicle.mode = 2
+check(RT.cmdFor("vehicle", nil) == "/spcars 2",
+    "команда: /spcars {режим}")
+check(RT.cmdFor("takeoff", p7) == nil,
+    "команда: «Отобрать оружие» — ещё не назначена")
 
-RT.cmds.spawn = "/spawn {id} {ник}"
+-- ---------- гейт по уровню ----------
+RT.settings.weapon.sel = 1
+RT.settings.weapon.ammo = 30
+local before = #sent
+RT.doAction("weapon") -- уровень 2 < 5
+check(#sent == before, "уровень 2: /gun не отправлен")
+local lastToast = toasts[#toasts]
+check(lastToast and lastToast.text
+    == "Нет доступа к данной команде, нужен 5-й уровень",
+    "уровень 2: тост про 5-й уровень: " .. tostring(lastToast and lastToast.text))
+check(lastToast and lastToast.kind == "warn", "уровень: тост warn")
+check(RT.lastAct and RT.lastAct:find("нет доступа", 1, true),
+    "уровень: «Было:» — нет доступа")
+RT.doAction("skin") -- уровень 2 < 4
+lastToast = toasts[#toasts]
+check(lastToast and lastToast.text
+    == "Нет доступа к данной команде, нужен 4-й уровень",
+    "уровень 2: тост про 4-й уровень (скин)")
+RT.doAction("armor")
+check(toasts[#toasts].text == "Нет доступа к данной команде, нужен 4-й уровень",
+    "уровень 2: тост про 4-й уровень (броня)")
+RT.doAction("hp")
+check(toasts[#toasts].text == "Нет доступа к данной команде, нужен 4-й уровень",
+    "уровень 2: тост про 4-й уровень (хп)")
+
+-- уровень поднят: команды доступны
+_G.GRND_AO.list[1].lvl = 5
+check(RT.myLevel() == 5, "уровень: поднят до 5")
 before = #sent
-check(RT.doAction("spawn") == true and #sent - before == 3,
-    "шаблон {id}: 3 команды по игрокам")
-check(sent[#sent - 2] == "/spawn 7 Nick7"
-    and sent[#sent - 1] == "/spawn 4 Nick4"
-    and sent[#sent] == "/spawn 2 Nick2",
-    "шаблон {id}: порядок и подстановки: " .. table.concat(sent, " | "))
+check(RT.doAction("spawn") == true, "уровень 5: /spawn разрешён")
+check(#sent == before, "уровень 5: /spawn ушёл в очередь (пока тик не звал)")
+check(RT.queue ~= nil and #RT.queue.cmds == 3,
+    "очередь: 3 команды (7, 4, 2)")
+-- первый тик: ровно одна команда (не пачка) + интервал ровно 150 мс
+tq = tq + 0.05
+RT.tick()
+check(#sent - before == 1, "очередь: за тик — одна команда (не пачка)")
+check(RT.queue and math.abs((RT.queue.at - tq) - 0.15) < 1e-6,
+    "очередь: интервал между командами 150 мс")
+tq = tq + 0.05
+RT.tick()
+tq = tq + 0.05
+RT.tick()
+check(#sent - before == 1, "очередь: раньше 150 мс второй команды нет")
+tq = tq + 0.05
+RT.tick()
+tq = tq + 0.05
+RT.tick()
+check(#sent - before == 2, "очередь: вторая команда — в пределах 150–250 мс")
+local ticks = pump(0.05)
+check(#sent - before == 3, "очередь: 3 команды отправлены")
+check(ticks <= 3, "очередь: хвост добирается за пару тиков: "
+    .. tostring(ticks))
+check(sent[#sent - 2] == "/spawn 7" and sent[#sent - 1] == "/spawn 4"
+    and sent[#sent] == "/spawn 2",
+    "очередь: порядок и текст: " .. table.concat(sent, " | "))
+check(RT.queue == nil, "очередь: закрыта после выдачи")
 check(RT.lastAct and RT.lastAct:find("3/3", 1, true), "«Было:» 3/3")
 lastToast = toasts[#toasts]
-check(lastToast and lastToast.kind == "ok", "успех: тост ok")
+check(lastToast and lastToast.kind == "ok"
+    and lastToast.text:find("3 игрокам", 1, true), "очередь: тост ok")
 
-RT.cmds.freeze = "/freezeall"
+-- остальные команды — по игрокам
 before = #sent
 RT.doAction("freeze")
-check(#sent - before == 1 and sent[#sent] == "/freezeall",
-    "без {id}: одна команда на всех")
-
-RT.cmds.tpself = "/tp {id} {дист}"
+pump(0.05)
+check(#sent - before == 3 and sent[#sent - 1] == "/freeze 4"
+    and sent[#sent] == "/freeze 2", "выдача: /freeze по игрокам")
 before = #sent
-RT.doAction("tpself")
-check(#sent - before == 3, "tpself: на всех в радиусе")
-check(sent[#sent] == "/tp 2 20", "tpself: {дист} целыми метрами")
+RT.doAction("unfreeze")
+pump(0.05)
+check(#sent - before == 3 and sent[#sent] == "/unfreeze 2",
+    "выдача: /unfreeze по игрокам")
+RT.settings.weapon.sel = 3
+RT.settings.weapon.ammo = 150
+before = #sent
+RT.doAction("weapon") -- уровень 5 = ровно требуемый
+pump(0.05)
+check(#sent - before == 3 and sent[#sent] == "/gun 2 24 150",
+    "выдача: оружие с ползунка: " .. tostring(sent[#sent]))
+RT.settings.skin.num = ""
+before = #sent
+RT.doAction("skin")
+check(#sent == before and toasts[#toasts].text
+    :find("настройки", 1, true) ~= nil,
+    "выдача: скин без номера — просит настройку, чат молчит")
+RT.settings.skin.num = "1540"
+before = #sent
+RT.doAction("skin")
+pump(0.05)
+check(#sent - before == 3 and sent[#sent] == "/setskin 2 1540",
+    "выдача: скин по игрокам")
+RT.settings.armor.amount = 100
+before = #sent
+RT.doAction("armor")
+pump(0.05)
+check(#sent - before == 3 and sent[#sent] == "/arm 2 100",
+    "выдача: броня по игрокам")
 
+-- одиночные команды: игроки в радиусе не нужны (/hpall — радиус вшит)
 RT.setRadius(1)
-RT.doAction("spawn")
-check(RT.lastAct and RT.lastAct:find("в радиусе никого", 1, true),
-    "пустой радиус: «никого»")
-lastToast = toasts[#toasts]
-check(lastToast and lastToast.text:find("никого", 1, true),
-    "пустой радиус: тост «никого»")
+before = #sent
+check(RT.doAction("hp") == true and #sent - before == 1
+    and sent[#sent] == "/hpall",
+    "выдача: /hpall — одна команда, радиус не нужен")
+RT.settings.vehicle.mode = 3
+before = #sent
+check(RT.doAction("vehicle") == true and #sent - before == 1
+    and sent[#sent] == "/spcars 3",
+    "выдача: /spcars 3 «все»")
+RT.settings.vehicle.mode = 1
+before = #sent
+RT.doAction("vehicle")
+check(sent[#sent] == "/spcars 1", "выдача: /spcars 1 «админские»")
+check(#sent - before == 1, "выдача: /spcars — одна команда на всех")
 
+-- пустой радиус у команд по игрокам
+before = #sent
+RT.doAction("spawn")
+check(#sent == before, "пустой радиус: чат не трогаем")
+check(toasts[#toasts].text:find("никого", 1, true),
+    "пустой радиус: тост «никого»")
 RT.setRadius(25)
+
+-- «Отобрать оружие» — команда ещё не назначена (честно, без выдумок)
+before = #sent
+check(RT.doAction("takeoff") == false and #sent == before,
+    "takeoff: чат не трогаем")
+check(toasts[#toasts].text:find("команда ещё не назначена", 1, true),
+    "takeoff: тост «команда ещё не назначена»")
+
+-- падение отправки
 qr.sendChat = function() return false end
-check(RT.doAction("spawn") == false, "отправка упала: false")
+RT.doAction("spawn")
+pump(0.05)
 check(RT.lastAct and RT.lastAct:find("0/3", 1, true),
     "«Было:» 0/3 при падении")
-lastToast = toasts[#toasts]
-check(lastToast and lastToast.kind == "warn", "падение: тост warn")
+check(toasts[#toasts].kind == "warn", "падение: тост warn")
 qr.sendChat = function(t) table.insert(sent, t) return true end
 
 -- нет подключения: sampIsPlayerConnected не функция (4-й аргумент = nil)
 local stubs3 = mkStubs()
 stubs3[4] = nil
 local RT3 = assert(mkModule()(unpack(stubs3, 1, 10)))
+RT3.clock = function() return 0 end
 check(RT3.scan() == nil and tostring(RT3.err):find("SAMP", 1, true),
     "нет подключения: scan nil + err")
+check(RT3.myLevel() == 5, "уровень: RT3 видит тот же список чекера")
 before = #sent
 RT3.doAction("spawn")
 check(#sent == before, "нет подключения: чат не трогаем")
 
--- ---------- стиль ползунка (grndUiSlider): как на макете, в наших цветах ----------
--- Извлекаем функцию из файла и гоняем на фейковом ctx с записью отрисовки.
+-- ---------- настройки: сохранение/загрузка ----------
+RT.settings.weapon.sel = 5
+RT.settings.weapon.ammo = 42
+RT.settings.skin.num = "777"
+RT.settings.armor.amount = 33
+RT.settings.vehicle.mode = 2
+RT.save()
+local cfgTxt = tostring(cfgfile.content or "")
+check(cfgTxt:find("wsel=5", 1, true) and cfgTxt:find("wammo=42", 1, true)
+    and cfgTxt:find("skin=777", 1, true)
+    and cfgTxt:find("armor=33", 1, true)
+    and cfgTxt:find("vmode=2", 1, true),
+    "конфиг: настройки записаны")
+check(cfgTxt:find("radius=25", 1, true), "конфиг: радиус рядом")
+resetCfg("radius=63\nwsel=999\nwammo=5000\nskin=99\narmor=0\nvmode=9\n")
+local RT2 = assert(mkModule()(unpack(mkStubs())))
+RT2.load()
+check(RT2.radius == 63, "конфиг: radius=63 загружен")
+check(RT2.settings.weapon.sel == #RT2.weapons,
+    "конфиг: выбор оружия клип по списку")
+check(RT2.settings.weapon.ammo == 999, "конфиг: патроны клип 999")
+check(RT2.settings.skin.num == "99", "конфиг: скин загружен")
+check(RT2.settings.armor.amount == 1, "конфиг: броня клип 1..100")
+check(RT2.settings.vehicle.mode == 3, "конфиг: режим транспорта клип 3")
+
+-- ---------- стиль ползунка (grndUiSlider): полустеклянный, наш ----------
 do
     local s0 = src:find("function grndUiSlider(ctx, id, x, y, w, h, ratio)",
         1, true) -- plain: скобки в сигнатуре — не шаблон
@@ -294,7 +478,6 @@ do
             local function pack(r, g, b, a)
                 return r * 16777216 + g * 65536 + b * 256 + (a or 255)
             end
-            -- тема как в меню: градиентная заливка (основной путь)
             _G.grndUiTheme = function()
                 return { accent = { 164, 112, 224, 255 },
                     accent2 = { 196, 156, 255, 255 } }
@@ -307,7 +490,13 @@ do
                     InvisibleButton = function() end,
                     IsItemActive = function() return false end,
                 },
-                dl = {},
+                dl = {
+                    -- как в панели: AddRect(dl, p1, p2, col, r, flags, th)
+                    AddRect = function(_, p1, p2, col, r, flags, th)
+                        table.insert(draws, { t = "rect", a = p1, b = p2,
+                            col = col, r = r, th = th })
+                    end,
+                },
                 at = function(x, y) return { x = x, y = y } end,
                 col32 = pack,
                 roundRect = function(_, a, b, col, r)
@@ -323,18 +512,26 @@ do
             slFn(fctx, "##bench_sl", x0, y0s, w, h, ratio)
             local ty = y0s + h / 2
             local kx = x0 + w * ratio
-            -- 1) ровно два слоя: дорожка + «пилюля» (заливки нет — макет)
-            check(#draws == 2,
-                "ползунок: только дорожка и «пилюля» (без заливки): "
+            -- 1) дорожка + кромка + «пилюля» (заливки нет — макет)
+            check(#draws == 3,
+                "ползунок: дорожка, кромка и «пилюля» (без заливки): "
                 .. #draws)
             local track = draws[1]
             check(track and track.t == "rr"
                 and track.a.x == x0 and track.a.y == ty - 8
                 and track.b.x == x0 + w and track.b.y == ty + 8
-                and track.col == pack(255, 255, 255, 30),
-                "ползунок: дорожка 16 px «стекло»")
-            -- 2) «пилюля»: светлая, вертикальная, чуть короче дорожки
-            local pill = draws[2]
+                and track.col == pack(255, 255, 255, 42),
+                "ползунок: дорожка 16 px полустеклянная (42)")
+            -- 2) кромка: тонкая светлая рамка по дорожке (как на макете)
+            local edge = draws[2]
+            check(edge and edge.t == "rect"
+                and edge.col == pack(255, 255, 255, 52)
+                and edge.th == 1
+                and math.abs(edge.a.y - (ty - 8)) < 0.01
+                and math.abs(edge.b.y - (ty + 8)) < 0.01,
+                "ползунок: светлая кромка дорожки")
+            -- 3) «пилюля»: светлая, вертикальная, чуть короче дорожки
+            local pill = draws[3]
             check(pill and pill.t == "rr"
                 and math.abs(pill.a.x - (kx - 5)) < 0.01
                 and math.abs(pill.b.x - (kx + 5)) < 0.01
@@ -343,11 +540,11 @@ do
                 and pill.col == pack(232, 234, 244, 245)
                 and (pill.b.y - pill.a.y) < (track.b.y - track.a.y),
                 "ползунок: светлая «пилюля» 10×12 в центре по ratio")
-            -- 3) ratio 0 и 1 — у краёв
+            -- 4) ratio 0 и 1 — у краёв
             local function knobX(rratio)
                 draws = {}
                 slFn(fctx, "##bench_sl_k", x0, y0s, w, h, rratio)
-                return draws[2] and draws[2].a.x, draws[2] and draws[2].b.x
+                return draws[3] and draws[3].a.x, draws[3] and draws[3].b.x
             end
             local l0, r0 = knobX(0)
             check(l0 ~= nil and math.abs(l0 - (x0 - 5)) < 0.01
@@ -357,7 +554,7 @@ do
             check(l1 ~= nil and math.abs(l1 - (x0 + w - 5)) < 0.01
                 and math.abs(r1 - (x0 + w + 5)) < 0.01,
                 "ползунок: ratio 1 — «пилюля» у правого края")
-            -- 4) зелёного нигде
+            -- 5) зелёного нигде
             local noGreen = true
             for i = 1, #draws do
                 if draws[i].col == pack(0, 214, 170, 255) then
@@ -371,7 +568,7 @@ do
 end
 
 -- ---------- страница RT.page на стаб-рендерере ----------
-local drawn, clicks, gears, sliders = {}, {}, {}, {}
+local drawn, clicks, gears, sliders, inputs, frames = {}, {}, {}, {}, {}, {}
 local function mkR(allow)
     allow = allow or {}
     return {
@@ -390,14 +587,15 @@ local function mkR(allow)
                 accent = { 164, 112, 224, 255 },
             }
         end,
-        button = function(key, x, y, w, h, label)
+        button = function(key, x, y, w, h, label, opts)
             table.insert(clicks, { key = key, x = x, y = y,
-                w = w, h = h, label = label })
+                w = w, h = h, label = label, opts = opts })
             return allow[key] == true
         end,
         slider = function(id, x, y, w, h, ratio)
-            table.insert(sliders, { id = id, ratio = ratio })
-            return allow.slider or nil
+            table.insert(sliders, { id = id, x = x, y = y, w = w,
+                ratio = ratio })
+            return allow[id] or allow.slider or nil
         end,
         gearButton = function(key, x, y, active)
             table.insert(gears, { key = key, x = x, y = y })
@@ -406,13 +604,33 @@ local function mkR(allow)
         gear = function(x, y, col)
             table.insert(gears, { key = "static", x = x, y = y })
         end,
+        textInput = function(key, id, cap, value, x, y, w, h, hint, cb)
+            table.insert(inputs, { key = key, id = id, cap = cap,
+                value = value, x = x, y = y, w = w, h = h, hint = hint })
+            if allow.textInputValue ~= nil and type(cb) == "function" then
+                cb(allow.textInputValue)
+            end
+            return value
+        end,
+        frameRect = function(x1, y1, x2, y2, col, rad, th)
+            table.insert(frames, { x1 = x1, y1 = y1, x2 = x2, y2 = y2 })
+        end,
     }
+end
+local function resetDrawn()
+    drawn, clicks, gears, sliders, inputs, frames = {}, {}, {}, {}, {}, {}
+end
+local function keys(list_)
+    local out = {}
+    for i = 1, #list_ do out[i] = list_[i].key end
+    return table.concat(out, ",")
 end
 
 local cw, y0 = 320, 40
 RT.setRadius(25)
-RT.lastAct = "spawn: 3/3 (Nick7, Nick4, Nick2)"
-drawn, clicks, gears = {}, {}, {}
+RT.settingsOpen = nil
+RT.lastAct = "Заспавнить: 3/3 (Nick7, Nick4, Nick2)"
+resetDrawn()
 local y1 = RT.page(mkR(), 10, y0, cw)
 check(type(y1) == "number" and y1 > y0, "page: y растёт")
 check(#clicks == 12,
@@ -424,7 +642,7 @@ check(clicks[2] and clicks[2].key == "rt_plus", "page: «+»")
 -- порядок сетки 3×3 (шестерёнки — не кнопки, а значки кликовой зоны)
 local expect = {
     "rt_act_spawn", "rt_act_freeze", "rt_act_unfreeze",
-    "rt_act_weapon", "rt_act_skin", "rt_act_xp",
+    "rt_act_weapon", "rt_act_skin", "rt_act_hp",
     "rt_act_armor", "rt_act_vehicle", "rt_act_takeoff",
 }
 local orderOk = true
@@ -433,7 +651,7 @@ for i = 1, #expect do
         orderOk = false
     end
 end
-check(orderOk, "page: сетка 3×3 в порядке макета")
+check(orderOk, "page: сетка 3×3 в порядке макета (вкл. rt_act_hp)")
 check(clicks[12] and clicks[12].key == "rt_tp" and clicks[12].w == cw
     and clicks[12].label == "Телепорт всех к себе",
     "page: широкая «Телепорт всех к себе» на всю ширину")
@@ -509,15 +727,173 @@ check(RT.radius == 101, "page: drag ползунка → радиус по по�
 check(#sliders >= 1 and sliders[#sliders].id == "rt_radius_sl",
     "page: ползунок — общий слайдер меню (id rt_radius_sl)")
 
--- клик по шестерёнке: честно — настройка появится вместе с командой
-local beforeT = #toasts
+-- ---------- клик по кнопке действия (уровень из чекера) ----------
+RT.setRadius(25)
+_G.GRND_AO.list[1].lvl = 2
+resetDrawn()
+RT.lastAct = nil
+local sentBefore = #sent
+RT.page(mkR({ rt_act_weapon = true }), 10, y0, cw)
+check(#sent == sentBefore and toasts[#toasts].text
+    == "Нет доступа к данной команде, нужен 5-й уровень",
+    "page: кнопка «Выдать оружие» на 2-м уровне — тост про доступ")
+_G.GRND_AO.list[1].lvl = 5
+RT.page(mkR({ rt_act_spawn = true }), 10, y0, cw)
+check(RT.queue ~= nil, "page: кнопка «Заспавнить» на 5-м уровне — очередь")
+pump(0.05)
+check(#sent - sentBefore == 3 and sent[#sent] == "/spawn 2",
+    "page: кнопка отправила /spawn по игрокам")
+
+-- ---------- шестерёнка → настройка вместо сетки ----------
+_G.GRND_AO.list[1].lvl = 8
+RT.settingsOpen = nil
+resetDrawn()
 RT.page(mkR({ rt_gear_weapon = true }), 10, y0, cw)
-lastToast = toasts[#toasts]
-check(#toasts == beforeT + 1
-    and lastToast.text:find("настройка появится вместе с командой", 1, true),
-    "page: клик шестерёнки → честный тост")
-check(RT.lastAct and RT.lastAct:find("Выдать оружие", 1, true),
-    "page: «Было:» — клик по шестерёнке")
+check(RT.settingsOpen == "weapon",
+    "шестерёнка: открывает настройку (а не «появится позже»)")
+check(#toasts == 0 or toasts[#toasts].text:find("настройка появится", 1, true)
+    == nil, "шестерёнка: тоста «появится вместе с командой» больше нет")
+check(RT.lastAct and RT.lastAct:find("настройки", 1, true),
+    "шестерёнка: «Было:» — настройки")
+
+-- настройка «Выдать оружие»: ползунок имён + ползунок патронов
+RT.settings.weapon.sel = 1
+RT.settings.weapon.ammo = 30
+for _, k in ipairs({ "weapon", "skin", "armor", "vehicle" }) do
+    RT.settingsOpen = k
+    resetDrawn()
+    local ys = RT.page(mkR(), 10, y0, cw)
+    check(type(ys) == "number" and ys > y0,
+        "настройка " .. k .. ": y растёт")
+    local txt = {}
+    for i = 1, #drawn do txt[i] = drawn[i].t end
+    txt = table.concat(txt, "\n")
+    local hasAct = false
+    for i = 1, #clicks do
+        if clicks[i].key:find("rt_act_", 1, true) then hasAct = true end
+    end
+    check(txt:find("НАСТРОЙКА", 1, true) ~= nil and not hasAct,
+        "настройка " .. k .. ": панель вместо сетки (кнопок действий нет)")
+    check(#frames >= 1, "настройка " .. k .. ": рамка карточки")
+end
+
+RT.settingsOpen = "weapon"
+resetDrawn()
+RT.page(mkR(), 10, y0, cw)
+check(keys(clicks) == "rt_minus,rt_plus,rt_set_close,rt_set_wminus,"
+    .. "rt_set_wplus,rt_set_aminus,rt_set_aplus",
+    "настройка оружия: закрытие и ± ползунков (радиус сверху): "
+    .. keys(clicks))
+check(#sliders == 3 and sliders[1].id == "rt_radius_sl"
+    and sliders[2].id == "rt_set_wsl" and sliders[3].id == "rt_set_asl",
+    "настройка оружия: ползунки оружия и патронов (радиус рядом)")
+local wtxt = {}
+for i = 1, #drawn do wtxt[i] = drawn[i].t end
+wtxt = table.concat(wtxt, "\n")
+check(wtxt:find("Пистолет (22)", 1, true) ~= nil
+    and wtxt:find("Патроны: 30", 1, true) ~= nil,
+    "настройка оружия: имя+ID оружия и патроны — в тексте ползунков")
+-- «+» оружия: следующий ID (Пистолет → Дробовик)
+resetDrawn()
+RT.page(mkR({ rt_set_wplus = true }), 10, y0, cw)
+check(RT.settings.weapon.sel == 2, "настройка оружия: «+» → следующее: "
+    .. tostring(RT.settings.weapon.sel))
+resetDrawn()
+RT.page(mkR({ rt_set_wsl = 1 }), 10, y0, cw)
+check(RT.settings.weapon.sel == #RT.weapons,
+    "настройка оружия: drag → последнее оружие: "
+    .. tostring(RT.settings.weapon.sel))
+check(RT.cmdFor("weapon", { id = 7 }) == "/gun 7 46 30",
+    "настройка оружия: ID из ползунка идёт в команду")
+RT.settings.weapon.sel = 1
+-- патроны: drag и «−»
+resetDrawn()
+RT.page(mkR({ rt_set_asl = 0.5 }), 10, y0, cw)
+check(RT.settings.weapon.ammo == 500,
+    "настройка патронов: drag 0.5 → 500 (диапазон 1..999): "
+    .. tostring(RT.settings.weapon.ammo))
+resetDrawn()
+RT.page(mkR({ rt_set_aminus = true }), 10, y0, cw)
+check(RT.settings.weapon.ammo == 499, "настройка патронов: «−» → 499")
+resetDrawn()
+RT.page(mkR({ rt_set_asl = 1 }), 10, y0, cw)
+check(RT.settings.weapon.ammo == 999, "настройка патронов: клип 999")
+
+-- настройка «Выдать броню»: 1..100
+RT.settingsOpen = "armor"
+RT.settings.armor.amount = 50
+resetDrawn()
+RT.page(mkR({ rt_set_bplus = true }), 10, y0, cw)
+check(RT.settings.armor.amount == 51, "настройка брони: «+» → 51: "
+    .. tostring(RT.settings.armor.amount))
+resetDrawn()
+RT.page(mkR({ rt_set_bsl = 1 }), 10, y0, cw)
+check(RT.settings.armor.amount == 100, "настройка брони: ползунок → 100")
+RT.page(mkR({ rt_set_bsl = 1 }), 10, y0, cw)
+check(RT.settings.armor.amount == 100, "настройка брони: клип 100")
+RT.page(mkR({ rt_set_bminus = true }), 10, y0, cw)
+check(RT.settings.armor.amount == 99, "настройка брони: «−» → 99")
+
+-- настройка «Выдать скин»: номер вручную (поле ввода)
+RT.settingsOpen = "skin"
+RT.settings.skin.num = ""
+resetDrawn()
+RT.page(mkR({ textInputValue = "1540" }), 10, y0, cw)
+check(#inputs == 1 and inputs[1].key == "rt_set_skin"
+    and inputs[1].cap == 8,
+    "настройка скина: поле ввода (до 8 знаков)")
+check(RT.settings.skin.num == "1540",
+    "настройка скина: номер сохранён: " .. tostring(RT.settings.skin.num))
+check(RT.cmdFor("skin", { id = 4 }) == "/setskin 4 1540",
+    "настройка скина: номер идёт в команду")
+
+-- настройка «Заспавнить транспорт»: 3 кнопки
+RT.settingsOpen = "vehicle"
+RT.settings.vehicle.mode = 1
+resetDrawn()
+RT.page(mkR({ rt_set_veh2 = true }), 10, y0, cw)
+check(RT.settings.vehicle.mode == 2, "настройка транспорта: выбор «Незанятые»")
+local vtxt = {}
+for i = 1, #drawn do vtxt[i] = drawn[i].t end
+vtxt = table.concat(vtxt, "\n")
+check(vtxt:find("НАСТРОЙКА: ТРАНСПОРТ", 1, true) ~= nil,
+    "настройка транспорта: заголовок панели")
+check(clicks[4] and clicks[4].key == "rt_set_veh1"
+    and clicks[4].label == "Админские"
+    and clicks[5] and clicks[5].label == "Незанятые"
+    and clicks[6] and clicks[6].label == "Все",
+    "настройка транспорта: 3 кнопки: " .. keys(clicks))
+check(clicks[4] and clicks[4].opts and clicks[4].opts.selected == true
+    and clicks[5] and clicks[5].opts and clicks[5].opts.selected == false
+    and clicks[6] and clicks[6].opts and clicks[6].opts.selected == false,
+    "настройка транспорта: подсвечен текущий режим («Админские»)")
+resetDrawn()
+RT.page(mkR(), 10, y0, cw)
+check(clicks[5] and clicks[5].opts and clicks[5].opts.selected == true
+    and clicks[4] and clicks[4].opts.selected == false,
+    "настройка транспорта: подсветка перешла на «Незанятые»")
+check(RT.cmdFor("vehicle", nil) == "/spcars 2",
+    "настройка транспорта: режим идёт в /spcars")
+resetDrawn()
+RT.page(mkR({ rt_set_veh3 = true }), 10, y0, cw)
+check(RT.settings.vehicle.mode == 3
+    and RT.cmdFor("vehicle", nil) == "/spcars 3", "настройка транспорта: «Все»")
+
+-- «Закрыть» → назад к сетке
+resetDrawn()
+RT.page(mkR({ rt_set_close = true }), 10, y0, cw)
+check(RT.settingsOpen == nil, "настройка: «Закрыть» → назад к сетке")
+resetDrawn()
+RT.page(mkR(), 10, y0, cw)
+check(#clicks == 12, "настройка: после закрытия — снова сетка 9+2+1")
+-- настройки без textInput/frameRect (старый рендерер) — не падает
+RT.settingsOpen = "skin"
+resetDrawn()
+local stubNo = mkR()
+stubNo.textInput, stubNo.frameRect = nil, nil
+local okNoInput = pcall(RT.page, stubNo, 10, y0, cw)
+check(okNoInput, "настройка скина: рендерер без поля ввода — без ошибки")
+RT.settingsOpen = nil
 
 -- защита: мусорный рендерер не роняет страницу
 check(RT.page(nil, 0, 0, 100) == 0, "page: R=nil → y")
@@ -525,9 +901,11 @@ check(RT.page({}, 0, 0, 100) == 0, "page: R без button → y")
 
 -- тик
 RT.visible = true
-check(pcall(_G.grndRadTick), "tick: без ошибок при visible")
+check(pcall(RT.tick), "tick: без ошибок при visible")
 RT.visible = false
-check(pcall(_G.grndRadTick), "tick: без ошибок при visible=false")
+check(pcall(RT.tick), "tick: без ошибок при visible=false")
+RT.queue = nil
+check(pcall(_G.grndRadTick), "tick: глобальная обёртка grndRadTick")
 
 if results.fail > 0 then
     print(("--- выдача в радиусе: %d passed, %d failed ---")

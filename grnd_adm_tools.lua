@@ -1,6 +1,27 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.219"
+GRND_SCRIPT_VERSION = "1.19.220"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.220 — «ВЫДАЧА В РАДИУСЕ»: команды привязаны (от заказчика):
+--   1) Заспавнить/Заморозить/Разморозить — /spawn|/freeze|/unfreeze ID,
+--      уровень 2; Выдать оружие — /gun ID {ид оружия} {патроны}, уровень 5;
+--      Выдать скин — /setskin ID {ид}, уровень 4 (номер вручную);
+--      Выдать броню — /arm ID {кол-во}, уровень 4 (ползунок 1..100);
+--      «Выдать XP» переименован в «Выдать HP» — /hpall, уровень 4, одна
+--      команда (радиус вшит в команду); транспорт — /spcars 1|2|3
+--      (админские/незанятые/все, выбор в настройке).
+--   2) Команды ПО ИГРОКУ уходят с интервалом 150 мс (очередь в RT.tick,
+--      не пачкой).
+--   3) Уровень — из списка чекера «Админы в сети» (GRND_AO.list, сам
+--      админ всегда первый): не хватает — тост «Нет доступа к данной
+--      команде, нужен N-й уровень».
+--   4) Шестерёнки открывают настройки вместо «появится с командой»:
+--      оружие — ползунок по ИМЕНАМ (в команду идёт ID, он же в подписи) +
+--      ползунок патронов 1..999;
+--      скин — поле ввода; броня — ползунок 1..100; транспорт — 3 кнопки
+--      режима. Панель в стиле «Выдача», закрывается «Закрыть», значения —
+--      в grnd_radtools.cfg.
+--   5) Все ползунки — полустеклянные (дорожка плотнее + светлая кромка,
+--      как на изображении, в наших цветах).
 -- v1.19.219 — «ВЫДАЧА В РАДИУСЕ»: значение пишется прямо по дорожке
 --   слайдера (по центру, в фоне — как на макете); дорожка тянется
 --   от «−» до «+» на всю ширину ряда.
@@ -25731,8 +25752,15 @@ function grndUiSlider(ctx, id, x, y, w, h, ratio)
     -- v1.19.218: вид — как на макете заказчика: высокая дорожка-«стекло»
     -- и светлая вертикальная «пилюля»-ползунок; заливки нет — значение
     -- читается из текста ряда. Цвета — только наши (зелёного нет).
+    -- v1.19.220: дорожка полустеклянная — чуть плотнее + тонкая светлая
+    -- кромка по контуру (на всех ползунках меню сразу).
     local trH = 8
-    roundRect(dl, at(x, ty - trH), at(x + w, ty + trH), col32(255, 255, 255, 30), 5)
+    roundRect(dl, at(x, ty - trH), at(x + w, ty + trH), col32(255, 255, 255, 42), 5)
+    if type(dl.AddRect) == "function" then
+        -- как frameRect панели: (dl, p1, p2, col, rounding, flags, толщина)
+        pcall(dl.AddRect, dl, at(x + 0.5, ty - trH), at(x + w - 0.5, ty + trH),
+            col32(255, 255, 255, 52), 5, 0, 1)
+    end
     im.SetCursorPos(im.ImVec2(x - 4, y))
     im.InvisibleButton(id, im.ImVec2(w + 8, h))
     local act = (im.IsItemActive and im.IsItemActive()) or false
@@ -30114,6 +30142,17 @@ local function drawRadiusView(ctx, cx, y, cw)
             return gearButton(ctx, key, gx, gy, active)
         end,
         gear = function(gx, gy, col) gearIcon(ctx, gx, gy, col) end,
+        -- v1.19.220: для настроек шестерёнок («Выдать скин» — поле ввода,
+        -- рамка карточки) — обёртки над функциями панели
+        textInput = function(tid, full, maxLen, value, tx, ty, tw, th,
+                hint, cb)
+            return textInput(ctx, tid, full, maxLen, value, tx, ty, tw, th,
+                hint, cb)
+        end,
+        frameRect = function(x1, y1, x2, y2, col, rad, th)
+            return frameRect(ctx.dl, ctx.at(x1, y1), ctx.at(x2, y2),
+                col, rad, th)
+        end,
     }, cx, y, cw)
     RTm.visible = false
     if ok and type(res) == "number" then
@@ -38190,10 +38229,25 @@ end
 -- =====================================================================
 --  «ВЫДАЧА В РАДИУСЕ» (v1.19.215): панель МП → «Выдача в радиусе».
 --
---  Определяет ВСЕХ игроков в радиусе от администратора и готов выдать
---  им команды. Команды — RT.cmds[id] — сообщит заказчик чуть позже
---  (v1.19.215): до тех пор кнопка честно пишет «команда ещё не
---  назначена», а раздел уже показывает, кто сейчас в радиусе.
+--  Определяет ВСЕХ игроков в радиусе от администратора и выдаёт им
+--  команды (v1.19.220 — команды от заказчика):
+--    Заспавнить        /spawn <id>            уровень 2, по 150 мс
+--    Заморозить        /freeze <id>           уровень 2, по 150 мс
+--    Разморозить       /unfreeze <id>         уровень 2, по 150 мс
+--    Выдать оружие     /gun <id> <ид> <патроны>  уровень 5, по 150 мс
+--                                (оружие/патроны — шестерёнка, ползунки)
+--    Выдать скин       /setskin <id> <ид>     уровень 4, по 150 мс
+--                                (номер скина — вручную)
+--    Выдать HP         /hpall                 уровень 4, одна команда
+--                                (радиус вшит в команду, без игроков)
+--    Выдать броню      /arm <id> <кол-во>     уровень 4, по 150 мс
+--                                (кол-во 1..100 — ползунок)
+--    Заспавнить т/с    /spcars <1|2|3>        одна команда
+--                                (1 админские / 2 незанятые / 3 все)
+--    Отобрать оружие / Телепорт всех к себе — команды ещё не назначены.
+--  Уровень — из списка чекера «Админы в сети» (GRND_AO.list; админ сам
+--  всегда первый — список отсортирован по уровню): не хватает — тост
+--  «Нет доступа к данной команде, нужен N-й уровень».
 --
 --  Определение игроков (без сторонних плагинов, только MoonLoader):
 --    1) sampIsPlayerConnected(id) — перебор ID 0..1003 (как MP.online:
@@ -38223,6 +38277,8 @@ do
         err = nil,          -- последняя ошибка (для строки статуса)
         lastAct = nil,      -- результат последнего действия
         loaded = false,
+        clock = os.clock,   -- время очереди (в стенде подменяется)
+        queue = nil,        -- выдача по игрокам: по одной команде за 150 мс
     }
 
     -- ---------- чистая логика (её гоняет стенд) ----------
@@ -38287,23 +38343,62 @@ do
     -- <<< GRND_RADTOOLS_LOGIC_END
     RT.fn = RT_FN
 
-    -- Действия страницы — порядок из макета заказчика. gear = у действия
-    -- есть параметры, рядом с кнопкой — отдельная шестерёнка (v1.19.216:
-    -- вынесена ЗА кнопку). Команды (RT.cmds) — сообщит заказчик: шаблон
-    -- с {id} уходит ПО ИГРОКУ, без {id} — одной строкой на всех.
+    -- Действия страницы — порядок из макета заказчика. gear = есть
+    -- параметры (шестерёнка рядом открывает настройки). level — минимальный
+    -- уровень из списка чекера «Админы в сети». per — команда ПО ИГРОКУ
+    -- (между командами 150 мс), solo — одна команда (/hpall, /spcars).
     RT.actions = {
-        { id = "spawn",    label = "Заспавнить" },
-        { id = "freeze",   label = "Заморозить" },
-        { id = "unfreeze", label = "Разморозить" },
-        { id = "weapon",   label = "Выдать оружие", gear = true },
-        { id = "skin",     label = "Выдать скин", gear = true },
-        { id = "xp",       label = "Выдать XP" },
-        { id = "armor",    label = "Выдать броню", gear = true },
-        { id = "vehicle",  label = "Заспавнить транспорт", gear = true },
+        { id = "spawn",    label = "Заспавнить",           level = 2, per = true },
+        { id = "freeze",   label = "Заморозить",           level = 2, per = true },
+        { id = "unfreeze", label = "Разморозить",          level = 2, per = true },
+        { id = "weapon",   label = "Выдать оружие",        gear = true,
+            level = 5, per = true },
+        { id = "skin",     label = "Выдать скин",          gear = true,
+            level = 4, per = true },
+        { id = "hp",       label = "Выдать HP",            level = 4,
+            solo = true },
+        { id = "armor",    label = "Выдать броню",         gear = true,
+            level = 4, per = true },
+        { id = "vehicle",  label = "Заспавнить транспорт", gear = true,
+            solo = true },
         { id = "takeoff",  label = "Отобрать оружие" },
     }
     RT.wide = { id = "tpself", label = "Телепорт всех к себе" }
-    RT.cmds = {}
+
+    -- ID оружия SA-MP (GivePlayerWeapon): ползунок в настройке показывает
+    -- имена, в команду /gun подставляется ID выбранного (он же — в подписи).
+    RT.weapons = {
+        { id = 22, name = "Пистолет" },
+        { id = 23, name = "Пистолет с глушителем" },
+        { id = 24, name = "Дезерт Игл" },
+        { id = 25, name = "Дробовик" },
+        { id = 26, name = "Обрез" },
+        { id = 27, name = "Боевой дробовик" },
+        { id = 28, name = "Микро-Узи" },
+        { id = 29, name = "MP5" },
+        { id = 30, name = "AK-47" },
+        { id = 31, name = "M4" },
+        { id = 32, name = "Тек-9" },
+        { id = 33, name = "Винтовка" },
+        { id = 34, name = "Снайперская винтовка" },
+        { id = 35, name = "РПГ" },
+        { id = 36, name = "Ракетница HS" },
+        { id = 37, name = "Огнемёт" },
+        { id = 38, name = "Миниган" },
+        { id = 39, name = "C4" },
+        { id = 41, name = "Баллончик" },
+        { id = 42, name = "Огнетушитель" },
+        { id = 46, name = "Парашют" },
+    }
+
+    -- Настройки шестерёнок (хранятся в grnd_radtools.cfg).
+    RT.settings = {
+        weapon = { sel = 1, ammo = 30 },  -- оружие: 1..#RT.weapons, патроны 0..300
+        skin = { num = "" },              -- скин: номер, вручную
+        armor = { amount = 50 },          -- броня: ползунок 1..100
+        vehicle = { mode = 1 },           -- т/с: 1 админские, 2 незанятые, 3 все
+    }
+    RT.settingsOpen = nil  -- открыта ли настройка (id действия)
 
     function RT.actById(id)
         for i = 1, #RT.actions do
@@ -38341,15 +38436,45 @@ do
             for line in f:lines() do
                 local k, v = tostring(line or ""):match("^([%w_]+)=(.*)$")
                 if k == "radius" then RT.setRadius(v) end
+                if k == "wsel" then RT.settings.weapon.sel = v end
+                if k == "wammo" then RT.settings.weapon.ammo = v end
+                if k == "skin" then RT.settings.skin.num = v end
+                if k == "armor" then RT.settings.armor.amount = v end
+                if k == "vmode" then RT.settings.vehicle.mode = v end
             end
         end
+        RT.clampSettings()
         return true
     end
 
+    function RT.clampSettings()
+        local S = RT.settings
+        S.weapon.sel = math.floor(tonumber(S.weapon.sel) or 1)
+        if S.weapon.sel < 1 then S.weapon.sel = 1 end
+        if S.weapon.sel > #RT.weapons then S.weapon.sel = #RT.weapons end
+        S.weapon.ammo = math.floor(tonumber(S.weapon.ammo) or 30)
+        if S.weapon.ammo < 1 then S.weapon.ammo = 1 end
+        if S.weapon.ammo > 999 then S.weapon.ammo = 999 end
+        S.skin.num = tostring(S.skin.num or "")
+        S.armor.amount = math.floor(tonumber(S.armor.amount) or 50)
+        if S.armor.amount < 1 then S.armor.amount = 1 end
+        if S.armor.amount > 100 then S.armor.amount = 100 end
+        S.vehicle.mode = math.floor(tonumber(S.vehicle.mode) or 1)
+        if S.vehicle.mode < 1 then S.vehicle.mode = 1 end
+        if S.vehicle.mode > 3 then S.vehicle.mode = 3 end
+    end
+
     function RT.save()
+        RT.clampSettings()
         local ok, f = pcall(GRND_CONFIG.open, RT.path(), "w")
         if not ok or not f then return false end
+        local S = RT.settings
         f:write("radius=" .. tostring(RT.radius) .. "\n")
+        f:write("wsel=" .. S.weapon.sel .. "\n")
+        f:write("wammo=" .. S.weapon.ammo .. "\n")
+        f:write("skin=" .. S.skin.num .. "\n")
+        f:write("armor=" .. S.armor.amount .. "\n")
+        f:write("vmode=" .. S.vehicle.mode .. "\n")
         return true
     end
 
@@ -38387,7 +38512,12 @@ do
         end
         local pedInt, zd = rtEntityIz(ped)
         if interior == nil then interior = pedInt end
-        return id, rtNum(x), rtNum(y), rtNum(z), interior, zd
+        local nick
+        if id and type(sampGetPlayerNickname) == "function" then
+            local ok3, n3 = pcall(sampGetPlayerNickname, id)
+            if ok3 and type(n3) == "string" then nick = n3 end
+        end
+        return id, rtNum(x), rtNum(y), rtNum(z), interior, zd, nick
     end
 
     -- Все подключённые игроки (сырьё для RT_FN.scan).
@@ -38454,8 +38584,14 @@ do
 
     -- Тик из главного цикла: обновляет список раз в секунду, пока открыт
     -- раздел «Выдача в радиусе».
+    -- Тик из основного цикла: очередь выдачи (одна команда за 150 мс)
+    -- + список в радиусе раз в секунду, пока раздел открыт.
     function RT.tick()
         pcall(RT.load)
+        -- ВАЖНО: rtSend/rtQueueFinish объявлены НИЖЕ (local) — внутри tick
+        -- их имена были бы глобальными. Поэтому очередь живёт в
+        -- RT.pumpQueue (см. ниже) и вызывается через таблицу RT.
+        RT.pumpQueue()
         if RT.visible and (RT.list == nil or os.clock() - (RT.scanAt or 0) >= 1) then
             RT.scan()
         end
@@ -38497,78 +38633,381 @@ do
 
     -- Клик по шестерёнке: параметров пока нет, потому что нет команд —
     -- честно говорим, что настройка появится вместе с ними.
-    function RT.gearClick(a)
-        rtToast("«" .. a.label .. "»: настройка появится вместе с командой",
-            "info", 3.4)
-        RT.lastAct = a.label .. ": настройка появится вместе с командой"
+    -- Нормализация ника для сравнения (регистр/пробелы не важны).
+    local function rtNickKey(st)
+        return tostring(st or ""):lower():gsub("%s+", "")
     end
 
-    -- Действие по кнопке: scan → игроки в радиусе → команда (если назначена).
+    -- Мой уровень: из списка чекера «Админы в сети» (GRND_AO.list) —
+    -- ищем себя по ID/нику. Нас нет в списке → nil (для команд с уровнем
+    -- это «нет доступа»).
+    function RT.myLevel()
+        local AO = _G.GRND_AO
+        local list = (type(AO) == "table") and AO.list or nil
+        if type(list) ~= "table" or #list == 0 then return nil end
+        local myId, _, _, _, _, _, myNick = rtSelf()
+        for i = 1, #list do
+            local it = list[i]
+            if type(it) == "table" then
+                local byId = (it.id and myId ~= nil)
+                    and (tonumber(it.id) == myId) or false
+                local byNick = (it.nick and myNick and myNick ~= "")
+                    and (rtNickKey(it.nick) == rtNickKey(myNick)) or false
+                if byId or byNick then return tonumber(it.lvl) end
+            end
+        end
+        return nil
+    end
+
+    -- Команда действия. p — игрок (для команд по игрокам) или nil
+    -- (одиночные /hpall, /spcars). nil — команда не собрана (нет данных
+    -- в настройке).
+    function RT.cmdFor(id, p)
+        local S = RT.settings
+        local s = tostring(p and p.id or "")
+        if id == "spawn" then return "/spawn " .. s end
+        if id == "freeze" then return "/freeze " .. s end
+        if id == "unfreeze" then return "/unfreeze " .. s end
+        if id == "weapon" then
+            local w = RT.weapons[S.weapon.sel] or RT.weapons[1]
+            return string.format("/gun %s %d %d", s, w.id, S.weapon.ammo)
+        end
+        if id == "skin" then
+            local sk = tonumber(S.skin.num)
+            if not sk then return nil end  -- номер скина не указан
+            return "/setskin " .. s .. " " .. tostring(math.floor(sk))
+        end
+        if id == "armor" then
+            return string.format("/arm %s %d", s, S.armor.amount)
+        end
+        if id == "hp" then return "/hpall" end
+        if id == "vehicle" then
+            return "/spcars " .. tostring(S.vehicle.mode)
+        end
+        return nil
+    end
+
+    -- Клик по шестерёнке: настройки действия (оружие/скин/броня/транспорт).
+    function RT.gearClick(a)
+        if RT.settings[a.id] then
+            RT.settingsOpen = a.id
+            RT.lastAct = a.label .. ": настройки"
+        end
+    end
+
+    -- Итог выдачи по игрокам: строка статуса + тост.
+    local function rtQueueFinish(Q)
+        local names = {}
+        for i = 1, math.min(4, #Q.names) do names[i] = Q.names[i] end
+        if #Q.names > 4 then names[#names + 1] = "…" end
+        RT.lastAct = string.format("%s: %d/%d (%s)", Q.label, Q.sent, #Q.cmds,
+            table.concat(names, ", "))
+        if Q.sent > 0 and Q.failed == 0 then
+            rtToast(string.format("%s: %d игрокам", Q.label, Q.sent), "ok", 3)
+            return true
+        elseif Q.sent > 0 then
+            rtToast(string.format("%s: только %d из %d", Q.label, Q.sent,
+                #Q.cmds), "warn", 3.2)
+            return false
+        end
+        rtToast("Не удалось отправить команды", "warn", 3)
+        return false
+    end
+
+    -- Шаг очереди (зовётся из RT.tick): одна команда за тик и не чаще,
+    -- чем раз в 150 мс — как просил заказчик.
+    function RT.pumpQueue()
+        local Q = RT.queue
+        if type(Q) ~= "table" or type(Q.cmds) ~= "table" then return end
+        local now = RT.clock()
+        if now >= Q.at and Q.i < #Q.cmds then
+            local ok = rtSend(Q.cmds[Q.i + 1])
+            Q.i = Q.i + 1
+            if ok then Q.sent = Q.sent + 1 else Q.failed = Q.failed + 1 end
+            Q.at = now + 0.15  -- интервал 150 мс между командами
+            local names = {}
+            for i = 1, math.min(4, #Q.names) do names[i] = Q.names[i] end
+            if #Q.names > 4 then names[#names + 1] = "…" end
+            RT.lastAct = string.format("%s: %d/%d (%s)", Q.label, Q.i,
+                #Q.cmds, table.concat(names, ", "))
+        end
+        if Q.i >= #Q.cmds then
+            RT.queue = nil
+            rtQueueFinish(Q)
+        end
+    end
+
+    -- Действие по кнопке (v1.19.220):
+    --   уровень — из списка чекера «Админы в сети» (RT.myLevel); не
+    --   хватает → тост «Нет доступа к данной команде, нужен N-й уровень»;
+    --   solo  — одна команда (/hpall: радиус вшит в команду; /spcars —
+    --   по выбранному режиму), без игроков;
+    --   per   — команда ПО ИГРОКУ, отправка через RT.tick: по одной за
+    --   150 мс (не «одной пачкой», а именно с интервалом).
     function RT.doAction(id)
         pcall(RT.load)
         local act = RT.actById(id)
         if not act then return false end
-        local list = RT.scan()
-        if not list then
-            rtToast("Радиус: " .. tostring(RT.err or "нет данных"), "warn", 3)
-            RT.lastAct = act.label .. ": " .. tostring(RT.err or "нет данных")
-            return false
-        end
-        -- «Телепорт всех к себе» на себя не распространяется
-        local players = {}
-        for i = 1, #list do
-            if not (id == RT.wide.id and list[i].self) then
-                players[#players + 1] = list[i]
+        if act.level and act.level > 0 then
+            local lv = RT.myLevel()
+            if (lv or 0) < act.level then
+                rtToast("Нет доступа к данной команде, нужен "
+                    .. tostring(act.level) .. "-й уровень", "warn", 3.5)
+                RT.lastAct = string.format(
+                    "%s: нет доступа (нужен %d-й уровень)",
+                    act.label, act.level)
+                return false
             end
         end
-        if #players == 0 then
-            rtToast("В радиусе " .. RT.radius .. " м никого", "info", 2.4)
-            RT.lastAct = act.label .. ": в радиусе никого"
-            return false
-        end
-        local tmpl = RT.cmds[id]
-        if type(tmpl) ~= "string" or tmpl == "" then
-            rtToast("«" .. act.label .. "»: команда ещё не назначена", "warn", 3.2)
-            RT.lastAct = string.format("%s: команда не назначена (в радиусе %d)",
-                act.label, #players)
-            return false
-        end
-        local sent, failed = 0, 0
-        if tmpl:find("{id}", 1, true) then
-            -- шаблон с {id} — по игроку
-            for i = 1, #players do
-                if rtSend(RT_FN.fill(tmpl, players[i])) then sent = sent + 1
-                else failed = failed + 1 end
+        if act.solo then
+            -- одна команда: игроки в радиусе не нужны
+            local cmd = RT.cmdFor(id, nil)
+            if not cmd then
+                RT.lastAct = act.label .. ": команда не собрана"
+                rtToast("«" .. act.label .. "»: команда не собрана", "warn", 3)
+                return false
             end
-        else
-            -- без {id} — одна команда на всех
-            if rtSend(tmpl) then sent = 1 else failed = 1 end
+            if rtSend(cmd) then
+                RT.lastAct = act.label .. ": отправлено (" .. cmd .. ")"
+                rtToast("«" .. act.label .. "»: отправлено", "ok", 2.8)
+                return true
+            end
+            RT.lastAct = act.label .. ": не удалось отправить"
+            rtToast("Не удалось отправить команду", "warn", 3)
+            return false
         end
-        local names = {}
-        for i = 1, math.min(4, #players) do
-            names[#names + 1] = players[i].nick
-        end
-        if #players > 4 then names[#names + 1] = "…" end
-        RT.lastAct = string.format("%s: %d/%d (%s)", act.label, sent, #players,
-            table.concat(names, ", "))
-        if sent > 0 and failed == 0 then
-            rtToast(string.format("%s: %d игрокам", act.label, sent), "ok", 3)
+        if act.per then
+            local list = RT.scan()
+            if not list then
+                rtToast("Радиус: " .. tostring(RT.err or "нет данных"),
+                    "warn", 3)
+                RT.lastAct = act.label .. ": " .. tostring(RT.err or "нет данных")
+                return false
+            end
+            -- «Телепорт всех к себе» на себя не распространяется
+            local cmds, names = {}, {}
+            for i = 1, #list do
+                local pl = list[i]
+                if not (id == RT.wide.id and pl.self) then
+                    local c = RT.cmdFor(id, pl)
+                    if not c then
+                        rtToast("«" .. act.label .. "»: сначала заполните "
+                            .. "настройки (шестерёнка)", "warn", 3.2)
+                        RT.lastAct = act.label .. ": настройка не заполнена"
+                        return false
+                    end
+                    cmds[#cmds + 1] = c
+                    names[#names + 1] = pl.nick
+                end
+            end
+            if #cmds == 0 then
+                rtToast("В радиусе " .. RT.radius .. " м никого", "info", 2.4)
+                RT.lastAct = act.label .. ": в радиусе никого"
+                return false
+            end
+            -- очередь: RT.tick шлёт по одной команде за 150 мс
+            RT.queue = {
+                cmds = cmds, names = names, label = act.label,
+                i = 0, sent = 0, failed = 0, at = RT.clock(),
+            }
+            local nn = {}
+            for i = 1, math.min(4, #names) do nn[i] = names[i] end
+            if #names > 4 then nn[#nn + 1] = "…" end
+            RT.lastAct = string.format("%s: 0/%d (%s)", act.label, #cmds,
+                table.concat(nn, ", "))
+            rtToast(string.format("«%s»: выдаю %d игрокам, по одной за "
+                .. "150 мс", act.label, #cmds), "info", 2.6)
             return true
-        elseif sent > 0 then
-            rtToast(string.format("%s: только %d из %d", act.label, sent, #players),
-                "warn", 3.2)
-            return false
         end
-        rtToast("Не удалось отправить команду", "warn", 3)
+        rtToast("«" .. act.label .. "»: команда ещё не назначена", "warn", 3.2)
+        RT.lastAct = act.label .. ": команда ещё не назначена"
         return false
+    end
+
+    -- ---------- настройки шестерёнок (v1.19.220) ----------
+    -- Картинка в стиле «Выдача» (givePopup), но ползунки — наши: дорожка
+    -- + «пилюля» + текст по центру (v1.19.218/219). RT.page вертит: пока
+    -- RT.settingsOpen — вместо сетки кнопок рисуется эта панель.
+    local function rtSettingsPage(R, cx, y, cw)
+        local TH = (type(R.theme) == "function") and R.theme() or {}
+        local S = RT.settings
+        local key = RT.settingsOpen
+        local mut = R.c4(TH.textMuted or { 140, 140, 150, 255 })
+        local hi  = R.c4(TH.textHi or { 240, 240, 245, 255 })
+        local ac  = (type(TH.accent) == "table") and TH.accent
+            or { 164, 112, 224, 255 }
+        local titles = {  -- коротко: «Закрыть» не налегает на заголовок
+            weapon = "ОРУЖИЕ", skin = "СКИН",
+            armor = "БРОНЯ", vehicle = "ТРАНСПОРТ",
+        }
+        local rowH = 46
+        local body = (key == "weapon") and (rowH * 2)
+            or ((key == "skin") and 52 or rowH)
+        local boxH = 60 + body + 16
+
+        R.roundRect(R.dl, R.at(cx, y), R.at(cx + cw, y + boxH),
+            R.col32(14, 15, 22, 245), 8)
+        if type(R.frameRect) == "function" then
+            R.frameRect(cx + 0.5, y + 0.5, cx + cw - 0.5, y + boxH - 0.5,
+                R.col32(ac[1], ac[2], ac[3], 180), 8, 1)
+        end
+        local ix, iw = cx + 12, cw - 24
+        R.uiText(ix, y + 10, "НАСТРОЙКА: " .. (titles[key] or key), hi, 0.92)
+        R.uiText(ix, y + 31, "Применяется к игрокам в радиусе", mut, 0.78)
+        if R.button("rt_set_close", cx + cw - 96, y + 9, 84, 26,
+            "Закрыть", {}) then
+            RT.settingsOpen = nil
+        end
+        R.roundRect(R.dl, R.at(ix, y + 51), R.at(ix + iw, y + 53),
+            R.col32(255, 255, 255, 42), 1)
+
+        -- строка-ползунок: [−] дорожка (текст по центру, как у радиуса) [+]
+        local function sliderRow(yy, o)
+            local bh = 26
+            if R.button(o.kMinus, ix, yy, bh, bh, "-", {}) then
+                o.step(-1)
+            end
+            local sx = ix + bh + 8
+            local sw = math.max(40, iw - bh * 2 - 8 * 2)
+            local frac = (o.val - o.min) / math.max(1, o.max - o.min)
+            if type(R.slider) == "function" then
+                local nr = R.slider(o.kSlide, sx, yy, sw, bh, frac)
+                if nr then
+                    -- без «+0.5»: округление уже в o.set (иначе двойное)
+                    o.set(o.min + nr * (o.max - o.min))
+                end
+            else
+                R.roundRect(R.dl, R.at(sx, yy + bh / 2 - 8),
+                    R.at(sx + sw, yy + bh / 2 + 8),
+                    R.col32(255, 255, 255, 30), 5)
+            end
+            local lab = o.label
+            local lw = ((type(R.tsize) == "function") and R.tsize(lab)
+                or (#lab * 7)) * 0.8
+            R.uiText(sx + (sw - lw) / 2, yy + (bh - 12) / 2, lab, hi, 0.8)
+            if R.button(o.kPlus, ix + iw - bh, yy, bh, bh, "+", {}) then
+                o.step(1)
+            end
+        end
+
+        local yy = y + 60
+        if key == "weapon" then
+            local n = #RT.weapons
+            sliderRow(yy, {
+                kMinus = "rt_set_wminus", kSlide = "rt_set_wsl",
+                kPlus = "rt_set_wplus",
+                min = 1, max = n, val = S.weapon.sel,
+                label = (function()
+                    local w = RT.weapons[S.weapon.sel] or RT.weapons[1]
+                    return string.format("%s (%d)", w.name, w.id)
+                end)(),
+                set = function(v)
+                    v = math.floor(v + 0.5)
+                    if v < 1 then v = 1 end
+                    if v > n then v = n end
+                    if v ~= S.weapon.sel then
+                        S.weapon.sel = v
+                        pcall(RT.save)
+                    end
+                end,
+                step = function(d)
+                    local v = S.weapon.sel + d
+                    if v < 1 then v = 1 end
+                    if v > n then v = n end
+                    if v ~= S.weapon.sel then
+                        S.weapon.sel = v
+                        pcall(RT.save)
+                    end
+                end,
+            })
+            yy = yy + rowH
+            sliderRow(yy, {
+                kMinus = "rt_set_aminus", kSlide = "rt_set_asl",
+                kPlus = "rt_set_aplus",
+                min = 1, max = 999, val = S.weapon.ammo,
+                label = "Патроны: " .. S.weapon.ammo,
+                set = function(v)
+                    v = math.floor(v + 0.5)
+                    if v < 1 then v = 1 end
+                    if v > 999 then v = 999 end
+                    if v ~= S.weapon.ammo then
+                        S.weapon.ammo = v
+                        pcall(RT.save)
+                    end
+                end,
+                step = function(d)
+                    local v = S.weapon.ammo + d
+                    if v < 1 then v = 1 end
+                    if v > 999 then v = 999 end
+                    if v ~= S.weapon.ammo then
+                        S.weapon.ammo = v
+                        pcall(RT.save)
+                    end
+                end,
+            })
+        elseif key == "skin" then
+            R.uiText(ix, yy + 2, "Номер скина (вручную)", mut, 0.85)
+            if type(R.textInput) == "function" then
+                R.textInput("rt_set_skin", "##rt_set_skin", 8, S.skin.num,
+                    ix, yy + 22, iw, 26, "Например: 1540",
+                    function(v)
+                        S.skin.num = tostring(v or "")
+                        pcall(RT.save)
+                    end)
+            else
+                R.uiText(ix, yy + 24,
+                    (S.skin.num ~= "" and S.skin.num or "—"), hi, 1.0)
+            end
+        elseif key == "armor" then
+            sliderRow(yy, {
+                kMinus = "rt_set_bminus", kSlide = "rt_set_bsl",
+                kPlus = "rt_set_bplus",
+                min = 1, max = 100, val = S.armor.amount,
+                label = "Броня: " .. S.armor.amount,
+                set = function(v)
+                    v = math.floor(v + 0.5)
+                    if v < 1 then v = 1 end
+                    if v > 100 then v = 100 end
+                    if v ~= S.armor.amount then
+                        S.armor.amount = v
+                        pcall(RT.save)
+                    end
+                end,
+                step = function(d)
+                    local v = S.armor.amount + d
+                    if v < 1 then v = 1 end
+                    if v > 100 then v = 100 end
+                    if v ~= S.armor.amount then
+                        S.armor.amount = v
+                        pcall(RT.save)
+                    end
+                end,
+            })
+        elseif key == "vehicle" then
+            local vlabels = { "Админские", "Незанятые", "Все" }
+            local vw = (iw - 16) / 3
+            for i = 1, 3 do
+                if R.button("rt_set_veh" .. i,
+                        ix + (i - 1) * (vw + 8), yy, vw, 26, vlabels[i],
+                        { selected = S.vehicle.mode == i }) then
+                    if S.vehicle.mode ~= i then
+                        S.vehicle.mode = i
+                        pcall(RT.save)
+                    end
+                end
+            end
+        end
+        return y + boxH
     end
 
     -- ---------- страница раздела (рендерер передаёт панель МП) ----------
     -- R = { uiText, tsize, col32, c4, roundRect, dl, at, button, gear,
-    --        slider, theme }
+    --        slider, theme, textInput, frameRect }
     --   button(key, x, y, w, h, label, opts) -> clicked  (кнопка стиля меню)
     --   gear(x, y, col)  — иконка шестерёнки (gearIcon панели)
     --   slider(id, x, y, w, h, ratio) -> новый ratio при drag или nil
+    --   textInput(id, full, max, value, x, y, w, h, hint, cb) — поле ввода
+    --   frameRect(x1, y1, x2, y2, col, r, th) — рамка (контур)
     function RT.page(R, cx, y, cw)
         if type(R) ~= "table" or type(R.button) ~= "function" then return y end
         pcall(RT.load)
@@ -38614,48 +39053,56 @@ do
         y = y + bh + 10
 
         -- ---------- сетка действий 3×3 (порядок — из макета) ----------
-        -- Ровно: ВСЕ 9 кнопок одной ширины; место под шестерёнку зарезервировано
-        -- в каждой ячейке, шестерёнка — отдельный квадрат ЗА кнопкой (не
-        -- поверх неё). cutW — чтобы длинная подпись не вылезала из кнопки.
-        local gap, abh, gearW = 8, 26, 26
-        local cellW = (cw - gap * 2) / 3
-        local bw = math.max(40, cellW - gearW - gap)
-        local gearCol = R.col32(255, 255, 255, 150)
-        for i = 1, #RT.actions do
-            if i > 9 then break end
-            local a = RT.actions[i]
-            local row = math.floor((i - 1) / 3)
-            local col = (i - 1) % 3
-            local bx = cx + col * (cellW + gap)
-            local by = y + row * (abh + gap)
-            if R.button("rt_act_" .. a.id, bx, by, bw, abh, a.label,
-                { cutW = bw - 12 }) then
-                RT.doAction(a.id)
-            end
-            if a.gear then
-                -- v1.19.217: подложки под значком нет — та же шестерёнка
-                -- панели (gearButton): кликовая зона 30×30, hover меняет
-                -- только цвет значка. v1.19.218: зона примыкает к краю
-                -- кнопки (на кнопку не налегает), значок — сразу за ней.
-                local gx, gy = bx + bw + 15, by + abh / 2
-                if type(R.gearButton) == "function" then
-                    local clicked =
-                        R.gearButton("rt_gear_" .. a.id, gx, gy, false)
-                    if clicked then RT.gearClick(a) end
-                elseif type(R.gear) == "function" then
-                    R.gear(gx, gy, gearCol)
+        -- ---------- содержимое: сетка 3×3 или настройки шестерёнки ----------
+        if RT.settingsOpen and RT.settings[RT.settingsOpen] then
+            -- открытая настройка (оружие/скин/броня/транспорт) вместо сетки
+            y = rtSettingsPage(R, cx, y, cw)
+        else
+            RT.settingsOpen = nil
+            -- Ровно: ВСЕ 9 кнопок одной ширины; место под шестерёнку
+            -- зарезервировано в каждой ячейке, шестерёнка — отдельный
+            -- квадрат ЗА кнопкой (не поверх неё). cutW — чтобы длинная
+            -- подпись не вылезала из кнопки.
+            local gap, abh, gearW = 8, 26, 26
+            local cellW = (cw - gap * 2) / 3
+            local bw = math.max(40, cellW - gearW - gap)
+            local gearCol = R.col32(255, 255, 255, 150)
+            for i = 1, #RT.actions do
+                if i > 9 then break end
+                local a = RT.actions[i]
+                local row = math.floor((i - 1) / 3)
+                local col = (i - 1) % 3
+                local bx = cx + col * (cellW + gap)
+                local by = y + row * (abh + gap)
+                if R.button("rt_act_" .. a.id, bx, by, bw, abh, a.label,
+                    { cutW = bw - 12 }) then
+                    RT.doAction(a.id)
+                end
+                if a.gear then
+                    -- v1.19.217: подложки под значком нет — та же шестерёнка
+                    -- панели (gearButton): кликовая зона 30×30, hover меняет
+                    -- только цвет значка. v1.19.218: зона примыкает к краю
+                    -- кнопки (на кнопку не налегает), значок — сразу за ней.
+                    local gx, gy = bx + bw + 15, by + abh / 2
+                    if type(R.gearButton) == "function" then
+                        local clicked =
+                            R.gearButton("rt_gear_" .. a.id, gx, gy, false)
+                        if clicked then RT.gearClick(a) end
+                    elseif type(R.gear) == "function" then
+                        R.gear(gx, gy, gearCol)
+                    end
                 end
             end
-        end
-        y = y + 3 * (abh + gap) - gap
-        y = y + 12  -- v1.19.217: широкий отступ, кнопка чётко ниже сетки
+            y = y + 3 * (abh + gap) - gap
+            y = y + 12  -- v1.19.217: широкий отступ, кнопка ниже сетки
 
-        -- ---------- широкая кнопка ----------
-        if R.button("rt_tp", cx, y, cw, abh, RT.wide.label,
-            { cutW = cw - 16 }) then
-            RT.doAction(RT.wide.id)
+            -- ---------- широкая кнопка ----------
+            if R.button("rt_tp", cx, y, cw, abh, RT.wide.label,
+                { cutW = cw - 16 }) then
+                RT.doAction(RT.wide.id)
+            end
+            y = y + abh + 8
         end
-        y = y + abh + 8
 
         -- последнее действие — только если есть что сказать
         if RT.lastAct then
