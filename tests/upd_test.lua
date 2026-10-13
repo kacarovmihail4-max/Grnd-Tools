@@ -24,9 +24,9 @@ local a1 = assert(src:find("-- >>> GRND_UPDATE_BEGIN"))
 local a2 = assert(src:find("-- <<< GRND_UPDATE_END"))
 local block = src:sub(a1, a2 - 1)
 
-local V = "1.19.229"       -- текущая версия скрипта
-local NEW = "1.19.230"     -- версия в канале
-local OLD = "1.19.228"     -- что отдаёт зеркало из кэша
+local V = "1.19.230"       -- текущая версия скрипта
+local NEW = "1.19.231"     -- версия в канале
+local OLD = "1.19.229"     -- что отдаёт зеркало из кэша
 
 local SCRIPT_PATH = "/game/moonloader/grnd_adm_tools.lua"
 local CFG_PATH = "/game/moonloader/config/grnd_tools/grnd_update.cfg"
@@ -514,8 +514,8 @@ check(reloaded == 0, "установка: в кадре перезапуска �
 check(hasToast("Обновление " .. NEW .. " установлено"), "установка: тост об установке")
 check(FS[SCRIPT_PATH]:find('GRND_SCRIPT_VERSION = "' .. NEW .. '"', 1, true) ~= nil,
     "установка: новый файл встал на место")
-check(FS[SCRIPT_PATH .. ".bak"] == "-- старый скрипт\n", "установка: старый — в .bak")
-check(FS[SCRIPT_PATH .. ".new"] == nil, "установка: .new больше нет")
+check(FS[SCRIPT_PATH .. ".bak"] == nil, "установка: .bak НЕ создаётся")
+check(FS[SCRIPT_PATH .. ".new"] == nil, "установка: .new убран")
 check(#(U.notes or {}) == 1, "установка: список изменений разобран")
 check((gconf.sections.update or ""):find("updatedVer=" .. NEW, 1, true) ~= nil,
     "установка: отметка о новой версии записана в настройки")
@@ -636,7 +636,7 @@ while U.state ~= "ready" and guard < 800 do U.tick() guard = guard + 1 end
 check(U.state == "ready", "мост: файл доехал через WinINet")
 check(FS[SCRIPT_PATH]:find('GRND_SCRIPT_VERSION = "' .. NEW .. '"', 1, true) ~= nil,
     "мост: новый файл встал на место")
-check(FS[SCRIPT_PATH .. ".bak"] ~= nil, "мост: бэкап сделан")
+check(FS[SCRIPT_PATH .. ".bak"] == nil, "мост: файл обновлён на месте, без .bak")
 
 -- WinINet как единственная дорога (downloadUrlToFile в сборке нет)
 resetU()
@@ -661,9 +661,10 @@ U.check("manual")
 guard = 0
 while U.state ~= "ready" and guard < 800 do U.tick() guard = guard + 1 end
 check(U.state == "ready", "WinINet: файл скачан и установлен")
+check(FS[SCRIPT_PATH .. ".new"] == nil, "WinINet: текст скрипта пришёл в память (.new нет)")
 check(FS[SCRIPT_PATH]:find('GRND_SCRIPT_VERSION = "' .. NEW .. '"', 1, true) ~= nil,
     "WinINet: новый файл на месте")
-check(FS[SCRIPT_PATH .. ".bak"] ~= nil, "WinINet: бэкап сделан")
+check(FS[SCRIPT_PATH .. ".bak"] == nil, "WinINet: файл обновлён на месте, без .bak")
 
 -- ---------- 10. проверка содержимого ----------
 -- короткий ответ, не наша версия, битый файл — рабочий файл ЦЕЛ
@@ -754,18 +755,43 @@ U.tick()
 _G.__spawned = false U.tick() _G.__spawned = true U.tick()
 check(U.state == "uptodate", "period=10800: второй заход молчит")
 
--- страховка: спавн не определяется — проверяем через 25 с после запуска
+-- ДО авторизации проверок нет: ждём спавна сколько угодно
 resetU()
-U.didSessionCheck, U.sessionAt = false, wallNow
 U.spawned = function() return false end
-now = now + 5
+now = now + 60
+wallNow = wallNow + 600
 U.tick()
-check(U.state == "idle", "страховка: раньше 25 с не проверяем")
-wallNow = wallNow + 26
 U.tick()
-check(U.state == "checking", "страховка: через 25 с проверка всё равно идёт")
-check(U.didSessionCheck == true, "страховка: второй раз не повторяем")
+check(U.state == "idle", "до спавна: проверка не начинается")
+check(#downloads == 0, "до спавна: ничего не качается")
+check(not hasToast("Проверяю обновления"), "до спавна: тостов нет")
 U.spawned = realSpawned -- возвращаем настоящий определитель спавна
+
+-- идёт авторизация (открыт диалог) — не проверяем, даже если что-то «спавн»
+resetU()
+_G.grndAuthDialogOpen = function() return true end
+_G.__spawned = true
+U.tick()
+check(U.state == "idle", "авторизация: во время диалога проверки нет")
+check(#downloads == 0, "авторизация: загрузок нет")
+check(not hasToast("Проверяю обновления"), "авторизация: тостов нет")
+-- сервер без авторизации: спавн-флаг не работает, но сессия готова
+_G.grndAuthDialogOpen = function() return false end
+_G.__spawned = false
+U.spawned = function() return false end
+_G.grndSessionReady = function() return true end
+U.tick()
+check(U.state == "checking", "запасной источник: готовность сессии тоже годится")
+U.spawned = realSpawned
+_G.grndSessionReady = nil
+_G.grndAuthDialogOpen = nil
+-- авторизация прошла и персонаж заспавнился — проверяем
+resetU()
+_G.__spawned = true
+U.tick()
+check(U.state == "checking", "авторизация: после входа проверка идёт")
+check(hasToast("Проверяю обновления"), "авторизация: тост проверки")
+_G.__spawned = false
 U.job = nil
 
 -- авто-проверка выключается
@@ -944,9 +970,13 @@ check(U.draw({ im = plain, begin = function() return plain.Begin() end,
 resetU()
 FS[JUNK_TXT] = "1.19.226\n"
 FS[JUNK_LOG] = "22:58:44 проверка (session)\n"
+FS[SCRIPT_PATH .. ".bak"] = "-- прежняя версия\n"
+FS[SCRIPT_PATH .. ".new"] = "-- недокачанный файл\n"
 U.tidyUp()
 check(FS[JUNK_TXT] == nil, "сборка: grnd_update.txt удалён")
 check(FS[JUNK_LOG] == nil, "сборка: grnd_update.log удалён")
+check(FS[SCRIPT_PATH .. ".bak"] == nil, "сборка: старый .bak удалён")
+check(FS[SCRIPT_PATH .. ".new"] == nil, "сборка: недокачанный .new удалён")
 check(FS[SCRIPT_PATH] ~= nil, "сборка: сам скрипт не тронут")
 
 -- после полного цикла установки в папке скрипта только скрипт и его бэкап

@@ -1,6 +1,18 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.229"
+GRND_SCRIPT_VERSION = "1.19.230"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.230 — АВТООБНОВЛЕНИЕ: проверка только после входа и обновление
+--  прямо на месте:
+--   1) проверка обновлений идёт ТОЛЬКО после успешной авторизации, когда
+--      персонаж заспавнился: пока открыт диалог авторизации — ни тостов, ни
+--      загрузок. Страховка «через 25 секунд после запуска» убрана: она
+--      срабатывала до входа и дёргала проверку не вовремя;
+--   2) файл скрипта обновляется В ОДНОМ ФАЙЛЕ: никаких .bak рядом не
+--      создаётся (новое содержимое пишется прямо в текущий файл скрипта).
+--      Текст нового скрипта качается в память, поэтому в папке не остаётся
+--      ни .new, ни .bak; следы прежних версий удаляются при запуске;
+--   3) если файл занят и записать не удалось — версия остаётся прежней и об
+--      этом честно говорит тост.
 -- v1.19.229 — АВТООБНОВЛЕНИЕ: включается само, окно «Grnd Tools» и починка
 --  падения при перезапуске:
 --   1) ИСПРАВЛЕН КРАШ: перезапуск скрипта вызывался как pcall(sc.reload) — без
@@ -39801,8 +39813,20 @@ local function grndUpdInit()
     -- убираем их, чтобы в сборке не было ничего лишнего.
     function U.tidyUp()
         local dir = U.dirOf(U.scriptPath())
-        for _, name in ipairs({ "grnd_update.txt", "grnd_update.log" }) do
-            if U.io.exists(dir .. name) then pcall(U.io.remove, dir .. name) end
+        local drop = { "grnd_update.txt", "grnd_update.log" }
+        -- временные файлы обновления прежних версий (файл теперь обновляется
+        -- прямо на месте, поэтому .bak и .new рядом со скриптом не нужны)
+        drop[#drop + 1] = "grnd_adm_tools.lua.bak"
+        drop[#drop + 1] = "grnd_adm_tools.lua.new"
+        local base = tostring(U.scriptPath()):match("([^/\\]+)$")
+        if base then
+            drop[#drop + 1] = base .. ".bak"
+            drop[#drop + 1] = base .. ".new"
+            drop[#drop + 1] = base:gsub("%.lua$", ".luac") .. ".bak"
+        end
+        for _, name in ipairs(drop) do
+            local full = dir .. name
+            if U.io.exists(full) then pcall(U.io.remove, full) end
         end
     end
 
@@ -40221,6 +40245,27 @@ local function grndUpdInit()
     -- ---------- проверка ----------
     U.checkReason = nil
 
+    -- Проверку делаем ТОЛЬКО после успешной авторизации, когда персонаж
+    -- заспавнился. Готовность сессии у скрипта определяет grndSessionReady()
+    -- (он молчит, пока открыт диалог авторизации) — на неё и опираемся.
+    function U.sessionReady()
+        -- пока открыт диалог авторизации — ждём молча
+        local dlg = rawget(_G, "grndAuthDialogOpen")
+        if type(dlg) == "function" then
+            local okD, open = pcall(dlg)
+            if okD and open then return false end
+        end
+        if U.spawned() then return true end
+        -- запасной источник, если флаг спавна в сборке не работает: готовность
+        -- сессии самого скрипта (она учитывает и авторизацию, и наблюдение)
+        local f = rawget(_G, "grndSessionReady")
+        if type(f) == "function" then
+            local ok, v = pcall(f)
+            if ok and v then return true end
+        end
+        return false
+    end
+
     local function loud()
         return U.checkReason ~= "spawn"
     end
@@ -40279,6 +40324,17 @@ local function grndUpdInit()
         end
     end
 
+    -- Текст нового скрипта: WinINet-ом качаем В ПАМЯТЬ (на диске не остаётся
+    -- ни одного временного файла), штатный загрузчик требует путь — ему даём
+    -- .new, который тут же убирается после установки.
+    local function startText(url, hdr)
+        if (U.road == "inet" or not U.moonDl) and U.inetLoad()
+            and startJob(url, nil, true, hdr, { long = true, mem = true }) then
+            return true
+        end
+        return startJob(url, U.scriptPath() .. ".new", nil, hdr, { long = true })
+    end
+
     function U.dlScript()
         U.phase = "file"
         while true do
@@ -40289,8 +40345,8 @@ local function grndUpdInit()
             end
             U.diag("качаю сам скрипт: " .. c.id)
             U.chan = c
-            if startJob(chanUrl(c, "script"), U.scriptPath() .. ".new", nil,
-                    (c.kind == "api") and U.API_HDR or nil, { long = true }) then
+            if startText(chanUrl(c, "script"),
+                    (c.kind == "api") and U.API_HDR or nil) then
                 return true
             end
         end
@@ -40304,8 +40360,8 @@ local function grndUpdInit()
         local base = (U.chan and U.chan.kind == "api") and U.chan.base or U.API
         U.diag("api: файл большой — беру содержимое по sha "
             .. tostring(sha):sub(1, 8))
-        if startJob(chanUrl({ kind = "api", base = base }, "blob", sha),
-                U.scriptPath() .. ".new", nil, U.API_HDR, { long = true }) then
+        if startText(chanUrl({ kind = "api", base = base }, "blob", sha),
+                U.API_HDR) then
             return true
         end
         return U.dlScript() -- дорогу начать не удалось — идём по зеркалам
@@ -40433,26 +40489,24 @@ local function grndUpdInit()
         return true
     end
 
+    -- Убираем временные файлы загрузки: рядом со скриптом не должно
+    -- оставаться ни .new, ни .bak (файл обновляется прямо на месте).
+    local function dropTemp(job)
+        if job and job.path then pcall(U.io.remove, job.path) end
+    end
+
     local function install(job)
-        local body = U.readFile(job.path)
+        local body = job.body or U.readFile(job.path)
         -- api.github.com без заголовка Accept отвечает JSON: содержимое файла
         -- в «content» (base64), а у файла больше мегабайта его нет — тогда
         -- содержимое берём из git/blobs по «sha».
         if body and body:sub(1, 1) == "{" then
             local b64 = U.jsonField(body, "content")
             if b64 and #b64 > 0 then
-                body = U.b64decode(b64)
-                -- ВАЖНО: на место скрипта переименовывается файл, значит в нём
-                -- должен лежать уже РАСПАКОВАННЫЙ скрипт, а не JSON-обёртка
-                -- (иначе игра получила бы вместо скрипта JSON).
-                if not (body and U.writeFile(job.path, body)) then
-                    pcall(U.io.remove, job.path)
-                    U.diag("не смог записать распакованный файл — иду по зеркалам")
-                    return U.dlScript()
-                end
+                body = U.b64decode(b64) -- распаковываем: на месте должен быть скрипт
             else
                 local sha = U.jsonField(body, "sha")
-                pcall(U.io.remove, job.path)
+                dropTemp(job)
                 if sha then return U.dlBlob(sha) end
                 body = nil
             end
@@ -40461,29 +40515,31 @@ local function grndUpdInit()
             'GRND_SCRIPT_VERSION%s*=%s*"([%d%.]+)"')
         if not body or #body < U.MIN_BYTES or not ver
             or U.verNum(ver) ~= U.verNum(U.newVer) then
-            pcall(U.io.remove, job.path)
+            dropTemp(job)
             U.diag(("скачанный файл не прошёл проверку (%d байт, версия %s)")
                 :format(#tostring(body or ""), tostring(ver)))
-            -- битый файл с этого зеркала (или это вообще не файл) — пробуем
-            -- другое зеркало, а не сдаёмся
+            -- битый файл с этого канала (или это вообще не файл) — пробуем
+            -- следующий канал, а не сдаёмся
             return U.dlScript()
         end
         U.notes = U.changelogOf(body)
+        -- ОБНОВЛЕНИЕ В ОДНОМ ФАЙЛЕ: пишем прямо в текущий файл скрипта.
+        -- Никаких .bak и .new рядом не остаётся — MoonLoader прочитал исходник
+        -- при запуске и файл не держит, поэтому перезапись безопасна.
         local target = U.scriptPath()
-        local bak = target .. ".bak"
-        pcall(U.io.remove, bak)
-        local okBackup = pcall(U.io.rename, target, bak)
-        local okMove = okBackup and pcall(U.io.rename, job.path, target)
-        if not (okBackup and okMove) then
-            if okBackup then pcall(U.io.rename, bak, target) end -- вернуть как было
-            pcall(U.io.remove, job.path)
-            U.diag("не смог заменить файл скрипта (занят?)")
+        if not U.writeFile(target, body) then
+            dropTemp(job)
+            U.diag("не смог записать файл скрипта (занят?)")
             U.state = "error"
-            U.err = "не смог заменить файл скрипта"
+            U.err = "не смог записать файл скрипта"
             failToast("Обновление не установилось (файл занят?) — версия "
                 .. U.cur .. " на месте")
             return false
         end
+        dropTemp(job)
+        -- подчищаем следы прежних версий, если остались
+        pcall(U.io.remove, target .. ".bak")
+        pcall(U.io.remove, target .. ".new")
         U.state, U.installed = "ready", true
         U.diag("установлено: " .. tostring(U.newVer) .. " (" .. #body .. " байт)")
         U.notify("Обновление " .. tostring(U.newVer) .. " установлено", "ok", 3)
@@ -40534,11 +40590,12 @@ local function grndUpdInit()
             -- пришёл git-объект: содержимое в base64 внутри JSON
             local raw = jobBody(job)
             local data = raw and U.b64decode(U.jsonField(raw, "content") or "")
-            if not data or #data < U.MIN_BYTES or not U.writeFile(job.path, data) then
-                pcall(U.io.remove, job.path)
-                U.diag("api: содержимое по sha не пришло — иду по зеркалам")
+            if not data or #data < U.MIN_BYTES then
+                dropTemp(job)
+                U.diag("api: содержимое по sha не пришло — иду по каналам")
                 return U.dlScript()
             end
+            job.body, job.path = data, nil -- держим в памяти, файл не нужен
             return install(job)
         end
         if U.phase == "version" then return finishVersion(job) end
@@ -40625,22 +40682,14 @@ local function grndUpdInit()
         end
         local now = U.io.clock()
 
-        -- заход в игру: зашли — проверяем
-        local sp = U.spawned()
+        -- Заход в игру: проверяем ТОЛЬКО после успешной авторизации, когда
+        -- персонаж заспавнился. Пока идёт авторизация — ни тостов, ни загрузок.
+        local sp = U.sessionReady()
         if sp and not U.wasSpawn then
             U.wasSpawn = true
             U.onSpawn()
         elseif not sp then
             U.wasSpawn = false
-        end
-        -- страховка: если флаг спавна в этой сборке не работает, всё равно
-        -- проверяем — через 25 секунд после запуска скрипта в игре
-        if not U.didSessionCheck and not sp and not U.job
-            and (U.io.time() - (U.sessionAt or 0)) >= 25 then
-            U.didSessionCheck = true
-            if U.auto and (U.io.time() - (U.lastAt or 0)) >= 5 then
-                U.check("session")
-            end
         end
 
         local job = U.job
