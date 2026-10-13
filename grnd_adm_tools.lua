@@ -1,6 +1,22 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.223"
+GRND_SCRIPT_VERSION = "1.19.224"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.224 — КАНАЛ ОБНОВЛЕНИЙ и проверка на КАЖДЫЙ заход в игру:
+--   1) обновления идут из нашего публичного канала — тот же репозиторий
+--      Grnd-Tools, метка (тег) grnd-latest: update.txt — номер версии,
+--      grnd_adm_tools.lua — сам скрипт. Адрес метки не меняется от версии
+--      к версии, поэтому обновление доживает до конца: скрипт скачивает
+--      новый файл сам и предлагает перезапуститься;
+--   2) зеркало — cdn.jsdelivr.net на ту же метку (в РФ часто доступнее);
+--      если первое зеркало не ответило — пробуем второе (таймаут 12 с);
+--   3) проверка теперь при КАЖДОМ заходе в игру (спавн персонажа): тост
+--      «Проверяю обновления…», при новой версии — «Обновляюсь до версии N»
+--      и окно со списком всех изменений. Зазор 20 секунд гасит только
+--      дребезг флага спавна, а не саму проверку;
+--   4) реже — строкой period=<секунды> в grnd_update.cfg (0 или нет строки
+--      = каждый заход); repo=/mirror= там же переопределяют адрес канала;
+--   5) адрес канала виден в окне «АВТООБНОВЛЕНИЕ» — если обновления не
+--      приходят, сразу видно, куда скрипт стучится.
 -- v1.19.223 — АВТООБНОВЛЕНИЕ («скрипт сам будет обновляться»):
 --   1) при заходе в игру (спавн персонажа) скрипт сам проверяет свежую
 --      версию в нашем репозитории — скачивает крошечный update.txt с
@@ -39467,25 +39483,34 @@ end
 --       изменений (разбор заголовков из шапки нового файла) и кнопка
 --       «Перезагрузить скрипт» — после неё правки уже в игре.
 --
---  Настройки (рядом со скриптом, grnd_update.cfg): auto=1 — проверять
---  при спавне, period=<секунды> — как часто. Ручная проверка: /grndupdate.
+--  Настройки (рядом со скриптом, grnd_update.cfg): auto=1 — проверять при
+--  спавне, period=<секунды> — как часто (0/нет строки — каждый заход),
+--  repo=/mirror= — свой адрес канала. Ручная проверка: /grndupdate.
 --  Если сети нет или файл ещё не выложен — тост «нет связи», ничего не
---  ломается, повторим позже. Зеркала: raw.githubusercontent.com, затем
---  cdn.jsdelivr.net (в РФ работает заметно стабильнее).
+--  ломается, повторим при следующем заходе. Зеркала: raw.githubusercontent.com,
+--  затем cdn.jsdelivr.net (в РФ работает заметно стабильнее).
 -- =====================================================================
 -- >>> GRND_UPDATE_BEGIN
 GRND_UPDATE = _G.GRND_UPDATE or {}
 do
     local U = GRND_UPDATE
     U.cur = tostring(rawget(_G, "GRND_SCRIPT_VERSION") or "0.0.0")
-    U.REPO   = "https://raw.githubusercontent.com/kacarovmihail4-max/Grnd-Tools/main/"
-    U.MIRROR = "https://cdn.jsdelivr.net/gh/kacarovmihail4-max/Grnd-Tools@main/"
+    -- Канал обновлений: НАШ репозиторий, метка grnd-latest (её двигает
+    -- каждая новая версия). Адрес метки стабилен — скрипт сам доедет до
+    -- любой следующей версии, ничего в нём менять не нужно.
+    U.TAG    = "grnd-latest"
+    U.REPO   = "https://raw.githubusercontent.com/kacarovmihail4-max/Grnd-Tools/"
+        .. U.TAG .. "/"
+    U.MIRROR = "https://cdn.jsdelivr.net/gh/kacarovmihail4-max/Grnd-Tools@"
+        .. U.TAG .. "/"
     U.VER_FILE    = "update.txt"
     U.SCRIPT_FILE = "grnd_adm_tools.lua"
     U.MIN_BYTES   = 100000   -- меньше — это не скрипт, а страница ошибки
-    U.period  = 3 * 3600     -- как часто проверять (сек)
+    U.period  = 0            -- 0 — проверять при КАЖДОМ заходе в игру;
+                             -- grnd_update.cfg: period=<сек> — реже
     U.auto    = true         -- проверять при спавне
-    U.timeout = 25           -- ждём загрузку, потом — следующее зеркало
+    U.timeout = 12           -- ждём загрузку, потом — следующее зеркало
+                             -- (12 с: заблокированное зеркало не держит тик)
 
     -- Адреса канала: по умолчанию — репозиторий проекта; если в
     -- grnd_update.cfg есть строки repo=/mirror=, берём их (переезд канала
@@ -39606,7 +39631,7 @@ do
             if k == "auto" then U.auto = (v == "1") end
             if k == "period" then
                 local n = tonumber(v)
-                if n and n >= 600 then U.period = n end
+                if n and n >= 0 then U.period = n end
             end
             if k == "last" then U.lastAt = tonumber(v) or U.lastAt end
             if k == "repo" then
@@ -39741,7 +39766,12 @@ do
         if not U.auto then return false end
         U.loadCfg()
         local now = U.io.time()
-        if (now - (U.lastAt or 0)) < U.period then return false end
+        -- period=0 (по умолчанию) — проверка на КАЖДЫЙ заход в игру; зазор в
+        -- 20 секунд гасит дребезг флага спавна (ложные «только что зашёл»),
+        -- а не саму проверку.
+        local gap = (tonumber(U.period) or 0)
+        if gap <= 0 then gap = 20 end
+        if (now - (U.lastAt or 0)) < gap then return false end
         return U.check("spawn")
     end
 

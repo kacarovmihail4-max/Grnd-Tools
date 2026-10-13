@@ -127,7 +127,7 @@ local function resetU()
     U.newVer, U.notes, U.installed, U.window = nil, nil, false, false
     U.lastAt, U.wasSpawn, U.mi = 0, false, 1
     U.reloadPending = false
-    U.cfgLoaded, U.auto, U.period = false, true, 10800
+    U.cfgLoaded, U.auto, U.period = false, true, 0 -- 0 = каждый заход
 end
 resetU()
 
@@ -195,6 +195,18 @@ check(hasToast("Проверяю обновления"), "проверка: то
 check(#downloads == 1, "проверка: одна загрузка")
 check(downloads[1].url:find(VER_FILE, 1, true) ~= nil, "проверка: качаем update.txt")
 check(downloads[1].url:find(U.REPO, 1, true) == 1, "проверка: первое зеркало — raw")
+-- адрес канала и зеркало должны стоять на ОДНОЙ метке (иначе зеркало
+-- отдаст старьё): у raw это /Grnd-Tools/<метка>/, у jsDelivr — @<метка>/
+local tagRaw = U.REPO:match("/Grnd%-Tools/([^/]+)/$")
+local tagMirror = U.MIRROR:match("@([^/]+)/$")
+check(tagRaw ~= nil and tagMirror ~= nil and tagRaw == tagMirror,
+    "канал: адрес и зеркало — на одну метку")
+check(U.REPO:find("https://", 1, true) == 1 and U.REPO:sub(-1) == "/",
+    "канал: адрес полный и со слэшем на конце")
+check(U.MIRROR:find("https://", 1, true) == 1 and U.MIRROR:sub(-1) == "/",
+    "канал: зеркало полное и со слэшем на конце")
+check((U.timeout or 0) > 0 and U.timeout <= 15,
+    "канал: таймаут короткий, чтобы заблокированное зеркало не держало тик")
 check(FS[CFG_PATH] and FS[CFG_PATH]:find("last=", 1, true) ~= nil,
     "проверка: время проверки ушло в конфиг")
 succeed(1, "1.19.223\n")
@@ -287,7 +299,7 @@ check(U.state == "error", "таймаут: состояние error")
 check(hasToast("нет связи"), "таймаут: тост про связь")
 check(FS[SCRIPT_PATH] == "-- старый скрипт\n", "таймаут: файл цел")
 
--- ---------- 9. проверка при спавне не чаще period ----------
+-- ---------- 9. проверка при спавне: по умолчанию — каждый заход ----------
 resetU()
 _G.__spawned = true
 U.tick()
@@ -300,11 +312,38 @@ local before = #downloads
 U.tick() -- спавн уже обработан, второй раз подряд не проверяем
 check(#downloads == before, "спавн: повторно сразу не проверяем")
 
+-- второй заход в игру: зазор 20 с гасит дребезг флага, потом проверяем снова
 _G.__spawned = false
 U.tick()
 _G.__spawned = true
 U.tick()
-check(#downloads == before, "спавн: до истечения period тихо")
+check(#downloads == before, "спавн: в пределах 20 с — тихо (дребезг флага)")
+wallNow = wallNow + 21
+_G.__spawned = false
+U.tick()
+_G.__spawned = true
+U.tick()
+check(#downloads == before + 1, "спавн: каждый заход в игру — новая проверка")
+succeed(#downloads, "1.19.223")
+U.tick()
+before = #downloads
+
+-- если в конфиге задан period — проверяем реже
+FS[CFG_PATH] = "auto=1\nperiod=10800\nlast=0\n"
+wallNow = wallNow + 100
+_G.__spawned = false
+U.tick()
+_G.__spawned = true
+U.tick()
+check(#downloads == before + 1, "period=10800: первый заход проверяет")
+succeed(#downloads, "1.19.223")
+U.tick()
+_G.__spawned = false
+U.tick()
+_G.__spawned = true
+U.tick()
+check(#downloads == before + 1, "period=10800: второй заход молчит")
+U.pend = nil
 
 wallNow = wallNow + U.period + 1
 _G.__spawned = false
