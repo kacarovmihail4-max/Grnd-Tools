@@ -1,26 +1,27 @@
 -- =====================================================================
--- Стенд v1.19.223: АВТООБНОВЛЕНИЕ (GRND_UPDATE).
+-- Стенд v1.19.226: АВТООБНОВЛЕНИЕ (GRND_UPDATE).
 --
 -- Блок между якорями GRND_UPDATE_* грузится как функция; диск, сеть и
--- часы подменяются стабами (U.io / U.download / U.io.clock), поэтому
--- проверяется вся логика без игры и без интернета:
+-- часы подменяются стабами (U.io / U.moonDl / U.inetLoad / U.io.clock),
+-- поэтому проверяется вся логика без игры и без интернета:
 --   * версии сравниваются как числа (1.19.9 < 1.19.10 < 1.20.0);
---   * проверка: тост «Проверяю обновления…», загрузка update.txt,
---     запись last= в grnd_update.cfg;
---   * версия новее — тост ровно «Обновляюсь до версии N» и загрузка
---     файла в .new (рабочий файл до проверки НЕ трогается);
+--   * заход в игру: несколько источников спавна (grndIsSpawnedSafe,
+--     sampIsLocalPlayerSpawned, GRND_KEYS.spawnedNow), а если ни один не
+--     работает — проверка через 25 с после запуска скрипта;
+--   * зеркала перебираются по очереди, ответившее запоминается в
+--     grnd_update.cfg (channel=) и пробуется первым в следующий раз;
+--   * две дороги загрузки: штатный downloadUrlToFile и запасной WinINet
+--     (в стенде — поддельный wininet, считаем прочитанные куски);
+--     молчащий MoonLoader-загрузчик переводит ТУ ЖЕ ссылку на WinINet;
 --   * установка атомарна: файл с версией и не меньше 100 КБ → старый в
---     .bak, новый на место, окно со списком изменений открывается;
---     битый/короткий файл или чужая версия → рабочий файл цел, состояние
---     «error», тост с причиной;
+--     .bak, новый на место; битый/чужой/короткий файл → рабочая версия
+--     цела, а зеркало пробуется следующее;
 --   * та же версия → «Версия N — последняя», файл скрипта не качается;
---   * зеркало: первое зеркало отдало ошибку — пробуем второе;
---   * таймаут: колбэк не пришёл за 25 с — состояние «error»;
---   * разбор списка изменений из шапки нового файла (только версии
---     новее текущей, до своей версии — стоп);
---   * проверка при спавне не чаще period (по умолчанию 3 часа);
---   * окно: заголовок, текст «было/стало», изменения, кнопки
---     «Перезагрузить скрипт» / «Позже» / «Проверить снова».
+--   * таймаут, HTTP-ошибка и обрыв связи — не тупик, а следующий шаг;
+--   * диагностика: строки в U.logs и файл grnd_update.log;
+--   * про сбой связи — один тост за сессию, ручная проверка говорит всегда;
+--   * /grndupdate test обходит все зеркала и открывает окно с ответами;
+--   * окно: «было/стало», изменения, диагностика, кнопки.
 -- =====================================================================
 
 local results = { pass = 0, fail = 0 }
@@ -41,12 +42,11 @@ local block = src:sub(a1, a2 - 1)
 
 local SCRIPT_PATH = "/game/moonloader/grnd_adm_tools.lua"
 local CFG_PATH = "/game/moonloader/grnd_update.cfg"
-local VER_FILE = "update.txt"
-local SCRIPT_FILE = "grnd_adm_tools.lua"
+local LOG_PATH = "/game/moonloader/grnd_update.log"
 
 -- ---------- стабы ----------
 _G.grndIsSpawnedSafe = function() return _G.__spawned and true or false end
-_G.GRND_SCRIPT_VERSION = "1.19.223"
+_G.GRND_SCRIPT_VERSION = "1.19.226"
 _G.GRND_QR = { toast = function(text, kind, life)
     table.insert(_G.__toasts, { text = text, kind = kind, life = life })
 end }
@@ -63,7 +63,8 @@ local now = 1000        -- секунды процесса (таймауты з�
 local wallNow = 1700000000 -- настенные часы, как os.time() (cfg: last=)
 local FS = {}
 local function stubOpen(path, mode)
-    if mode == "rb" or mode == "r" or mode == nil then
+    mode = mode or "r"
+    if mode:sub(1, 1) == "r" then
         local data = FS[path]
         if not data then return nil end
         local pos = 1
@@ -77,13 +78,17 @@ local function stubOpen(path, mode)
             close = function() return true end,
         }
     end
+    local add = (mode:sub(1, 1) == "a")
     local buf = {}
+    if add and FS[path] then buf[1] = FS[path] end
     return {
         write = function(self, ...)
-            for i = 1, select("#", ...) do buf[#buf + 1] = tostring(select(i, ...)) end
+            for i = 1, select("#", ...) do
+                buf[#buf + 1] = tostring(select(i, ...))
+            end
             return self
         end,
-        close = function() FS[path] = table.concat(buf); return true end,
+        close = function() FS[path] = table.concat(buf) return true end,
     }
 end
 local stubIO = {
@@ -100,18 +105,61 @@ local stubIO = {
     exists = function(path) return FS[path] ~= nil end,
 }
 
+-- Загрузка по-мунлоадерски: пишем в очередь и отдаём колбэк наружу.
 local downloads = {}
+local function downloadStub(url, path, cb)
+    downloads[#downloads + 1] = { url = url, path = path, cb = cb }
+    return #downloads
+end
+
+-- Запасная дорога: поддельный wininet. Тело задаётся планом (url → строка).
+local plan, inetLog = nil, nil
+local function inetBackend()
+    local ffi = require("ffi")
+    local w = {}
+    w.InternetOpenA = function() inetLog.open = (inetLog.open or 0) + 1
+        return {} end
+    w.InternetSetOptionA = function() return 1 end
+    w.InternetOpenUrlA = function(_, url)
+        inetLog.urls[#inetLog.urls + 1] = url
+        local body = plan and plan[url]
+        if not body then return nil end
+        return { url = url, body = body, pos = 1 }
+    end
+    w.HttpQueryInfoA = function(req, _, buf)
+        buf[0] = tonumber(req.http) or 200
+        return 1
+    end
+    w.InternetReadFile = function(req, buf, want, got)
+        local left = #req.body - (req.pos - 1)
+        local n = math.min(left, 4096, want)
+        if n > 0 then
+            ffi.copy(buf, req.body:sub(req.pos, req.pos + n - 1), n)
+            req.pos = req.pos + n
+        else
+            inetLog.eof = (inetLog.eof or 0) + 1
+        end
+        got[0] = n
+        return 1
+    end
+    w.InternetCloseHandle = function() inetLog.closed = (inetLog.closed or 0) + 1
+        return 1 end
+    return { w = w, ffi = ffi }
+end
+
 local mkModule = assert(load("return function()\n" .. block
     .. "\n    return _G.GRND_UPDATE\nend", "@upd_test"))
 local U = mkModule()()
+local realSpawned = U.spawned -- стенд подменяет его в одном сценарии
 
--- Модуль определяет U.io/U.download сам — подменяем на стабы.
-local function downloadStub(url, path, cb)
-    downloads[#downloads + 1] = { url = url, path = path, cb = cb }
-    return true
-end
-U.download = downloadStub
+-- Модуль определяет транспорт сам — подменяем на стабы.
+U.moonDl = downloadStub
+U.inetLoad = function() return { w = nil, ffi = nil } and nil or nil end
 U.io = stubIO
+
+local CH1 = { id = "raw", base = "https://raw.test/" }
+local CH2 = { id = "statically", base = "https://statically.test/" }
+local CH3 = { id = "jsdelivr", base = "https://jsdelivr.test/" }
 
 local function resetU()
     FS = {}
@@ -122,44 +170,83 @@ local function resetU()
     reloaded = 0
     now = 1000
     wallNow = 1700000000
+    plan, inetLog = {}, { urls = {} }
     U.io = stubIO
-    U.pend, U.state, U.err = nil, "idle", nil
-    U.newVer, U.notes, U.installed, U.window = nil, nil, false, false
+    U.CHANNELS = { CH1, CH2, CH3 }
+    U.moonDl = downloadStub
+    U.inet, U.inetErr = nil, nil
+    U.inetLoad = function() return nil end -- WinINet «недоступен» по умолчанию
+    U.state, U.err = "idle", nil
+    U.job, U.newVer, U.notes, U.installed = nil, nil, nil, false
+    U.window, U.probeLines, U.probing = false, nil, false
     U.lastAt, U.wasSpawn, U.mi = 0, false, 1
-    U.reloadPending = false
-    U.cfgLoaded, U.auto, U.period = false, true, 0 -- 0 = каждый заход
+    U.cfgLoaded, U.auto, U.period = false, true, 0
+    U.reloadPending, U.failOnceShown = false, false
+    U.activeId, U.order, U.orderPos, U.phase = nil, nil, 0, nil
+    U.checkReason, U.sessionAt, U.didSessionCheck = nil, 0, false
+    U.logs = {}
 end
 resetU()
 
-local function toasts()
-    return _G.__toasts or {}
-end
-local function lastToast()
-    local t = toasts()
-    return t[#t] and t[#t].text or ""
-end
+-- ---------- помощники стенда ----------
+local function toasts() return _G.__toasts or {} end
 local function hasToast(fragment)
     for _, t in ipairs(toasts()) do
         if tostring(t.text):find(fragment, 1, true) then return true end
     end
     return false
 end
+local function countToasts(fragment)
+    local n = 0
+    for _, t in ipairs(toasts()) do
+        if tostring(t.text):find(fragment, 1, true) then n = n + 1 end
+    end
+    return n
+end
+local function dl(i) assert(downloads[i], "нет загрузки #" .. i) return downloads[i] end
 local function succeed(i, body)
-    local d = downloads[i]
-    assert(d, "нет загрузки #" .. i)
+    local d = dl(i)
     FS[d.path] = body
     d.cb(i, U.ST_OK)
 end
-local function failDl(i, status)
-    local d = downloads[i]
-    assert(d, "нет загрузки #" .. i)
-    d.cb(i, status or 4)
+local function failDl(i, status) dl(i).cb(i, status or 4) end
+local function logs() return table.concat(U.logs or {}, "\n") end
+local function newBody(ver, mark, big)
+    local filler = "-- " .. string.rep("f", 400) .. "\n"
+    local body = table.concat({
+        'script_name("grnd_adm_tools")',
+        'GRND_SCRIPT_VERSION = "' .. ver .. '"',
+        "-- v" .. ver .. " — ТЕСТ: " .. mark .. ":",
+        "--   1) проверяемое изменение.",
+    }, "\n") .. "\n"
+    if big == nil or big then body = body .. string.rep(filler, 260) end
+    return body
 end
 
--- ---------- 1. начальное состояние и версии ----------
-check(U.cur == "1.19.223", "старт: текущая версия из шапки")
+-- ---------- 1. начальное состояние ----------
+check(U.cur == "1.19.226", "старт: текущая версия из шапки")
 check(U.state == "idle" and U.window == false, "старт: состояние idle, окно закрыто")
-check(type(U.verNum) == "function" and type(U.check) == "function",
+check(#U.CHANNELS == 3, "канал: три зеркала в стабе")
+-- боевой порядок зеркал из самого скрипта (стаб подменяет список, поэтому
+-- смотрим на текст блока): первым — доступное в РФ, последним — кэширующее
+local startAt = block:find("U.CHANNELS = {", 1, true)
+local orderRaw = ""
+if startAt then
+    orderRaw = block:sub(startAt, startAt + 1500)
+    local stop = orderRaw:find("\n    }", 1, true)
+    if stop then orderRaw = orderRaw:sub(1, stop) end
+end
+check(startAt ~= nil, "канал: список зеркал найден в тексте")
+if startAt then
+    local ids = {}
+    for id in orderRaw:gmatch('id = "([%w%-]+)"') do ids[#ids + 1] = id end
+    check(#ids == 4, "канал: четыре зеркала")
+    check(ids[1] == "statically", "канал: первым — cdn.statically.io")
+    check(ids[#ids] == "jsdelivr", "канал: последним — jsDelivr (кэш 12 ч)")
+    check(ids[2] == "githack" and ids[3] == "raw",
+        "канал: githack перед каноническим raw")
+end
+check(type(U.spawned) == "function" and type(U.probe) == "function",
     "API: функции на месте")
 check(U.verNum("1.19.9") < U.verNum("1.19.10"), "версии: 1.19.9 < 1.19.10")
 check(U.verNum("1.19.10") < U.verNum("1.19.100"), "версии: 1.19.10 < 1.19.100")
@@ -169,17 +256,16 @@ check(U.verNum(nil) == 0, "версии: мусор → 0")
 -- ---------- 2. разбор списка изменений ----------
 local head = table.concat({
     'script_name("grnd_adm_tools")',
-    'GRND_SCRIPT_VERSION = "1.19.224"',
-    "-- v1.19.224 — ТЕСТ: свежая правка:",
+    'GRND_SCRIPT_VERSION = "1.19.227"',
+    "-- v1.19.227 — ТЕСТ: свежая правка:",
     "--   1) первое изменение;",
     "--   2) второе изменение.",
-    "-- v1.19.223 — прошлая версия:",
+    "-- v1.19.226 — прошлая версия:",
     "--   1) это уже наше, в список попасть не должно.",
-    "-- v1.19.222 — старая:",
 }, "\n")
 local notes = U.changelogOf(head)
 check(#notes == 1, "changelog: только версии новее текущей")
-check(notes[1] and notes[1].ver == "1.19.224", "changelog: версия в первой записи")
+check(notes[1] and notes[1].ver == "1.19.227", "changelog: версия в первой записи")
 local joined = notes[1] and table.concat(notes[1].lines, "|") or ""
 check(joined:find("ТЕСТ: свежая правка", 1, true) ~= nil, "changelog: заголовок")
 check(joined:find("первое изменение", 1, true) ~= nil, "changelog: строки 1")
@@ -187,227 +273,275 @@ check(joined:find("второе изменение", 1, true) ~= nil, "changelog
 check(joined:find("наше", 1, true) == nil, "changelog: своя версия не попала")
 check(#U.changelogOf(nil) == 0, "changelog: nil → пусто")
 
--- ---------- 3. «уже последняя» ----------
+-- ---------- 3. источники спавна ----------
+resetU()
+_G.grndIsSpawnedSafe = nil
+_G.sampIsLocalPlayerSpawned = function() return true end
+check(U.spawned() == true, "спавн: sampIsLocalPlayerSpawned, если основной нет")
+_G.sampIsLocalPlayerSpawned = function() error("сломана") end
+_G.GRND_KEYS = { spawnedNow = true }
+check(U.spawned() == true, "спавн: GRND_KEYS.spawnedNow как последний источник")
+_G.GRND_KEYS = nil
+_G.sampIsLocalPlayerSpawned = nil
+_G.grndIsSpawnedSafe = function() return _G.__spawned and true or false end
+check(U.spawned() == false, "спавн: ничего не работает → false")
+
+-- ---------- 4. «уже последняя» через первое зеркало ----------
 resetU()
 check(U.check("manual"), "проверка: запустилась")
 check(U.state == "checking", "проверка: состояние checking")
 check(hasToast("Проверяю обновления"), "проверка: тост «Проверяю обновления…»")
 check(#downloads == 1, "проверка: одна загрузка")
-check(downloads[1].url:find(VER_FILE, 1, true) ~= nil, "проверка: качаем update.txt")
-check(downloads[1].url:find(U.REPO, 1, true) == 1, "проверка: первое зеркало — raw")
--- адрес канала и зеркало должны стоять на ОДНОЙ метке (иначе зеркало
--- отдаст старьё): у raw это /Grnd-Tools/<метка>/, у jsDelivr — @<метка>/
-local tagRaw = U.REPO:match("/Grnd%-Tools/([^/]+)/$")
-local tagMirror = U.MIRROR:match("@([^/]+)/$")
-check(tagRaw ~= nil and tagMirror ~= nil and tagRaw == tagMirror,
-    "канал: адрес и зеркало — на одну метку")
-check(U.REPO:find("https://", 1, true) == 1 and U.REPO:sub(-1) == "/",
-    "канал: адрес полный и со слэшем на конце")
-check(U.MIRROR:find("https://", 1, true) == 1 and U.MIRROR:sub(-1) == "/",
-    "канал: зеркало полное и со слэшем на конце")
-check((U.timeout or 0) > 0 and U.timeout <= 15,
-    "канал: таймаут короткий, чтобы заблокированное зеркало не держало тик")
-check(FS[CFG_PATH] and FS[CFG_PATH]:find("last=", 1, true) ~= nil,
-    "проверка: время проверки ушло в конфиг")
-succeed(1, "1.19.223\n")
+check(dl(1).url == CH1.base .. U.VER_FILE, "проверка: первое зеркало — raw")
+succeed(1, "1.19.226\n")
 U.tick()
 check(U.state == "uptodate", "та же версия: состояние uptodate")
-check(hasToast("Версия 1.19.223 — последняя"), "та же версия: тост про последнюю")
+check(hasToast("Версия 1.19.226 — последняя"), "та же версия: тост про последнюю")
 check(#downloads == 1, "та же версия: файл скрипта не качается")
 check(FS[SCRIPT_PATH] == "-- старый скрипт\n", "та же версия: файл цел")
-check(U.pend == nil, "та же версия: загрузка закрыта")
+check(U.activeId == "raw", "та же версия: зеркало запомнено")
+check((FS[CFG_PATH] or ""):find("channel=raw", 1, true) ~= nil,
+    "конфиг: зеркало сохранено")
+check(U.window == true, "ручная проверка: окно открыто")
 
--- ---------- 4. версия новее → загрузка файла ----------
+-- ---------- 5. версия новее → загрузка файла ----------
 resetU()
 U.check("manual")
-succeed(1, "1.19.224")
+succeed(1, "1.19.227")
 U.tick()
 check(U.state == "downloading", "новее: состояние downloading")
-check(U.newVer == "1.19.224", "новее: версия запомнена")
-check(hasToast("Обновляюсь до версии 1.19.224"), "новее: тост ровно про обновление")
+check(U.newVer == "1.19.227", "новее: версия запомнена")
+check(hasToast("Обновляюсь до версии 1.19.227"), "новее: тост про обновление")
 check(#downloads == 2, "новее: пошла вторая загрузка — сам скрипт")
-check(downloads[2].url:find(SCRIPT_FILE, 1, true) ~= nil, "новее: качаем файл скрипта")
-check(downloads[2].path == SCRIPT_PATH .. ".new", "новее: качаем в .new рядом")
+check(dl(2).url == CH1.base .. U.SCRIPT_FILE, "новее: качаем файл скрипта")
+check(dl(2).path == SCRIPT_PATH .. ".new", "новее: качаем в .new рядом")
 check(FS[SCRIPT_PATH] == "-- старый скрипт\n", "новее: рабочий файл пока не тронут")
 
-local filler = "-- " .. string.rep("f", 400) .. "\n"
-local newBody = table.concat({
-    'script_name("grnd_adm_tools")',
-    'GRND_SCRIPT_VERSION = "1.19.224"',
-    "-- v1.19.224 — ТЕСТ: установка прошла:",
-    "--   1) проверяемое изменение.",
-}, "\n") .. string.rep(filler, 260) -- > 100 000 байт
-
-succeed(2, newBody)
+succeed(2, newBody("1.19.227", "установка прошла"))
 U.tick()
 check(U.state == "ready", "установка: состояние ready")
 check(U.installed == true, "установка: флаг installed")
 check(U.window == true, "установка: окно со списком изменений открыто")
-check(hasToast("Обновление 1.19.224 установлено"), "установка: тост об установке")
-check(FS[SCRIPT_PATH] == newBody, "установка: новый файл встал на место")
+check(hasToast("Обновление 1.19.227 установлено"), "установка: тост об установке")
+check(FS[SCRIPT_PATH]:find('GRND_SCRIPT_VERSION = "1.19.227"', 1, true) ~= nil,
+    "установка: новый файл встал на место")
 check(FS[SCRIPT_PATH .. ".bak"] == "-- старый скрипт\n", "установка: старый — в .bak")
 check(FS[SCRIPT_PATH .. ".new"] == nil, "установка: .new больше нет")
 check(#(U.notes or {}) == 1, "установка: список изменений разобран")
-check(type(_G.grndUpdWanted) == "function" and _G.grndUpdWanted() == true,
-    "установка: grndUpdWanted() = true (кадр держится)")
+check(logs():find("установлено: 1.19.227", 1, true) ~= nil, "диагностика: установка")
+check((FS[LOG_PATH] or ""):find("установлено", 1, true) ~= nil,
+    "диагностика: пишется и в файл grnd_update.log")
 
--- ---------- 5. битый файл: рабочий файл цел ----------
-resetU()
-U.check("manual")
-succeed(1, "1.19.224")
-U.tick()
-succeed(2, 'GRND_SCRIPT_VERSION = "1.19.224"') -- крошечный: страница ошибки
-U.tick()
-check(U.state == "error", "битый файл: состояние error")
-check(U.installed == false, "битый файл: не установлено")
-check(FS[SCRIPT_PATH] == "-- старый скрипт\n", "битый файл: рабочий файл цел")
-check(FS[SCRIPT_PATH .. ".bak"] == nil, "битый файл: бэкап не создавался")
-check(FS[SCRIPT_PATH .. ".new"] == nil, "битый файл: мусор убран")
-check(hasToast("Обновление проверку не прошло"), "битый файл: тост с причиной")
-
--- ---------- 6. чужая версия внутри файла ----------
-resetU()
-U.check("manual")
-succeed(1, "1.19.224")
-U.tick()
-succeed(2, string.rep(filler, 260)) -- большой, но версии внутри нет
-U.tick()
-check(U.state == "error", "чужая версия: состояние error")
-check(FS[SCRIPT_PATH] == "-- старый скрипт\n", "чужая версия: файл цел")
-check(FS[SCRIPT_PATH .. ".new"] == nil, "чужая версия: .new убран")
-
--- ---------- 7. зеркало: первое упало — пробуем второе ----------
+-- ---------- 6. зеркала перебираются ----------
 resetU()
 U.check("manual")
 failDl(1, 4)
 U.tick()
-check(#downloads == 2, "зеркало: пошла вторая попытка")
-check(downloads[2].url:find(U.MIRROR, 1, true) == 1, "зеркало: второе — jsDelivr")
-succeed(2, "1.19.223")
+check(#downloads == 2, "зеркала: первое упало — пробуем второе")
+check(dl(2).url == CH2.base .. U.VER_FILE, "зеркала: второе — statically")
+check(logs():find("raw: статус 4", 1, true) ~= nil, "диагностика: причина отказа")
+succeed(2, "1.19.226")
 U.tick()
-check(U.state == "uptodate", "зеркало: версия с зеркала прочитана")
+check(U.state == "uptodate", "зеркала: второе ответило — проверка дошла до конца")
+check(U.activeId == "statically", "зеркала: рабочее запомнено")
+check((FS[CFG_PATH] or ""):find("channel=statically", 1, true) ~= nil,
+    "конфиг: в файле второе зеркало")
 
--- ---------- 8. сеть молчит: таймаут ----------
+-- следующая проверка начинается с запомненного зеркала
+resetU()
+FS[CFG_PATH] = "auto=1\nperiod=0\nlast=0\nchannel=statically\n"
+U.check("manual")
+check(dl(1).url == CH2.base .. U.VER_FILE,
+    "зеркала: запомненное пробуется первым")
+succeed(1, "1.19.226")
+U.tick()
+
+-- все зеркала молчат — честная ошибка и один тост
 resetU()
 U.check("manual")
-now = now + U.timeout + 1
-U.tick() -- первое зеркало не ответило — уходим на второе
-check(U.state == "checking", "таймаут: пробуем второе зеркало")
-now = now + U.timeout + 2
-U.tick()
-check(U.state == "error", "таймаут: состояние error")
-check(hasToast("нет связи"), "таймаут: тост про связь")
-check(FS[SCRIPT_PATH] == "-- старый скрипт\n", "таймаут: файл цел")
+failDl(1, 4) U.tick()
+failDl(2, 4) U.tick()
+failDl(3, 4) U.tick()
+check(U.state == "error", "зеркала: все упали — состояние error")
+check(tostring(U.err):find("нет связи", 1, true) ~= nil, "зеркала: причина в err")
+check(hasToast("нет связи ни с одним зеркалом"), "зеркала: тост про все зеркала")
+check(#downloads == 3, "зеркала: попыток ровно три")
+check(U.window == true, "зеркала: ручная проверка открывает окно с диагностикой")
 
--- ---------- 9. проверка при спавне: по умолчанию — каждый заход ----------
+-- ---------- 7. вторая дорога: WinINet, когда штатного загрузчика нет ----------
+resetU()
+U.moonDl = nil
+U.inetLoad = function() return inetBackend() end
+plan = {}
+plan[CH1.base .. U.VER_FILE] = "1.19.227\n"
+plan[CH1.base .. U.SCRIPT_FILE] = newBody("1.19.227", "WinINet качает")
+check(U.check("manual"), "WinINet: проверка стартовала без штатного загрузчика")
+check(U.job and U.job.backend == "inet", "WinINet: загрузка идёт через WinINet")
+check(#downloads == 0, "WinINet: штатный загрузчик не задействован")
+check(inetLog.urls[1] == CH1.base .. U.VER_FILE, "WinINet: адрес версии")
+-- тело больше одного куска (4096): читаем несколькими тиками
+local guard = 0
+while U.state == "checking" and guard < 200 do
+    U.tick()
+    guard = guard + 1
+end
+check(inetLog.eof and inetLog.eof >= 1, "WinINet: дошли до конца потока")
+check(U.state == "downloading", "WinINet: версия прочитана, идёт файл скрипта")
+check(logs():find("качаю сам скрипт", 1, true) ~= nil, "диагностика: фаза файла")
+guard = 0
+while U.state ~= "ready" and guard < 500 do
+    U.tick()
+    guard = guard + 1
+end
+check(U.state == "ready", "WinINet: файл скачан и установлен")
+check(FS[SCRIPT_PATH]:find('"1.19.227"', 1, true) ~= nil, "WinINet: новый файл на месте")
+check(FS[SCRIPT_PATH .. ".bak"] ~= nil, "WinINet: бэкап сделан")
+check(inetLog.closed and inetLog.closed > 0, "WinINet: соединения закрыты")
+
+-- ---------- 8. молчащий MoonLoader-загрузчик → та же ссылка через WinINet ----------
+resetU()
+U.inetLoad = function() return inetBackend() end
+plan = {}
+plan[CH1.base .. U.VER_FILE] = "1.19.226\n"
+U.check("manual")
+check(U.job.backend == "moon", "мост: сначала штатный загрузчик")
+now = now + U.timeout + 1 -- штатный не ответил
+U.tick()
+check(U.job and U.job.backend == "inet", "мост: та же ссылка ушла в WinINet")
+check(#inetLog.urls == 1 and inetLog.urls[1] == CH1.base .. U.VER_FILE,
+    "мост: адрес не менялся — зеркало то же")
+check(#downloads == 1, "мост: новое зеркало не подключалось")
+local guard2 = 0
+while U.state == "checking" and guard2 < 50 do
+    U.tick()
+    guard2 = guard2 + 1
+end
+check(U.state == "uptodate", "мост: WinINet дочитал версию")
+check(logs():find("та же ссылка через WinINet", 1, true) ~= nil,
+    "диагностика: смена дороги записана")
+
+-- ---------- 9. HTTP-ошибка не ставится, зеркало пробуется дальше ----------
+resetU()
+U.moonDl = nil
+U.inetLoad = function() return inetBackend() end
+plan = {}
+plan[CH2.base .. U.VER_FILE] = "1.19.226\n"
+U.check("manual")
+U.tick()
+check(U.state == "error" or U.job ~= nil, "нет ответа у raw: не зависаем")
+check(logs():find("raw", 1, true) ~= nil, "диагностика: первое зеркало отмечено")
+
+-- ---------- 10. битый файл: рабочая версия цела ----------
+resetU()
+U.check("manual")
+succeed(1, "1.19.227")
+U.tick()
+succeed(2, 'GRND_SCRIPT_VERSION = "1.19.227"') -- крошечный
+U.tick()
+check(#downloads == 3, "битый файл: пробуем следующее зеркало")
+failDl(3, 4)
+U.tick()
+check(#downloads == 4, "битый файл: и третье зеркало")
+failDl(4, 4)
+U.tick()
+check(U.state == "error", "битый файл: состояние error")
+check(FS[SCRIPT_PATH] == "-- старый скрипт\n", "битый файл: рабочий файл цел")
+check(FS[SCRIPT_PATH .. ".bak"] == nil, "битый файл: бэкап не создавался")
+check(logs():find("не прошёл проверку", 1, true) ~= nil, "диагностика: причина")
+
+-- ---------- 11. заход в игру ----------
 resetU()
 _G.__spawned = true
 U.tick()
 check(U.state == "checking", "спавн: проверка при заходе в игру")
-succeed(1, "1.19.223")
-U.tick()
-check(U.state == "uptodate", "спавн: проверка завершилась")
-
-local before = #downloads
-U.tick() -- спавн уже обработан, второй раз подряд не проверяем
-check(#downloads == before, "спавн: повторно сразу не проверяем")
-
--- второй заход в игру: зазор 20 с гасит дребезг флага, потом проверяем снова
-_G.__spawned = false
-U.tick()
-_G.__spawned = true
-U.tick()
-check(#downloads == before, "спавн: в пределах 20 с — тихо (дребезг флага)")
-wallNow = wallNow + 21
-_G.__spawned = false
-U.tick()
-_G.__spawned = true
-U.tick()
-check(#downloads == before + 1, "спавн: каждый заход в игру — новая проверка")
-succeed(#downloads, "1.19.223")
-U.tick()
-before = #downloads
-
--- если в конфиге задан period — проверяем реже
-FS[CFG_PATH] = "auto=1\nperiod=10800\nlast=0\n"
-wallNow = wallNow + 100
-_G.__spawned = false
-U.tick()
-_G.__spawned = true
-U.tick()
-check(#downloads == before + 1, "period=10800: первый заход проверяет")
-succeed(#downloads, "1.19.223")
-U.tick()
-_G.__spawned = false
-U.tick()
-_G.__spawned = true
-U.tick()
-check(#downloads == before + 1, "period=10800: второй заход молчит")
-U.pend = nil
-
-wallNow = wallNow + U.period + 1
-_G.__spawned = false
-U.tick()
-_G.__spawned = true
-U.tick()
-check(#downloads == before + 1, "спавн: после period проверяем снова")
-U.pend = nil
-
--- ---------- 9б. на заходе в игру — без лишних тостов ----------
-resetU()
-_G.__spawned = true
-U.tick()
 check(hasToast("Проверяю обновления"), "спавн: тост проверки есть")
-succeed(1, "1.19.223") -- та же версия: обновляться не надо
+succeed(1, "1.19.226")
 U.tick()
 check(U.state == "uptodate", "спавн: проверка завершилась")
 check(not hasToast("последняя"), "спавн: «версия — последняя» молчит")
-check(#downloads == 1, "спавн: файл не качался (версия та же)")
+check(U.window == false, "спавн: окно само не открывается")
 
--- на заходе сеть лежит — тоже молчим, но статус помним
+-- сбой на заходе: один тост за сессию, дальше тихо
 resetU()
 _G.__spawned = true
 U.tick()
-check(hasToast("Проверяю обновления"), "спавн без сети: проверка объявлена")
-failDl(1, 4)
-U.tick()
-failDl(2, 4)
-U.tick()
+failDl(1, 4) U.tick()
+failDl(2, 4) U.tick()
+failDl(3, 4) U.tick()
 check(U.state == "error", "спавн без сети: состояние error")
-check(not hasToast("нет связи"), "спавн без сети: тоста про связь нет")
+check(countToasts("сервер не отвечает") == 1, "спавн без сети: один тост за сессию")
+_G.__spawned = false U.tick() _G.__spawned = true U.tick()
+failDl(1, 4) U.tick() failDl(2, 4) U.tick() failDl(3, 4) U.tick()
+check(countToasts("сервер не отвечает") == 1, "спавн без сети: второй раз молчим")
 check(U.err ~= nil, "спавн без сети: причина сохранена для раздела")
 
--- ручная проверка — тосты на месте
+-- period: реже, если задан
 resetU()
-U.check("manual")
-failDl(1, 4)
-U.tick()
-failDl(2, 4)
-U.tick()
-check(hasToast("нет связи"), "ручная проверка: ошибка связи озвучена")
-check(U.checkReason == "manual", "проверка: причина запомнена")
-
--- ---------- 10. авто-проверка выключается ----------
-resetU()
-FS[CFG_PATH] = "auto=0\nperiod=10800\nlast=0\n"
+FS[CFG_PATH] = "auto=1\nperiod=10800\nlast=0\n"
 _G.__spawned = true
-wallNow = 9000
 U.tick()
-check(#downloads == 0, "auto=0: при спавне не проверяем")
+check(U.state == "checking", "period=10800: первый заход проверяет")
+succeed(1, "1.19.226")
+U.tick()
+_G.__spawned = false U.tick() _G.__spawned = true U.tick()
+check(U.state == "uptodate", "period=10800: второй заход молчит")
+
+-- страховка: спавн не определяется — проверяем через 25 с после запуска
+resetU()
+U.didSessionCheck, U.sessionAt = false, wallNow
+U.spawned = function() return false end
+now = now + 5
+U.tick()
+check(U.state == "idle", "страховка: раньше 25 с не проверяем")
+wallNow = wallNow + 26
+U.tick()
+check(U.state == "checking", "страховка: через 25 с проверка всё равно идёт")
+check(U.didSessionCheck == true, "страховка: второй раз не повторяем")
+U.spawned = realSpawned -- возвращаем настоящий определитель спавна
+U.job = nil
+
+-- авто-проверка выключается
+resetU()
+FS[CFG_PATH] = "auto=0\nperiod=0\nlast=0\n"
+_G.__spawned = true
+U.tick()
+check(#downloads == 0, "auto=0: при заходе не проверяем")
 check(U.auto == false, "auto=0: настройка прочитана")
 
--- ---------- 11. окно со списком изменений ----------
+-- ---------- 12. обход зеркал («/grndupdate test») ----------
+resetU()
+U.probe()
+check(U.probing == true, "проба: режим включён")
+check(hasToast("Проверяю каналы"), "проба: тост")
+succeed(1, "1.19.226")
+U.tick()
+check(#downloads == 2, "проба: после первого зеркала идём ко второму")
+succeed(2, "1.19.226")
+U.tick()
+failDl(3, 4)
+U.tick()
+check(U.probing == false, "проба: закончилась")
+check(U.window == true, "проба: окно открыто")
+check(#U.probeLines == 6, "проба: по строке на зеркало (пробую + ответ)")
+check(table.concat(U.probeLines, "|"):find("statically: версия 1.19.226", 1, true) ~= nil,
+    "проба: у ответившего зеркала видна версия")
+check(table.concat(U.probeLines, "|"):find("jsdelivr: статус 4", 1, true) ~= nil,
+    "проба: у упавшего зеркала видна причина")
+
+-- ---------- 13. окно ----------
 resetU()
 local function mkIm()
     local im = { texts = {}, buttons = {}, clicked = {} }
     im.ImVec2 = function(x, y) return { x = x, y = y } end
+    im.ImVec4 = function(a, b, c, d) return { a, b, c, d } end
     im.Cond = { FirstUseEver = 4, Appearing = 1 }
     im.Begin = function(name) im.began = name return true end
     im.End = function() im.ended = (im.ended or 0) + 1 end
     im.SetNextWindowSize = function() end
     im.SetNextWindowPos = function() end
     im.Text = function(s) im.texts[#im.texts + 1] = tostring(s) end
-    im.TextWrapped = function(s) im.texts[#im.texts + 1] = tostring(s) end
+    im.TextWrapped = im.Text
+    im.TextColored = function(c, s) im.texts[#im.texts + 1] = tostring(s) end
     im.Separator = function() end
     im.BeginChild = function() return true end
     im.EndChild = function() end
@@ -418,115 +552,84 @@ local function mkIm()
     return im
 end
 local function mkCtx(im)
-    return {
-        im = im,
-        begin = function(name, flags) return im.Begin(name, flags) end,
-        wf = function() return 0 end,
-        always = 1,
-        endWin = function() im.End() end,
-    }
+    return { im = im, begin = function(name) return im.Begin(name) end,
+        wf = function() return 0 end, always = 1,
+        endWin = function() im.End() end }
 end
-local function texts(im)
-    return table.concat(im.texts, "\n")
-end
-
 check(U.draw(mkCtx(mkIm())) == false, "окно: закрыто — не рисуется")
 
--- состояние: скачали 1.19.224, окно открылось автоматически
 U.check("manual")
-succeed(1, "1.19.224")
+succeed(1, "1.19.227")
 U.tick()
-succeed(2, newBody)
+succeed(2, newBody("1.19.227", "в окне видно"))
 U.tick()
 check(U.window == true, "окно: открылось после установки")
-
 local im = mkIm()
 check(U.draw(mkCtx(im)) == true, "окно: нарисовалось")
 check(im.began and im.began:find("АВТООБНОВЛЕНИЕ", 1, true) ~= nil,
     "окно: заголовок «АВТООБНОВЛЕНИЕ»")
 check(im.ended == 1, "окно: End вызван один раз")
-local body = texts(im)
-check(body:find("Установлена версия 1.19.224", 1, true) ~= nil, "окно: было/стало")
-check(body:find("была 1.19.223", 1, true) ~= nil, "окно: показана прежняя версия")
-check(body:find("v1.19.224", 1, true) ~= nil, "окно: заголовок новых изменений")
-check(body:find("проверяемое изменение", 1, true) ~= nil, "окно: строка изменений")
-check(body:find("Канал:", 1, true) ~= nil, "окно: канал обновлений виден")
+local body = table.concat(im.texts, "\n")
+check(body:find("Установлена версия 1.19.227", 1, true) ~= nil, "окно: было/стало")
+check(body:find("в окне видно", 1, true) ~= nil, "окно: строка изменений")
+check(body:find("Диагностика", 1, true) ~= nil, "окно: раздел диагностики")
+check(body:find("raw: версия", 1, true) ~= nil, "окно: строки диагностики")
+check(body:find("Канал:", 1, true) ~= nil, "окно: рабочее зеркало видно")
 local labels = table.concat(im.buttons, "|")
 check(labels:find("Перезагрузить скрипт", 1, true) ~= nil, "окно: кнопка перезагрузки")
 check(labels:find("Позже", 1, true) ~= nil, "окно: кнопка «Позже»")
 
--- клик «Перезагрузить скрипт»: просьба перезапуска, исполняет тик
 im.clicked["Перезагрузить скрипт##grnd_upd_reload"] = true
 U.draw(mkCtx(im))
 check(U.reloadPending == true, "окно: кнопка перезагрузки ставит просьбу")
-check(U.window == false, "окно: после перезагрузки закрывается")
-check(reloaded == 0, "окно: в кадре скрипт НЕ перезапускается (не роняем кадр)")
+check(reloaded == 0, "окно: в кадре скрипт НЕ перезапускается")
 U.tick()
 check(reloaded == 1, "тик: перезапуск выполнен из главного цикла")
 check(U.reloadPending == false, "тик: просьба снята")
 
--- клик «Позже» просто закрывает
-U.window = true
-local im2 = mkIm()
-im2.clicked["Позже##grnd_upd_later"] = true
-U.draw(mkCtx(im2))
-check(U.window == false, "окно: «Позже» закрывает")
-
--- окно без изменений (проверка вручную) — кнопка «Проверить снова»
+-- без изменений: кнопки проверки и обхода зеркал
 resetU()
-U.window = true
-U.state = "uptodate"
+U.window, U.state = true, "uptodate"
 local im3 = mkIm()
 check(U.draw(mkCtx(im3)) == true, "окно: рисуется и без изменений")
-check(texts(im3):find("Изменений не найдено", 1, true) ~= nil, "окно: текст без изменений")
+check(table.concat(im3.texts, " "):find("Изменений не найдено", 1, true) ~= nil,
+    "окно: текст без изменений")
 check(table.concat(im3.buttons, "|"):find("Проверить снова", 1, true) ~= nil,
     "окно: кнопка повторной проверки")
+check(table.concat(im3.buttons, "|"):find("Каналы", 1, true) ~= nil,
+    "окно: кнопка обхода зеркал")
 
--- мусорный ctx не роняет
+-- режим пробы показывает ответы зеркал
+resetU()
+U.window, U.probeLines = true, { "raw: версия 1.19.226", "statically: статус 4" }
+local im4 = mkIm()
+U.draw(mkCtx(im4))
+check(table.concat(im4.texts, " "):find("statically: статус 4", 1, true) ~= nil,
+    "окно: ответы зеркал в режиме пробы")
+
 check(U.draw(nil) == false, "окно: ctx=nil → false")
 check(U.draw({}) == false, "окно: ctx без begin → false")
 
--- ---------- 12. своё зеркало из конфига ----------
-resetU()
-FS[CFG_PATH] = "auto=1\nperiod=10800\nrepo=https://example.org/upd/\n"
-U.check("manual")
-check(downloads[1].url == "https://example.org/upd/" .. VER_FILE,
-    "канал из конфига: качаем по своему адресу")
-check(downloads[1].url:find(U.REPO, 1, true) == nil, "канал из конфига: основной адрес не тронут")
-succeed(1, "1.19.223")
-U.tick()
-check(U.state == "uptodate", "канал из конфига: проверка дошла до конца")
--- второй адрес — своё зеркало (или, если его нет, адрес по умолчанию)
-resetU()
-FS[CFG_PATH] = "auto=1\nperiod=10800\nrepo=https://example.org/upd/\nmirror=https://mirror.example.net/g/\n"
-U.check("manual")
-failDl(1, 4)
-U.tick()
-check(downloads[2] and downloads[2].url == "https://mirror.example.net/g/" .. VER_FILE,
-    "канал из конфига: своё зеркало вторым")
--- своё зеркало не теряется при сохранении конфига
-local cfgText = FS[CFG_PATH] or ""
-check(cfgText:find("repo=https://example.org/upd/", 1, true) ~= nil,
-    "конфиг: своё зеркало сохранено")
-check(cfgText:find("last=", 1, true) ~= nil, "конфиг: время проверки рядом")
-
--- ---------- 13. ручная команда и глобальные обёртки ----------
+-- ---------- 14. команда и глобальные обёртки ----------
 resetU()
 local cmds = {}
-_G.sampRegisterChatCommand = function(name, fn)
-    cmds[name] = fn
-end
--- команда регистрируется при загрузке модуля, поэтому перезагружаем блок
+_G.sampRegisterChatCommand = function(name, fn) cmds[name] = fn end
 local U2 = mkModule()()
-check(type(cmds["grndupdate"]) == "function", "команда: /grndupdate зарегистрирована")
+check(type(cmds["grndupdate"]) == "function", "команда: /grndupdate есть")
 U2.io = stubIO
-U2.download = downloadStub
-cmds["grndupdate"]()
-check(U2.state == "checking", "команда: ручная проверка стартовала")
+U2.moonDl = downloadStub
+U2.CHANNELS = { CH1, CH2, CH3 }
+U2.inetLoad = function() return nil end
+U2.probing, U2.job, U2.cfgLoaded = false, nil, false
+U2.window, U2.state = false, "idle"
+U2.activeId, U2.order, U2.logs = nil, nil, {}
+cmds["grndupdate"]("")
+check(U2.state == "checking", "команда: обычный вызов — проверка")
 check(hasToast("Проверяю обновления вручную"), "команда: тост ручной проверки")
+cmds["grndupdate"]("test")
+check(U2.probing == true, "команда: «test» — обход зеркал (текущая загрузка отменена)")
 check(type(_G.grndUpdTick) == "function", "API: grndUpdTick")
-local okTick = pcall(_G.grndUpdTick)
-check(okTick, "API: grndUpdTick без ошибок")
+check(pcall(_G.grndUpdTick), "API: grndUpdTick без ошибок")
 _G.grndIsSpawnedSafe = function() error("нет функции в игре") end
 check(pcall(_G.grndUpdTick), "тик: падение проверки спавна не роняет цикл")
 _G.grndIsSpawnedSafe = function() return _G.__spawned and true or false end

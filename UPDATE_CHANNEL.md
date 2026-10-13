@@ -19,6 +19,21 @@
 от версии к версии, поэтому у уже установленных скриптов адрес остаётся
 рабочим навсегда.
 
+Зеркал в скрипте четыре (порядок проб; ответившее запоминается в
+`grnd_update.cfg` строкой `channel=<id>` и дальше пробуется первым):
+
+| id | адрес |
+|----|-------|
+| `statically` | `https://cdn.statically.io/gh/<акк>/Grnd-Tools/grnd-latest/` |
+| `githack` | `https://raw.githack.com/<акк>/Grnd-Tools/grnd-latest/` |
+| `raw` | `https://raw.githubusercontent.com/<акк>/Grnd-Tools/grnd-latest/` |
+| `jsdelivr` | `https://cdn.jsdelivr.net/gh/<акк>/Grnd-Tools@grnd-latest/` |
+
+`raw.githubusercontent.com` в РФ часто заблокирован, а `jsDelivr` держит файл
+в кэше до 12 часов — поэтому они не первые. Если у игрока не работает ни одно
+зеркало, `/grndupdate test` покажет ответ каждого (и пишет всё в
+`grnd_update.log` рядом со скриптом).
+
 ```
 https://raw.githubusercontent.com/kacarovmihail4-max/Grnd-Tools/grnd-latest/update.txt
 https://raw.githubusercontent.com/kacarovmihail4-max/Grnd-Tools/grnd-latest/grnd_adm_tools.lua
@@ -70,3 +85,6 @@ git push -f origin refs/tags/grnd-latest
 * Токен среды (GitHub App) умеет пушить в этот репозиторий и двигать теги,
   но **не** умеет создавать gist'ы и репозитории — канал поэтому живёт
   здесь, в самом репозитории.
+* Загрузка у игрока идёт двумя дорогами: штатный `downloadUrlToFile` (если
+  есть) и запасной WinINet через FFI. Вторая дорога спасает, когда штатный
+  загрузчик молчит или его нет в сборке MoonLoader.

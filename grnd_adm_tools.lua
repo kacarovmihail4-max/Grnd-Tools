@@ -1,6 +1,26 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.225"
+GRND_SCRIPT_VERSION = "1.19.226"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.226 — АВТООБНОВЛЕНИЕ: зеркал стало четыре, вторая дорога загрузки
+--  и живая диагностика (правки по живому отчёту «нет связи с сервером»):
+--   1) проверка при заходе больше не зависит от одной функции спавна:
+--      смотрим несколько источников (grndIsSpawnedSafe, sampIsLocalPlayerSpawned,
+--      GRND_KEYS.spawnedNow), а если ни один не работает — через 25 секунд
+--      после запуска скрипта проверка всё равно идёт; поэтому тост
+--      «Проверяю обновления…» теперь виден при заходе, а не только по команде;
+--   2) зеркал ЧЕТЫРЕ (raw.githubusercontent.com, cdn.statically.io,
+--      raw.githack.com, cdn.jsdelivr.net) и они перебираются по очереди:
+--      какое ответило — запоминается в grnd_update.cfg (channel=) и дальше
+--      пробуется первым; блокировка одного зеркала обновление не ломает;
+--   3) вторая дорога загрузки: если штатный downloadUrlToFile молчит или
+--      отказал, файл качается через WinINet (FFI), порциями из главного
+--      цикла, с таймаутами ДО соединения — заблокированный хост не вешает
+--      игру; сообщение «нет связи с сервером» больше не тупик;
+--   4) живая диагностика: что и куда качалось — в окне «АВТООБНОВЛЕНИЕ» и
+--      в файле grnd_update.log рядом со скриптом; /grndupdate test (или
+--      кнопка «Каналы») обходит все зеркала и показывает ответ каждого;
+--   5) про сбой связи сообщаем ОДИН раз за сессию (иначе при проверке на
+--      каждый заход игрока засыпало бы тостами), ручная проверка — всегда.
 -- v1.19.225 — тише при заходе в игру (проверка идёт на каждый спавн):
 --   1) при заходе в игру больше НЕ показываем «Версия N — последняя»: эта
 --      строка осталась только у ручной проверки (/grndupdate и кнопка);
@@ -39500,52 +39520,70 @@ end
 -- =====================================================================
 -- >>> GRND_UPDATE_BEGIN
 GRND_UPDATE = _G.GRND_UPDATE or {}
-do
+-- Тело модуля — в своей функции: у главного чанка жёсткий лимит в 200
+-- локальных переменных (LuaJIT), и модуль не имеет права его расходовать.
+local function grndUpdInit()
     local U = GRND_UPDATE
     U.cur = tostring(rawget(_G, "GRND_SCRIPT_VERSION") or "0.0.0")
-    -- Канал обновлений: НАШ репозиторий, метка grnd-latest (её двигает
-    -- каждая новая версия). Адрес метки стабилен — скрипт сам доедет до
-    -- любой следующей версии, ничего в нём менять не нужно.
+
+    -- ---------- канал ----------
+    -- Публичный репозиторий, метка grnd-latest: update.txt — номер версии,
+    -- grnd_adm_tools.lua — сам скрипт. Метку двигает каждая новая версия,
+    -- адрес не меняется.
     U.TAG    = "grnd-latest"
-    U.REPO   = "https://raw.githubusercontent.com/kacarovmihail4-max/Grnd-Tools/"
-        .. U.TAG .. "/"
-    U.MIRROR = "https://cdn.jsdelivr.net/gh/kacarovmihail4-max/Grnd-Tools@"
-        .. U.TAG .. "/"
-    U.VER_FILE    = "update.txt"
-    U.SCRIPT_FILE = "grnd_adm_tools.lua"
-    U.MIN_BYTES   = 100000   -- меньше — это не скрипт, а страница ошибки
+    U.OWNER  = "kacarovmihail4-max"
+    U.REPO   = "Grnd-Tools"
+    U.VER_FILE, U.SCRIPT_FILE = "update.txt", "grnd_adm_tools.lua"
+    U.MIN_BYTES = 100000     -- меньше — это не скрипт, а страница ошибки
+    U.UA = "GrndTools/" .. U.cur .. " (MoonLoader)"
+
+    -- Зеркала канала. Порядок = порядок проб; первое ответившее запоминается
+    -- в grnd_update.cfg (channel=) и дальше пробуется первым.
+    -- Порядок для нашего игрока: сначала зеркала на Cloudflare (raw.
+    -- githubusercontent в РФ часто заблокирован), канонический GitHub — после
+    -- них, jsDelivr — последним (он держит файл в кэше до 12 часов).
+    U.CHANNELS = {
+        { id = "statically", base = "https://cdn.statically.io/gh/"
+            .. U.OWNER .. "/" .. U.REPO .. "/" .. U.TAG .. "/" },
+        { id = "githack", base = "https://raw.githack.com/"
+            .. U.OWNER .. "/" .. U.REPO .. "/" .. U.TAG .. "/" },
+        { id = "raw", base = "https://raw.githubusercontent.com/"
+            .. U.OWNER .. "/" .. U.REPO .. "/" .. U.TAG .. "/" },
+        { id = "jsdelivr", base = "https://cdn.jsdelivr.net/gh/"
+            .. U.OWNER .. "/" .. U.REPO .. "@" .. U.TAG .. "/" },
+    }
+
+    -- ---------- настройки ----------
     U.period  = 0            -- 0 — проверять при КАЖДОМ заходе в игру;
                              -- grnd_update.cfg: period=<сек> — реже
-    U.auto    = true         -- проверять при спавне
-    U.timeout = 12           -- ждём загрузку, потом — следующее зеркало
-                             -- (12 с: заблокированное зеркало не держит тик)
+    U.auto    = true         -- проверять при заходе
+    U.timeout = 12           -- сколько ждём одну попытку (сек)
+    U.connectTimeout = 4000  -- WinINet: подключение (мс)
+    U.recvTimeout    = 6000  -- WinINet: чтение ответа (мс)
 
-    -- Адреса канала: по умолчанию — репозиторий проекта; если в
-    -- grnd_update.cfg есть строки repo=/mirror=, берём их (переезд канала
-    -- без правки скрипта).
-    local function normBase(u)
-        u = tostring(u or ""):gsub("%s+$", "")
-        if u == "" then return nil end
-        if u:sub(-1) ~= "/" then u = u .. "/" end
-        return u
-    end
-    U.repoUrl   = normBase(U.REPO)
-    U.mirrorUrl = normBase(U.MIRROR)
-
-    U.state = "idle"         -- idle|checking|uptodate|downloading|ready|error
-    U.err, U.pend = nil, nil
+    -- ---------- состояние ----------
+    U.state = "idle"         -- idle|checking|downloading|uptodate|ready|error
+    U.err, U.job = nil, nil
     U.newVer, U.notes, U.installed = nil, nil, false
-    U.window = false         -- открыто ли окно со списком изменений
+    U.window = false         -- открыто ли окно (изменения + диагностика)
     U.lastAt, U.wasSpawn = 0, false
-    U.reloadPending = false   -- просьба перезапуска (её исполняет тик)
-    U.mi = 1                 -- индекс зеркала
+    U.reloadPending = false  -- просьба перезапуска (её исполняет тик)
+    U.sessionAt = 0          -- когда скрипт загрузился (настенные часы)
+    U.didSessionCheck = false
+    U.failOnceShown = false  -- про сбой за сессию сообщаем один раз
+    U.activeId = nil         -- рабочее зеркало (запоминается в конфиге)
     U.cfgLoaded = false
+    U.order, U.orderPos, U.phase, U.checkReason = nil, 0, nil, nil
+    U.probing = false        -- идёт «/grndupdate test» — обход всех зеркал
+    U.probeLines = nil
+    U.logs = {}              -- последние строки диагностики (их видно в окне)
+    U.inet, U.inetErr = nil, nil
 
-    -- Всё, что трогает диск/сеть, собрано здесь: стенд подменяет U.io и
-    -- U.download и проверяет логику без игры и без интернета.
+    -- Всё, что трогает диск/сеть, собрано здесь: стенд подменяет U.io,
+    -- U.moonDl и U.inetLoad и проверяет логику без игры и интернета.
     U.io = {
-        -- clock — секунды процесса (таймауты загрузки); time — настенные
-        -- часы (когда проверяли в прошлый раз: живут и между запусками игры).
+        -- clock — секунды процесса (таймауты), time — настенные часы
+        -- (когда проверяли и когда загрузился скрипт: живут между запусками).
         clock  = os.clock,
         time   = os.time or function() return math.floor(os.clock()) end,
         open   = io.open,
@@ -39557,19 +39595,8 @@ do
             return false
         end,
     }
-    U.download = (type(downloadUrlToFile) == "function") and downloadUrlToFile or nil
 
-    -- Статусы загрузки: из модуля moonloader, иначе общеизвестные номера
-    do
-        local ok, mod = pcall(require, "moonloader")
-        local st = (ok and type(mod) == "table" and type(mod.download_status) == "table")
-            and mod.download_status or nil
-        U.ST_OK    = (st and tonumber(st.STATUS_ENDDOWNLOADDATA)) or 3
-        U.ST_GO    = (st and tonumber(st.STATUS_DOWNLOADINGDATA)) or 2
-        U.ST_LINK  = (st and tonumber(st.STATUS_CONNECTING)) or 1
-    end
-
-    -- ---------- мелкие помощники ----------
+    -- ---------- помощники ----------
     function U.verNum(v)
         local a, b, c = tostring(v or ""):match("^(%d+)%.(%d+)%.?(%d*)")
         return (tonumber(a) or 0) * 1000000 + (tonumber(b) or 0) * 1000
@@ -39594,14 +39621,19 @@ do
         return U.workDir() .. "\\grnd_adm_tools.lua"
     end
 
-    -- хвосты прошлых попыток (.new/.part) рядом со скриптом не копим
-    pcall(U.io.remove, U.scriptPath() .. ".new")
-    pcall(U.io.remove, U.scriptPath() .. ".part")
+    function U.dirOf(path)
+        local dir = tostring(path or ""):match("^(.*[/\\])")
+        return dir or ""
+    end
 
-    function U.cfgFile()
-        local dir = tostring(U.scriptPath()):match("^(.*[/\\])")
-        if dir then return dir .. "grnd_update.cfg" end
-        return "grnd_update.cfg"
+    function U.cfgFile() return U.dirOf(U.scriptPath()) .. "grnd_update.cfg" end
+    function U.logFile() return U.dirOf(U.scriptPath()) .. "grnd_update.log" end
+
+    local function normBase(u)
+        u = tostring(u or ""):gsub("%s+$", "")
+        if u == "" then return nil end
+        if u:sub(-1) ~= "/" then u = u .. "/" end
+        return u
     end
 
     function U.notify(text, kind, life)
@@ -39628,29 +39660,246 @@ do
         return data
     end
 
-    -- ---------- настройки ----------
+    function U.writeFile(path, data)
+        if type(U.io.open) ~= "function" then return false end
+        local f = U.io.open(path, "wb")
+        if not f then return false end
+        local ok = pcall(f.write, f, data)
+        pcall(f.close, f)
+        return ok and true or false
+    end
+
+    -- ---------- журнал ----------
+    -- Диагностику видно в окне обновления и в grnd_update.log рядом со
+    -- скриптом: если обновление не приходит — по нему понятно, почему.
+    function U.diag(text)
+        local line = os.date("%H:%M:%S") .. " " .. tostring(text)
+        U.logs[#U.logs + 1] = line
+        if #U.logs > 80 then table.remove(U.logs, 1) end
+        local f = U.io.open(U.logFile(), "a")
+        if f then
+            pcall(f.write, f, line .. "\n")
+            pcall(f.close, f)
+        end
+        return line
+    end
+
+    -- ---------- канал: выбор зеркала ----------
+    local function chanById(id)
+        for i = 1, #U.CHANNELS do
+            if U.CHANNELS[i].id == id then return U.CHANNELS[i] end
+        end
+    end
+
+    local function buildOrder()
+        local order, seen = {}, {}
+        local function push(c)
+            if c and not seen[c.id] then
+                seen[c.id] = true
+                order[#order + 1] = c
+            end
+        end
+        push(chanById("cfg-repo"))
+        push(chanById("cfg-mirror"))
+        push(chanById(U.activeId))          -- зеркало, которое уже работало
+        for i = 1, #U.CHANNELS do push(U.CHANNELS[i]) end
+        U.order, U.orderPos = order, 0
+    end
+
+    local function nextChan()
+        if not U.order then buildOrder() end
+        U.orderPos = U.orderPos + 1
+        local c = U.order[U.orderPos]
+        U.chan = c
+        return c
+    end
+
+    -- ---------- транспорт 1: штатный загрузчик MoonLoader ----------
+    U.moonDl = (type(downloadUrlToFile) == "function") and downloadUrlToFile or nil
+
+    -- Статусы загрузки MoonLoader (модуль moonloader, иначе номера по памяти)
+    do
+        local ok, mod = pcall(require, "moonloader")
+        local st = (ok and type(mod) == "table" and type(mod.download_status) == "table")
+            and mod.download_status or nil
+        U.ST_OK   = (st and tonumber(st.STATUS_ENDDOWNLOADDATA)) or 3
+        U.ST_GO   = (st and tonumber(st.STATUS_DOWNLOADINGDATA)) or 2
+        U.ST_LINK = (st and tonumber(st.STATUS_CONNECTING)) or 1
+    end
+
+    -- ---------- транспорт 2: WinINet через FFI ----------
+    -- Нужен там, где downloadUrlToFile нет или он не стартует. Качаем
+    -- порциями прямо из главного цикла: игра не встаёт на всю загрузку,
+    -- а таймауты ставятся ДО соединения — заблокированный хост не держит
+    -- игру дольше пары секунд.
+    local INET_DEF = [[
+        void* InternetOpenA(const char* agent, unsigned long access,
+            const char* proxy, const char* bypass, unsigned long flags);
+        void* InternetOpenUrlA(void* h, const char* url, const char* headers,
+            unsigned long len, unsigned long flags, void* ctx);
+        int InternetReadFile(void* h, char* buf, unsigned long want,
+            unsigned long* got);
+        int InternetSetOptionA(void* h, unsigned long opt, void* buf,
+            unsigned long len);
+        int HttpQueryInfoA(void* h, unsigned long info, void* buf,
+            unsigned long* len, unsigned long* index);
+        int InternetCloseHandle(void* h);
+    ]]
+    local FLAGS = 0x80000000 + 0x04000000 + 0x00000200 -- RELOAD|NO_CACHE|NO_UI
+    local OPT_CONNECT, OPT_RECV, OPT_SEND = 2, 6, 5
+    local QUERY_STATUS = 19 + 0x20000000 -- HTTP_QUERY_STATUS_CODE как число
+
+    function U.inetLoad()
+        if U.inet ~= nil then return U.inet end
+        local ok, res = pcall(function()
+            local ffi = require("ffi")
+            pcall(ffi.cdef, INET_DEF)      -- повторный cdef — не беда
+            local w = ffi.load("wininet")
+            assert(type(w.InternetOpenA) == "cdata", "нет wininet.InternetOpenA")
+            assert(type(w.InternetReadFile) == "cdata", "нет InternetReadFile")
+            return { w = w, ffi = ffi }
+        end)
+        if ok then
+            U.inet = res
+        else
+            U.inet, U.inetErr = false, tostring(res)
+            U.diag("WinINet недоступен: " .. U.inetErr)
+        end
+        return U.inet
+    end
+
+    local function inetStart(job)
+        local L = U.inetLoad()
+        if not L then return false, "WinINet недоступен" end
+        U.inet = L -- шаг чтения берёт транспорт отсюда
+        local w, ffi = L.w, L.ffi
+        local h = w.InternetOpenA(U.UA, 0, nil, nil, 0)
+        if h == nil then return false, "InternetOpen не открылся" end
+        local ms = ffi.new("unsigned long[1]", U.connectTimeout)
+        w.InternetSetOptionA(h, OPT_CONNECT, ms, 4)
+        ms[0] = U.recvTimeout
+        w.InternetSetOptionA(h, OPT_RECV, ms, 4)
+        w.InternetSetOptionA(h, OPT_SEND, ms, 4)
+        local req = w.InternetOpenUrlA(h, job.url, nil, 0, FLAGS, nil)
+        if req == nil then
+            pcall(w.InternetCloseHandle, h)
+            return false, "хост не ответил"
+        end
+        local code = ffi.new("unsigned long[1]", 0)
+        local len = ffi.new("unsigned long[1]", 4)
+        if w.HttpQueryInfoA(req, QUERY_STATUS, code, len, nil) ~= 0 then
+            job.http = tonumber(code[0])
+        end
+        job.h, job.req = h, req
+        job.buf = ffi.new("char[65536]")
+        job.got = ffi.new("unsigned long[1]")
+        return true
+    end
+
+    local function inetClose(job)
+        if job.backend ~= "inet" then return end
+        local L = U.inet
+        if L then
+            if job.req then pcall(L.w.InternetCloseHandle, job.req) end
+            if job.h then pcall(L.w.InternetCloseHandle, job.h) end
+        end
+        job.req, job.h = nil, nil
+    end
+
+    -- true — файл записан; nil,"текст" — ошибка; nil — качаем дальше
+    local function inetStep(job)
+        local L = U.inet
+        if not (L and job.req) then return nil, "загрузка потеряла соединение" end
+        local ok = L.w.InternetReadFile(job.req, job.buf, 65536, job.got)
+        local n = tonumber(job.got[0]) or 0
+        if ok == 0 then return nil, "обрыв связи" end
+        if n == 0 then
+            local body = table.concat(job.parts)
+            if not U.writeFile(job.path, body) then return nil, "файл не записался" end
+            job.size = #body
+            return true
+        end
+        job.parts[#job.parts + 1] = L.ffi.string(job.buf, n)
+        return nil
+    end
+
+    -- ---------- загрузка: одна попытка ----------
+    local function jobClose(job)
+        inetClose(job)
+    end
+
+    local function startJob(url, path, wantInet)
+        if U.job then return false, "уже качаю" end
+        local job = {
+            url = url, path = path, parts = {},
+            started = U.io.clock(), deadline = U.io.clock() + U.timeout,
+            inetTried = wantInet and true or false,
+        }
+        U.job = job
+        if U.moonDl and not wantInet then
+            local ok, ret = pcall(U.moonDl, url, path, function(_, status)
+                if U.job ~= job then return end
+                if status == U.ST_OK then
+                    job.done = true
+                elseif status ~= U.ST_GO and status ~= U.ST_LINK and status ~= 0 then
+                    job.err = tonumber(status) or -1
+                end
+            end)
+            if ok and ret ~= false then
+                job.backend = "moon"
+                U.diag("→ MoonLoader: " .. url)
+                return true
+            end
+            U.diag("загрузчик MoonLoader отказал: " .. tostring(ret))
+        end
+        local okInet, errInet = inetStart(job)
+        if okInet then
+            job.backend, job.inetTried = "inet", true
+            U.diag(("→ WinINet%s: %s%s"):format(
+                job.http and (" (HTTP " .. job.http .. ")") or "", url, ""))
+            return true
+        end
+        U.job = nil
+        U.diag("загрузку не начать: " .. tostring(errInet))
+        return false, errInet
+    end
+
+    local function jobStop()
+        local job = U.job
+        U.job = nil
+        if job then jobClose(job) end
+        return job
+    end
+
+    -- ---------- конфиг ----------
     function U.loadCfg()
         if U.cfgLoaded then return end
         U.cfgLoaded = true
-        local body = U.readFile(U.cfgFile(), 4096)
+        local body = U.readFile(U.cfgFile(), 8192)
         if not body then return end
+        local custom = {}
         for line in body:gmatch("[^\r\n]+") do
-            local k, v = tostring(line):match("^([%w_]+)=(.*)$")
+            local k, v = tostring(line):match("^([%w_%-]+)=(.*)$")
             if k == "auto" then U.auto = (v == "1") end
             if k == "period" then
                 local n = tonumber(v)
                 if n and n >= 0 then U.period = n end
             end
             if k == "last" then U.lastAt = tonumber(v) or U.lastAt end
-            if k == "repo" then
-                local n = normBase(v)
-                if n then U.repoUrl = n end
-            end
-            if k == "mirror" then
-                local n = normBase(v)
-                if n then U.mirrorUrl = n end
+            if k == "channel" then U.activeId = v end
+            -- своё зеркало: сначала оно, потом наши
+            if k == "repo" or k == "mirror" then
+                local base = normBase(v)
+                if base then
+                    local id = (k == "repo") and "cfg-repo" or "cfg-mirror"
+                    custom[#custom + 1] = { id = id, base = base }
+                end
             end
         end
+        for i = #custom, 1, -1 do
+            table.insert(U.CHANNELS, 1, custom[i])
+        end
+        if #custom > 0 then U.diag("канал из конфига: " .. custom[1].base) end
     end
 
     function U.saveCfg()
@@ -39659,53 +39908,101 @@ do
         f:write("auto=" .. (U.auto and "1" or "0") .. "\n")
         f:write("period=" .. tostring(math.floor(U.period)) .. "\n")
         f:write("last=" .. tostring(math.floor(U.lastAt or 0)) .. "\n")
-        -- своё зеркало из конфига не теряем при перезаписи файла
-        if U.repoUrl and normBase(U.repoUrl) ~= normBase(U.REPO) then
-            f:write("repo=" .. tostring(U.repoUrl) .. "\n")
-        end
-        if U.mirrorUrl and normBase(U.mirrorUrl) ~= normBase(U.MIRROR) then
-            f:write("mirror=" .. tostring(U.mirrorUrl) .. "\n")
+        if U.activeId then f:write("channel=" .. tostring(U.activeId) .. "\n") end
+        -- свои зеркала из конфига не теряем при перезаписи файла
+        for i = 1, #U.CHANNELS do
+            local c = U.CHANNELS[i]
+            if c.id == "cfg-repo" or c.id == "cfg-mirror" then
+                f:write((c.id == "cfg-repo" and "repo=" or "mirror=") .. c.base .. "\n")
+            end
         end
         pcall(f.close, f)
         return true
     end
 
-    -- ---------- загрузка ----------
-    local function urlList(name)
-        local out = {}
-        if U.repoUrl then out[#out + 1] = U.repoUrl .. name end
-        if U.mirrorUrl and U.mirrorUrl ~= U.repoUrl then
-            out[#out + 1] = U.mirrorUrl .. name
-        end
-        return out
-    end
-
-    local function dlStart(url, path, tag)
-        if type(U.download) ~= "function" then
-            return false, "нет загрузчика (старый MoonLoader)"
-        end
-        if type(U.io.remove) == "function" then pcall(U.io.remove, path) end
-        U.pend = { url = url, path = path, tag = tag, done = false, err = nil,
-            deadline = U.io.clock() + U.timeout }
-        -- downloadUrlToFile в MoonLoader отдаёт index загрузки (число) либо
-        -- false при ошибке; nil считаем «запустилось» — промах поймает таймаут.
-        local okArgs, ret = pcall(U.download, url, path, function(_, status)
-            local P = U.pend
-            if not P or P.url ~= url then return end
-            if status == U.ST_OK then
-                P.done = true
-            elseif status ~= U.ST_GO and status ~= U.ST_LINK and status ~= 0 then
-                P.err = tonumber(status) or -1
+    -- ---------- заход в игру ----------
+    -- Источников несколько: у разных сборок MoonLoader одна и та же функция
+    -- ведёт себя по-разному, а проверка не должна из-за этого пропадать.
+    function U.spawned()
+        -- Собираем список явно: в {nil, f, nil} дыра, и # по нему вернёт 0 —
+        -- проверка спавна молча пропадала (найдено стендом).
+        local names = { "grndIsSpawnedSafe", "sampIsLocalPlayerSpawned",
+            "grndIsSpawned" }
+        for i = 1, #names do
+            local f = rawget(_G, names[i])
+            if type(f) == "function" then
+                local ok, v = pcall(f)
+                if ok and v then return true end
             end
-        end)
-        if not okArgs or ret == false then
-            U.pend = nil
-            return false, "загрузка не началась"
         end
-        return true
+        local k = rawget(_G, "GRND_KEYS")
+        return (type(k) == "table" and k.spawnedNow == true) and true or false
     end
 
-    -- Заголовки изменений из шапки файла: «-- v1.19.223 — …» и строки под ним.
+    -- ---------- проверка ----------
+    U.checkReason = nil
+
+    local function loud()
+        return U.checkReason ~= "spawn"
+    end
+
+    local function failToast(text)
+        -- при заходе в игру молчим (иначе при проверке на каждый спавн
+        -- игрока засыпало бы тостами), но про первый сбой за сессию скажем
+        if loud() then
+            U.notify(text, "warn", 3.5)
+        elseif not U.failOnceShown then
+            U.failOnceShown = true
+            U.notify("Обновления: сервер не отвечает (подробности — в разделе «Выдача в радиусе»)", "warn", 5)
+        end
+    end
+
+    function U.finish(msg, kind)
+        -- общий конец проверки: статус, тост, окно (для ручной проверки)
+        if msg then U.state, U.err = "error", msg end
+        if U.checkReason == "manual" then U.window = true end
+        if msg then failToast("Обновления: " .. tostring(msg)) end
+        U.job = nil
+        U.refreshFrame()
+    end
+
+    function U.dlVersion()
+        U.phase = "version"
+        while true do
+            local c = nextChan()
+            if not c then
+                U.finish("нет связи ни с одним зеркалом (" .. #U.order .. " шт.)")
+                return false
+            end
+            U.diag(("зеркало %s: пробую %s"):format(c.id, U.VER_FILE))
+            U.chan = c
+            if startJob(c.base .. U.VER_FILE,
+                    U.dirOf(U.scriptPath()) .. "grnd_update.txt") then
+                return true
+            end
+            -- дорогу начать не удалось (нет загрузчика / хост сразу отбил) —
+            -- это не повод сдаваться: пробуем следующее зеркало
+        end
+    end
+
+    function U.dlScript()
+        U.phase = "file"
+        while true do
+            local c = nextChan()
+            if not c then
+                U.finish("файл не скачался ни с одного зеркала")
+                return false
+            end
+            U.diag("качаю сам скрипт: " .. c.id)
+            U.chan = c
+            if startJob(c.base .. U.SCRIPT_FILE, U.scriptPath() .. ".new") then
+                return true
+            end
+        end
+    end
+
+    -- ---------- разбор списка изменений ----------
+    -- Заголовки из шапки нового файла: «-- v1.19.226 — …» и строки под ним.
     function U.changelogOf(body)
         local out, cur, seen = {}, nil, 0
         for line in tostring(body or ""):gmatch("[^\r\n]+") do
@@ -39735,170 +40032,222 @@ do
         return out
     end
 
-    -- ---------- шаги проверки ----------
-    function U.dlVersion(i)
-        local urls = urlList(U.VER_FILE)
-        if not (urls[i] and dlStart(urls[i], U.workDir() .. "\\grnd_update.txt", "version")) then
-            U.state, U.err = "error", "сервер обновлений недоступен"
-            if U.checkReason ~= "spawn" then
-                U.notify("Обновления: нет связи с сервером", "warn", 3.5)
-            end
-            return false
-        end
-        U.mi = i
-        return true
-    end
-
-    function U.dlScript(i)
-        local urls = urlList(U.SCRIPT_FILE)
-        local path = U.scriptPath() .. ".new"
-        if not (urls[i] and dlStart(urls[i], path, "file")) then
-            U.state, U.err = "error", "не смог начать загрузку файла"
-            return false
-        end
-        U.mi = i
-        return true
-    end
-
-    function U.check(reason)
-        U.checkReason = reason or "manual"
-        U.loadCfg()
-        if U.pend then return false, "уже проверяю" end
-        U.state, U.err = "checking", nil
-        U.installed, U.window = false, false
-        U.lastAt = math.floor(U.io.time())
-        U.saveCfg()
-        U.notify("Проверяю обновления…", "info", 2.2)
-        return U.dlVersion(1)
-    end
-
-    -- Спавн: проверяем не чаще, чем раз в period (по умолчанию 3 часа).
-    function U.onSpawn()
-        if not U.auto then return false end
-        U.loadCfg()
-        local now = U.io.time()
-        -- period=0 (по умолчанию) — проверка на КАЖДЫЙ заход в игру; зазор в
-        -- 20 секунд гасит дребезг флага спавна (ложные «только что зашёл»),
-        -- а не саму проверку.
-        local gap = (tonumber(U.period) or 0)
-        if gap <= 0 then gap = 20 end
-        if (now - (U.lastAt or 0)) < gap then return false end
-        return U.check("spawn")
-    end
-
-    local function finishVersion(P, ok)
-        if not ok then
-            if U.dlVersion((U.mi or 1) + 1) then return end
-            U.state, U.err = "error", "нет связи (" .. tostring(P.err or "таймаут") .. ")"
-            -- на заходе в игру молчим (статус виден в разделе); вручную — тост
-            if U.checkReason ~= "spawn" then
-                U.notify("Обновления: нет связи, попробуем позже", "warn", 3.5)
-            end
-            return
-        end
-        local body = U.readFile(P.path, 4096)
-        pcall(U.io.remove, P.path)
+    -- ---------- итоги ----------
+    local function finishVersion(job)
+        local body = U.readFile(job.path, 4096)
+        pcall(U.io.remove, job.path)
         local ver = tostring(body or ""):match("(%d+%.%d+%.%d+)")
         if not ver then
-            U.state, U.err = "error", "сервер ответил непонятно"
-            if U.checkReason ~= "spawn" then
-                U.notify("Обновления: не понял номер версии", "warn", 3.5)
-            end
-            return
+            U.diag(("зеркало %s: в ответе нет номера версии (%d байт)")
+                :format(tostring(U.chan and U.chan.id), #tostring(body or "")))
+            -- ответ мусорный — это зеркало не наше, пробуем следующее
+            return U.dlVersion()
         end
+        U.diag(("зеркало %s: версия %s (у нас %s)")
+            :format(tostring(U.chan and U.chan.id), ver, U.cur))
+        if U.probing then
+            U.probeLines[#U.probeLines + 1] = ("%s: версия %s"):format(
+                tostring(U.chan and U.chan.id), ver)
+            return U.probeNext()
+        end
+        local c = U.chan
         if U.verNum(ver) > U.verNum(U.cur) then
             U.newVer, U.state = ver, "downloading"
+            if c and c.id ~= U.activeId then
+                U.activeId = c.id
+                U.saveCfg()
+            end
             U.notify("Обновляюсь до версии " .. ver, "info", 3.2)
-            if U.dlScript(1) then return end
-            U.state, U.err = "error", "не смог скачать файл"
-            return
+            buildOrder() -- качаем файл с того же зеркала первым
+            return U.dlScript()
         end
         U.state = "uptodate"
-        -- на заходе в игру «последняя версия» не показываем (проверка идёт
-        -- каждый спавн — иначе тост мозолил бы глаза); ручная — показывает
+        if c and c.id ~= U.activeId then
+            U.activeId = c.id
+            U.saveCfg()
+        end
         if U.checkReason ~= "spawn" then
             U.notify("Версия " .. U.cur .. " — последняя", "ok", 2.6)
         end
+        U.finish()
+        return true
     end
 
-    local function install(P)
-        local body = U.readFile(P.path)
-        local ver = body and tostring(body):match('GRND_SCRIPT_VERSION%s*=%s*"([%d%.]+)"')
+    local function install(job)
+        local body = U.readFile(job.path)
+        local ver = body and tostring(body):match(
+            'GRND_SCRIPT_VERSION%s*=%s*"([%d%.]+)"')
         if not body or #body < U.MIN_BYTES or not ver
             or U.verNum(ver) ~= U.verNum(U.newVer) then
-            pcall(U.io.remove, P.path)
-            U.state, U.err = "error", "скачанный файл проверку не прошёл"
-            U.notify("Обновление проверку не прошло — оставил версию " .. U.cur,
-                "warn", 4.2)
-            return false
+            pcall(U.io.remove, job.path)
+            U.diag(("скачанный файл не прошёл проверку (%d байт, версия %s)")
+                :format(#tostring(body or ""), tostring(ver)))
+            -- битый файл с этого зеркала (или это вообще не файл) — пробуем
+            -- другое зеркало, а не сдаёмся
+            return U.dlScript()
         end
         U.notes = U.changelogOf(body)
         local target = U.scriptPath()
         local bak = target .. ".bak"
         pcall(U.io.remove, bak)
         local okBackup = pcall(U.io.rename, target, bak)
-        local okMove = okBackup and pcall(U.io.rename, P.path, target)
+        local okMove = okBackup and pcall(U.io.rename, job.path, target)
         if not (okBackup and okMove) then
             if okBackup then pcall(U.io.rename, bak, target) end -- вернуть как было
-            pcall(U.io.remove, P.path)
-            U.state, U.err = "error", "не смог заменить файл скрипта"
-            U.notify("Обновление не установилось (файл занят?) — версия "
-                .. U.cur .. " на месте", "warn", 4.5)
+            pcall(U.io.remove, job.path)
+            U.diag("не смог заменить файл скрипта (занят?)")
+            U.state = "error"
+            U.err = "не смог заменить файл скрипта"
+            failToast("Обновление не установилось (файл занят?) — версия "
+                .. U.cur .. " на месте")
             return false
         end
         U.state, U.installed, U.window = "ready", true, true
+        U.diag("установлено: " .. tostring(U.newVer) .. " (" .. #body .. " байт)")
         U.notify("Обновление " .. tostring(U.newVer) .. " установлено", "ok", 3)
         U.refreshFrame()
         return true
     end
 
-    local function finishFile(P, ok)
-        if not ok then
-            if U.dlScript((U.mi or 1) + 1) then return end
-            pcall(U.io.remove, P.path)
-            U.state, U.err = "error", "файл не скачался"
-            U.notify("Обновление не скачалось — осталась версия " .. U.cur,
-                "warn", 4)
-            return
+    -- ---------- приём загрузки ----------
+    local function retryInet(job)
+        -- штатный загрузчик молчит/сломался — ту же ссылку пробуем WinINet-ом
+        local url, path = job.url, job.path
+        jobClose(job)
+        U.job = nil
+        if not U.moonDl then return false end       -- WinINet уже и был
+        U.diag("MoonLoader-загрузчик не ответил — та же ссылка через WinINet")
+        return startJob(url, path, true)
+    end
+
+    local function jobFailed(job, why)
+        U.diag(("зеркало %s: %s"):format(tostring(U.chan and U.chan.id), tostring(why)))
+        if job.backend == "moon" and not job.inetTried then
+            if retryInet(job) then return end
         end
-        install(P)
+        U.job = nil
+        if U.probing then
+            U.probeLines[#U.probeLines + 1] = ("%s: %s"):format(
+                tostring(U.chan and U.chan.id), tostring(why))
+            return U.probeNext()
+        end
+        if U.phase == "version" then return U.dlVersion() end
+        return U.dlScript()
+    end
+
+    local function jobDone(ok, why)
+        local job = U.job
+        if not job then return end
+        if not ok then
+            jobClose(job)
+            return jobFailed(job, why)
+        end
+        jobClose(job)
+        U.job = nil
+        if U.phase == "version" then return finishVersion(job) end
+        return install(job)
+    end
+
+    -- ---------- «/grndupdate test»: обход всех зеркал ----------
+    function U.probeNext()
+        local c = nextChan()
+        if not c then
+            U.probing, U.state = false, "uptodate"
+            U.window = true
+            U.diag("обход зеркал закончен")
+            U.refreshFrame()
+            return false
+        end
+        U.probeLines[#U.probeLines + 1] = ("%s: проверяю…"):format(c.id)
+        U.phase = "version"
+        return startJob(c.base .. U.VER_FILE,
+            U.dirOf(U.scriptPath()) .. "grnd_update.txt")
+    end
+
+    function U.probe()
+        if U.job then jobStop() end -- команда человека важнее текущей докачки
+        if U.job then return false, "уже качаю" end
+        U.loadCfg()
+        U.probing = true
+        U.probeLines = {}
+        U.state = "checking"
+        U.err = nil
+        buildOrder()
+        U.diag("проба каналов (" .. tostring(#U.order) .. " зеркал)")
+        U.notify("Проверяю каналы обновлений…", "info", 2.5)
+        return U.probeNext()
+    end
+
+    -- ---------- проверка ----------
+    function U.check(reason)
+        U.checkReason = reason or "manual"
+        U.loadCfg()
+        if U.probing or U.job then return false, "уже проверяю" end
+        U.state, U.err = "checking", nil
+        U.installed, U.window, U.notes = false, false, nil
+        U.lastAt = math.floor(U.io.time())
+        U.saveCfg()
+        buildOrder()
+        U.diag(("проверка (%s), зеркал: %d"):format(tostring(reason), #U.order))
+        U.notify("Проверяю обновления…", "info", 2.2)
+        return U.dlVersion()
+    end
+
+    function U.onSpawn()
+        U.loadCfg() -- настройки читаем ДО проверки auto (стенд поймал)
+        if not U.auto then return false end
+        local now = U.io.time()
+        -- period=0 (по умолчанию) — проверка на КАЖДЫЙ заход в игру; зазор в
+        -- 20 секунд гасит дребезг флага спавна, а не саму проверку
+        local gap = tonumber(U.period) or 0
+        if gap <= 0 then gap = 20 end
+        if (now - (U.lastAt or 0)) < gap then return false end
+        return U.check("spawn")
     end
 
     -- ---------- тик (зовётся из основного цикла) ----------
     function U.tick()
-        -- просьба «Перезагрузить скрипт»: выполняем из главного цикла
         if U.reloadPending then
             U.reloadPending = false
             return U.reload()
         end
         local now = U.io.clock()
-        -- спавн: зашли в игру — можно и обновиться
-        local sp = false
-        if type(_G.grndIsSpawnedSafe) == "function" then
-            local ok, v = pcall(_G.grndIsSpawnedSafe)
-            sp = ok and v and true or false
-        end
+
+        -- заход в игру: зашли — проверяем
+        local sp = U.spawned()
         if sp and not U.wasSpawn then
             U.wasSpawn = true
             U.onSpawn()
         elseif not sp then
             U.wasSpawn = false
         end
-
-        local P = U.pend
-        if P then
-            if P.done then
-                U.pend = nil
-                if P.tag == "version" then finishVersion(P, true) else finishFile(P, true) end
-            elseif P.err or now > (P.deadline or 0) then
-                U.pend = nil
-                if P.tag == "version" then finishVersion(P, false) else finishFile(P, false) end
+        -- страховка: если флаг спавна в этой сборке не работает, всё равно
+        -- проверяем — через 25 секунд после запуска скрипта в игре
+        if not U.didSessionCheck and not sp and not U.job
+            and (U.io.time() - (U.sessionAt or 0)) >= 25 then
+            U.didSessionCheck = true
+            if U.auto and (U.io.time() - (U.lastAt or 0)) >= 5 then
+                U.check("session")
             end
         end
+
+        local job = U.job
+        if not job then return false end
+        if job.backend == "moon" then
+            if job.done then return jobDone(true) end
+            if job.err then return jobDone(false, "статус " .. tostring(job.err)) end
+            if now > job.deadline then return jobDone(false, "таймаут") end
+            return false
+        end
+        local ok, res, err = pcall(inetStep, job)
+        if not ok then return jobDone(false, tostring(res)) end
+        if res == true then return jobDone(true) end
+        if err then return jobDone(false, tostring(err)) end
+        if now > job.deadline then return jobDone(false, "таймаут") end
+        return false
     end
 
-    -- Перезапуск делаем НЕ в кадре ImGui (скрипт выгружался бы из середины
-    -- своей же отрисовки), а из главного цикла — тик забирает просьбу.
+    -- ---------- перезапуск ----------
     function U.requestReload()
         U.reloadPending = true
         U.window = false
@@ -39907,7 +40256,6 @@ do
         return true
     end
 
-    -- ---------- окно со списком изменений ----------
     function U.reload()
         if type(thisScript) == "function" then
             local ok, sc = pcall(thisScript)
@@ -39919,6 +40267,7 @@ do
         return false
     end
 
+    -- ---------- окно ----------
     local function txt(im, s)
         s = tostring(s or "")
         if type(im.TextWrapped) == "function" then
@@ -39938,11 +40287,24 @@ do
         return ok and res and true or false
     end
 
+    local function windowTail(im, w, lines)
+        if type(im.Separator) == "function" then pcall(im.Separator) end
+        txt(im, "Диагностика (то же самое — в grnd_update.log рядом со скриптом):")
+        if type(im.BeginChild) ~= "function" or type(im.ImVec2) ~= "function" then
+            for i = 1, #lines do txt(im, lines[i]) end
+            return
+        end
+        local ok, vis = pcall(im.BeginChild, "##grnd_upd_log", im.ImVec2(w - 24, 96), false, 0)
+        if not (ok and vis) then return end
+        for i = 1, #lines do txt(im, lines[i]) end
+        pcall(im.EndChild)
+    end
+
     function U.draw(H)
         if not U.window then return false end
         local im = H and H.im
         if not im or type(H.begin) ~= "function" then return false end
-        local W, HH = 620, 460
+        local W, HH = 620, 520
         if type(im.SetNextWindowSize) == "function" and type(im.ImVec2) == "function" then
             pcall(im.SetNextWindowSize, im.ImVec2(W, HH),
                 (im.Cond and tonumber(im.Cond.FirstUseEver)) or 4)
@@ -39965,7 +40327,9 @@ do
         if okB and shown then
             local okD, err = pcall(function()
                 local head
-                if U.installed then
+                if U.probeLines then
+                    head = "Проверка каналов:"
+                elseif U.installed then
                     head = "Установлена версия " .. tostring(U.newVer)
                         .. " (была " .. U.cur .. ")"
                 elseif U.state == "error" then
@@ -39974,20 +40338,30 @@ do
                     head = "Версия " .. U.cur
                 end
                 txt(im, head)
-                txt(im, U.installed
-                    and "Нажмите «Перезагрузить скрипт» — изменения вступят в силу сразу (без кнопки они подхватятся при следующем запуске игры)."
-                    or "Список изменений ниже. Кнопка «Проверить снова» повторит проверку.")
+                if U.probeLines then
+                    txt(im, "Ниже — какие зеркала ответили. Если ни одно — "
+                        .. "напишите мне, что видно в диагностике.")
+                    for i = 1, #U.probeLines do txt(im, U.probeLines[i]) end
+                elseif U.installed then
+                    txt(im, "Нажмите «Перезагрузить скрипт» — изменения вступят "
+                        .. "в силу сразу (без кнопки они подхватятся при "
+                        .. "следующем запуске игры).")
+                else
+                    txt(im, "Список изменений ниже. Кнопка «Проверить снова» "
+                        .. "повторит проверку, «Каналы» — обход всех зеркал.")
+                end
                 if type(im.TextColored) == "function" and im.ImVec4 then
                     pcall(im.TextColored, im.ImVec4(0.62, 0.62, 0.68, 1),
-                        "Канал: " .. tostring(U.repoUrl or U.REPO))
+                        "Канал: " .. tostring(U.activeId or "подбирается")
+                        .. " · загрузка: " .. tostring(U.moonDl and "MoonLoader+WinINet" or "WinINet"))
                 else
-                    txt(im, "Канал: " .. tostring(U.repoUrl or U.REPO))
+                    txt(im, "Канал: " .. tostring(U.activeId or "подбирается"))
                 end
                 if type(im.Separator) == "function" then pcall(im.Separator) end
 
                 local notes = U.notes or {}
-                local bodyH = HH - 132
-                local child, total = false, 0
+                local bodyH = HH - 300
+                local child = false
                 if type(im.BeginChild) == "function" and type(im.ImVec2) == "function" then
                     local okC, vis = pcall(im.BeginChild, "##grnd_upd_body",
                         im.ImVec2(W - 24, bodyH), false, 0)
@@ -40000,12 +40374,16 @@ do
                         txt(im, "   " .. item.lines[j])
                     end
                 end
-                total = #notes
-                if total == 0 then
+                if #notes == 0 then
                     txt(im, U.installed and "Заголовков изменений в новой версии нет."
                         or "Изменений не найдено.")
                 end
                 if child then pcall(im.EndChild) end
+
+                local tail = {}
+                local from = math.max(1, #U.logs - 24)
+                for i = from, #U.logs do tail[#tail + 1] = U.logs[i] end
+                windowTail(im, W, tail)
 
                 if type(im.Separator) == "function" then pcall(im.Separator) end
                 if U.installed then
@@ -40013,10 +40391,15 @@ do
                         U.requestReload()
                         return
                     end
-                elseif U.state ~= "downloading" and U.state ~= "checking" then
+                elseif U.state ~= "downloading" and U.state ~= "checking"
+                    and not U.probing then
                     if btn(im, "Проверить снова##grnd_upd_again", 180) then
                         U.window = false
                         U.check("manual")
+                    end
+                    if btn(im, "Каналы##grnd_upd_probe", 120) then
+                        U.probeLines = nil
+                        U.probe()
                     end
                 end
                 if btn(im, "Позже##grnd_upd_later", 120) then
@@ -40031,12 +40414,17 @@ do
     _G.grndUpdDraw = U.draw
     _G.grndUpdWanted = function() return U.window and true or false end
 
-    -- Ручная проверка: /grndupdate
+    -- ---------- команда ----------
     if type(sampRegisterChatCommand) == "function" then
-        pcall(sampRegisterChatCommand, "grndupdate", function()
+        pcall(sampRegisterChatCommand, "grndupdate", function(arg)
+            local a = tostring(arg or ""):lower()
             U.window = false
-            U.notify("Проверяю обновления вручную…", "info", 2)
-            U.check("manual")
+            if a:find("test", 1, true) or a:find("канал", 1, true) then
+                U.probe()
+            else
+                U.notify("Проверяю обновления вручную…", "info", 2)
+                U.check("manual")
+            end
             U.refreshFrame()
         end)
     end
@@ -40045,10 +40433,12 @@ do
         local ok, res = pcall(U.tick)
         if ok then return res end
         U.err = tostring(res)
+        pcall(U.diag, "тик: " .. tostring(res))
         return false
     end
     _G.GRND_UPDATE = U
 end
+grndUpdInit()
 -- <<< GRND_UPDATE_END
 
 -- =====================================================================
