@@ -1,6 +1,20 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.221"
+GRND_SCRIPT_VERSION = "1.19.222"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.222 — «ВЫДАЧА В РАДИУСЕ» по правкам:
+--   1) со страницы убраны строка «Уровень: N …», кнопка «Обновить» и
+--      строка «Было: …» (уровень по-прежнему проверяется при нажатии);
+--   2) с 5-го уровня броня, оружие, заморозка и разморозка выдаются
+--      ОДНОЙ командой на всех, а не по игрокам:
+--        заморозить   — /freezeall
+--        разморозить  — /unfreezeall
+--        выдать броню — /armall {броня} {радиус}
+--        выдать оружие— /gunall {оружие} {патроны} {радиус}
+--      (броня и оружие берутся из настроек шестерёнок);
+--   3) радиус у этих команд — 1..100: если в разделе выставлен больше,
+--      команда не отправляется, тост «Выберите радиус не больше 100»;
+--      ниже 5-го уровня поведение прежнее: /freeze, /unfreeze, /arm — по
+--      игрокам (уровень 2/4), оружие — только с 5-го.
 -- v1.19.221 — УРОВНИ АДМИНОВ в «Выдаче в радиусе» + ещё команды:
 --   1) сравнение уровней: «нужен N-й уровень» — это N и ВЫШЕ (то есть
 --      «с 5-го уровня» пропускает 5, 6, 9…), ниже — отказ;
@@ -38323,6 +38337,14 @@ end
 --    Отобрать оружие   /weapall               одна команда на всех
 --    Телепорт всех     /gethere <id>          уровень 3, по 150 мс
 --                                (на себя не распространяется)
+--  С 5-го уровня броня/оружие/заморозка/разморозка идут НЕ по игрокам,
+--  а одной командой на всех (v1.19.222):
+--    Заморозить        /freezeall
+--    Разморозить       /unfreezeall
+--    Выдать броню      /armall <броня> <радиус>
+--    Выдать оружие     /gunall <оружие> <патроны> <радиус>
+--  Радиус в этих командах — 1..100: если в разделе выставлено больше,
+--  команда не уходит, тост «Выберите радиус не больше 100».
 --  Уровень — из списка чекера «Админы в сети» (GRND_AO.list). Сравнение:
 --  «нужен N-й уровень» значит N И ВЫШЕ (v1.19.221). Себя ищем по ID, затем
 --  по нику (цветовые коды/регистр/подчёркивания не важны), затем — первая
@@ -38475,6 +38497,18 @@ do
         { id = 42, name = "Огнетушитель" },
         { id = 46, name = "Парашют" },
     }
+
+    -- v1.19.222: с 5-го уровня выдача «на всех» идёт одной командой с
+    -- вшитым радиусом: заморозка/разморозка — /freezeall и /unfreezeall,
+    -- броня — /armall {броня} {радиус}, оружие — /gunall {оружие} {патроны}
+    -- {радиус}. Радиус у команд с радиусом — 1..100: выше не отправляем
+    -- (тост «Выберите радиус не больше 100»).
+    RT.MASS = {
+        freeze = "freezeall", unfreeze = "unfreezeall",
+        armor = "armall", weapon = "gunall",
+    }
+    RT.MASS_RADIUS = { armall = true, gunall = true }
+    RT.RADIUS_MAX = 100  -- предельный радиус массовых команд
 
     -- Настройки шестерёнок (хранятся в grnd_radtools.cfg).
     RT.settings = {
@@ -38836,6 +38870,8 @@ do
         if id == "spawn" then return "/spawn " .. s end
         if id == "freeze" then return "/freeze " .. s end
         if id == "unfreeze" then return "/unfreeze " .. s end
+        -- по игроку (запасной вариант; с 5-го уровня «Выдать оружие»
+        -- уходит одной массовой /gunall — см. RT.MASS в RT.doAction)
         if id == "weapon" then
             local w = RT.weapons[S.weapon.sel] or RT.weapons[1]
             return string.format("/gun %s %d %d", s, w.id, S.weapon.ammo)
@@ -38854,6 +38890,17 @@ do
         end
         if id == "takeoff" then return "/weapall" end
         if id == "tpself" then return "/gethere " .. s end
+        -- массовые команды 5-го уровня и выше (v1.19.222): радиус вшит
+        if id == "freezeall" then return "/freezeall" end
+        if id == "unfreezeall" then return "/unfreezeall" end
+        if id == "armall" then
+            return string.format("/armall %d %d", S.armor.amount, RT.radius)
+        end
+        if id == "gunall" then
+            local w = RT.weapons[S.weapon.sel] or RT.weapons[1]
+            return string.format("/gunall %d %d %d", w.id, S.weapon.ammo,
+                RT.radius)
+        end
         return nil
     end
 
@@ -38918,9 +38965,10 @@ do
         pcall(RT.load)
         local act = RT.actById(id)
         if not act then return false end
+        local lv  -- объявлен ЗДЕСЬ: нужен и гейту, и ветке массовых команд
         if act.level and act.level > 0 then
             -- «нужен N-й уровень» = N и ВЫШЕ: ниже — отказ, выше — проходим
-            local lv = RT.myLevel()
+            lv = RT.myLevel()
             if lv and lv < act.level then
                 rtToast("Нет доступа к данной команде, нужен "
                     .. tostring(act.level) .. "-й уровень", "warn", 3.5)
@@ -38940,6 +38988,34 @@ do
                     act.label, tostring(why))
                 return false
             end
+        end
+        -- v1.19.222: с 5-го уровня броня/оружие/заморозка/разморозка
+        -- выдаются ОДНОЙ командой на всех (радиус вшит в команду), а не
+        -- по игрокам: /armall, /gunall, /freezeall, /unfreezeall.
+        if lv and lv >= 5 and RT.MASS[id] then
+            local mass = RT.MASS[id]
+            if RT.MASS_RADIUS[mass] and RT.radius > RT.RADIUS_MAX then
+                rtToast("Выберите радиус не больше " .. RT.RADIUS_MAX,
+                    "warn", 3.5)
+                RT.lastAct = string.format("%s: радиус %d выше предела %d",
+                    act.label, RT.radius, RT.RADIUS_MAX)
+                return false
+            end
+            local cmd = RT.cmdFor(mass, nil)
+            if not cmd then
+                rtToast("«" .. act.label .. "»: команда не собрана", "warn", 3)
+                RT.lastAct = act.label .. ": команда не собрана"
+                return false
+            end
+            if rtSend(cmd) then
+                rtToast("«" .. act.label .. "»: отправлено (" .. cmd .. ")",
+                    "ok", 3)
+                RT.lastAct = act.label .. ": отправлено (" .. cmd .. ")"
+                return true
+            end
+            rtToast("Не удалось отправить команду", "warn", 3)
+            RT.lastAct = act.label .. ": не удалось отправить"
+            return false
         end
         if act.solo then
             -- одна команда: игроки в радиусе не нужны
@@ -39195,9 +39271,7 @@ do
         pcall(RT.load)
         if RT.list == nil then RT.scan() end
         local TH = (type(R.theme) == "function") and R.theme() or {}
-        local dim = R.c4(TH.textDim or { 185, 185, 190, 255 })
-        local mut = R.c4(TH.textMuted or { 140, 140, 150, 255 })
-        local hi  = R.c4(TH.textHi or { 240, 240, 245, 255})
+        local hi  = R.c4(TH.textHi or { 240, 240, 245, 255 })
 
         local function W(text, scale)
             local ok, v = pcall(R.tsize, tostring(text or ""))
@@ -39234,33 +39308,9 @@ do
         end
         y = y + bh + 10
 
-        -- ---------- строка уровня (v1.19.221) ----------
-        -- Видно, что именно увидел скрипт: уровень и источник. Кнопка
-        -- «Обновить» просит чекер «Админы в сети» перезапросить /admins.
-        do
-            local lvl, lsrc = RT.myLevel()
-            local txt
-            if lvl then
-                local note = " · чекер"
-                if lsrc == "first" then note = " · первая строка"
-                elseif lsrc == "stale" then note = " · прошлый раз"
-                elseif lsrc == "nick" then note = " · по нику" end
-                txt = "Уровень: " .. tostring(lvl) .. note
-            elseif RT.checker() == "off" then
-                txt = "Уровень: чекер выключен"
-            else
-                txt = "Уровень: нет данных чекера"
-            end
-            R.uiText(cx, y, txt, lvl and mut or dim, 0.78)
-            if R.button("rt_lvl_refresh", cx + cw - 84, y - 3, 84, 20,
-                "Обновить", {}) then
-                local askOk, why = RT.refreshLevels(true)
-                rtToast(askOk and "Обновляю список админов…"
-                    or ("Не вышло: " .. tostring(why)),
-                    askOk and "info" or "warn", 2.8)
-            end
-            y = y + 18
-        end
+        -- v1.19.222: строки «Уровень: N» и кнопки «Обновить» на странице
+        -- больше нет (просьба заказчика) — уровень по-прежнему берётся из
+        -- чекера и проверяется при нажатии кнопки.
 
         -- ---------- содержимое: сетка 3×3 или настройки шестерёнки ----------
         if RT.settingsOpen and RT.settings[RT.settingsOpen] then
@@ -39313,11 +39363,8 @@ do
             y = y + abh + 8
         end
 
-        -- последнее действие — только если есть что сказать
-        if RT.lastAct then
-            R.uiText(cx, y, "Было: " .. RT.lastAct, mut, 0.78)
-            y = y + 14
-        end
+        -- v1.19.222: строки «Было: …» на странице больше нет; результат
+        -- последнего действия по-прежнему живёт в RT.lastAct (диагностика).
         return y
     end
 
