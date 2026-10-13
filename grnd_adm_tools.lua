@@ -1,6 +1,25 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.220"
+GRND_SCRIPT_VERSION = "1.19.221"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.221 — УРОВНИ АДМИНОВ в «Выдаче в радиусе» + ещё команды:
+--   1) сравнение уровней: «нужен N-й уровень» — это N и ВЫШЕ (то есть
+--      «с 5-го уровня» пропускает 5, 6, 9…), ниже — отказ;
+--   2) уровни наконец определяются надёжно (раньше список часто был пуст):
+--      — чекер «Админы в сети» понимает разные форматы сервера:
+--        «Уровень: 5», «ур. 5», «lvl 5», «5 уровня», «5-й ур.», «Админ 5 ур.»,
+--        «| 5 | 3 мин», «[5]», «Главный администратор 9»; AFK-время
+--        («15 мин», «12:30») уровнем больше не считается;
+--      — строки админов больше не отбраковываются из-за слов «Админ/Адм/
+--        Модер» и падежей уровня;
+--      — себя ищем по ID, затем по нику, затем берём первую строку списка
+--        (она — самая старшая), и помним уровень в течение сессии;
+--      — в разделе видно строку «Уровень: N · источник» и кнопка «Обновить»
+--        (перезапрос /admins у чекера);
+--      — если уровень не определён — тост «Уровень не определён (…)» и
+--        автоперезапрос чекера вместо молчаливого «нет доступа»;
+--   3) «Отобрать оружие» → /weapall (одна команда на всех);
+--   4) «Телепорт всех к себе» → /gethere <id> по игрокам с 3-го уровня
+--      (раз в 150 мс, как и остальные команды по игрокам).
 -- v1.19.220 — «ВЫДАЧА В РАДИУСЕ»: команды привязаны (от заказчика):
 --   1) Заспавнить/Заморозить/Разморозить — /spawn|/freeze|/unfreeze ID,
 --      уровень 2; Выдать оружие — /gun ID {ид оружия} {патроны}, уровень 5;
@@ -18889,18 +18908,72 @@ do
         return nil
     end
 
+    -- v1.19.221: уровни у серверов пишутся по-разному, и старый разбор
+    -- находил только «Уровень: N» и «| N». Теперь слова-метки разные:
+    --   «Уровень: 5», «ур. 5», «lvl 5», «LEVEL=5»  (число ПОСЛЕ метки)
+    --   «5 уровня», «5-й уровень», «5 lvl»          (число ПЕРЕД меткой)
+    --   «Ник [12] | 5 | 3 мин»                      (число после «|»)
+    --   «Ник [12] [5]»                              (число в скобках)
+    local AO_LVL_WORDS = {
+        "Уровень", "уровень", "УРОВЕНЬ",
+        "Уровня", "уровня", "УРОВНЯ",
+        "Уровней", "уровней", "Уровне", "уровне",
+        "Уров", "уров", "УРОВ",
+        "Лвл", "лвл", "ЛВЛ",
+        "Level", "level", "LEVEL", "Lvl", "lvl", "LVL",
+        "Ур", "ур", "УР",
+    }
+    local function aoLvlNum(n)
+        n = tonumber(n)
+        if not n then return nil end
+        if n < 0 or n > 99 then return nil end  -- уровни 0..99, прочее — мусор
+        return math.floor(n)
+    end
     local function aoFindLevel(s)
-        local n = s:match("%|%s*(%d+)")
-        if n then return tonumber(n) end
-        local i = s:find("ровень", 1, true)
-        if not i then
-            i = s:find("lvl", 1, true) or s:find("LVL", 1, true) or s:find("Lvl", 1, true)
+        s = tostring(s or "")
+        -- 1) число ПОСЛЕ метки: «Уровень: 5», «ур. 5», «lvl = 5», «LEVEL 5»
+        for i = 1, #AO_LVL_WORDS do
+            local w = AO_LVL_WORDS[i]
+            local at = s:find(w, 1, true)
+            if at then
+                local n = aoLvlNum(s:sub(at + #w, at + #w + 16)
+                    :match("^[%s%p№%*]*%s*(%d+)"))
+                if n then return n end
+            end
         end
-        if i then
-            local before = s:sub(1, i - 1)
-            n = before:match("(%d+)%s*$")
-            if not n then n = before:match("(%d+)%s*%|%s*$") end
-            if n then return tonumber(n) end
+        -- 2) число ПЕРЕД меткой: «5 уровня», «5-й уровень», «5 lvl», «5 ур.»
+        for i = 1, #AO_LVL_WORDS do
+            local w = AO_LVL_WORDS[i]
+            local at = s:find(w, 1, true)
+            if at then
+                local n = aoLvlNum(s:sub(math.max(1, at - 18), at - 1)
+                    :match("(%d+)[^%d]*$"))
+                if n then return n end
+            end
+        end
+        -- 3) число сразу после «|»: «Ник [12] | 5 | 3 мин». Но время
+        --    («| 15 мин», «| 12:30») уровнем не считаем — это AFK.
+        for num, after in s:gmatch("%|%s*(%d+)%s*(%S*)") do
+            local isTime = after:find("мин", 1, true)
+                or after:find("сек", 1, true)
+                or after:find("час", 1, true)
+                or after:sub(1, 1) == ":"
+            local n = aoLvlNum(num)
+            if n and not isTime then return n end
+        end
+        -- 4) число в скобках: «Ник [12] [5]» (ID ника уже отрезан)
+        local br = aoLvlNum(s:match("%[(%d+)%]"))
+        if br then return br end
+        -- 5) просто число в метаданных: «| Главный администратор 9».
+        --    Строка уже отфильтрована белым списком (иного текста в ней
+        --    быть не может), а время («9 мин») уровнем не считаем.
+        for num, after in s:gmatch("(%d+)%s*(%S*)") do
+            local isTime = after:find("мин", 1, true)
+                or after:find("сек", 1, true)
+                or after:find("час", 1, true)
+                or after:sub(1, 1) == ":"
+            local n = aoLvlNum(num)
+            if n and not isTime then return n end
         end
         return nil
     end
@@ -18938,21 +19011,24 @@ do
         -- Only response metadata is allowed after the nickname, not speech,
         -- punishments, reports, notifications or arbitrary text containing '| N'.
         local rest=(tail or ""):lower()
+        -- v1.19.221: в белый список добавлены «Админ/Адм/Модер» и слова
+        -- уровня в других падежах — иначе строка «Ник [12] | Админ 5 ур.»
+        -- отбраковывалась целиком, и уровень в чекере оставался пустым.
         for _,word in ipairs({"Главный администратор", "Заместитель", "Администратор",
             "главный администратор", "заместитель", "администратор",
-            "Уровень", "уровень", "Уровня", "уровня", "Уровней", "уровней",
+            "Администрация", "администрация", "Админ", "админ",
+            "Адм", "адм", "Модер", "модер", "Модератор", "модератор",
+            "Уровень", "уровень", "УРОВЕНЬ", "Уровня", "уровня", "УРОВНЯ",
+            "Уровней", "уровней", "Уровне", "уровне",
+            "Уров", "уров", "Лвл", "лвл", "ЛВЛ",
+            "Ур", "ур", "УР",          -- «5 ур.», «5 ур»
+            "-й", "й",                 -- «5-й уровень», «5 й ур.»
             "АФК", "Афк", "афк", "Минут", "минут", "мин", "сек", "час",
-            "онлайн", "в сети", "level", "lvl", "afk", "online"}) do
+            "онлайн", "в сети", "level", "lvl", "Lvl", "LVL", "afk", "online"}) do
             rest=rest:gsub(word, "")
         end
         if rest:gsub("[%s%p%d]", "")~="" then return nil end
-        local lvl=aoFindLevel(tail or "")
-        if not lvl then
-            for _,label in ipairs({"Уровень", "уровень", "level", "lvl", "LVL"}) do
-                local value=(tail or ""):match(label.."%s*[:=]?%s*(%d+)")
-                if value then lvl=tonumber(value);break end
-            end
-        end
+        local lvl=aoFindLevel(tail or "")  -- v1.19.221: в самом разборе
         local afk=aoHasAfk(tail or "")
         local afkSec=aoParseAfkSec(tail or "")
         if not lvl and not (AO.gotHeader and afk) then return nil end
@@ -38244,10 +38320,16 @@ end
 --                                (кол-во 1..100 — ползунок)
 --    Заспавнить т/с    /spcars <1|2|3>        одна команда
 --                                (1 админские / 2 незанятые / 3 все)
---    Отобрать оружие / Телепорт всех к себе — команды ещё не назначены.
---  Уровень — из списка чекера «Админы в сети» (GRND_AO.list; админ сам
---  всегда первый — список отсортирован по уровню): не хватает — тост
---  «Нет доступа к данной команде, нужен N-й уровень».
+--    Отобрать оружие   /weapall               одна команда на всех
+--    Телепорт всех     /gethere <id>          уровень 3, по 150 мс
+--                                (на себя не распространяется)
+--  Уровень — из списка чекера «Админы в сети» (GRND_AO.list). Сравнение:
+--  «нужен N-й уровень» значит N И ВЫШЕ (v1.19.221). Себя ищем по ID, затем
+--  по нику (цветовые коды/регистр/подчёркивания не важны), затем — первая
+--  строка списка (список отсортирован по уровню, заказчик там первый), и
+--  помним прошлый результат сессии. Если уровень определить не вышло —
+--  тост «Уровень не определён (…)» и чекер перезапрашивается.
+--  Свой уровень виден в разделе строкой «Уровень: N» + кнопка «Обновить».
 --
 --  Определение игроков (без сторонних плагинов, только MoonLoader):
 --    1) sampIsPlayerConnected(id) — перебор ID 0..1003 (как MP.online:
@@ -38361,9 +38443,12 @@ do
             level = 4, per = true },
         { id = "vehicle",  label = "Заспавнить транспорт", gear = true,
             solo = true },
-        { id = "takeoff",  label = "Отобрать оружие" },
+        { id = "takeoff",  label = "Отобрать оружие", solo = true },
     }
-    RT.wide = { id = "tpself", label = "Телепорт всех к себе" }
+    -- «Телепорт всех к себе» — /gethere ID по игрокам (3-й уровень),
+    -- на себя не распространяется.
+    RT.wide = { id = "tpself", label = "Телепорт всех к себе",
+        level = 3, per = true, skipSelf = true }
 
     -- ID оружия SA-MP (GivePlayerWeapon): ползунок в настройке показывает
     -- имена, в команду /gun подставляется ID выбранного (он же — в подписи).
@@ -38633,30 +38718,113 @@ do
 
     -- Клик по шестерёнке: параметров пока нет, потому что нет команд —
     -- честно говорим, что настройка появится вместе с ними.
-    -- Нормализация ника для сравнения (регистр/пробелы не важны).
+    -- Нормализация ника для сравнения: без цветовых кодов SAMP, без «[12]»,
+    -- без регистра, пробелов, подчёркиваний и знаков.
     local function rtNickKey(st)
-        return tostring(st or ""):lower():gsub("%s+", "")
+        st = tostring(st or ""):gsub("{[%x]+}", ""):gsub("%[%d+%]", "")
+        return st:lower():gsub("[%s_%p]", "")
     end
 
-    -- Мой уровень: из списка чекера «Админы в сети» (GRND_AO.list) —
-    -- ищем себя по ID/нику. Нас нет в списке → nil (для команд с уровнем
-    -- это «нет доступа»).
+    -- Чекер «Админы в сети» включён? "off" — его нет или он выключен.
+    function RT.checker()
+        local AO = _G.GRND_AO
+        if type(AO) ~= "table" then return "off" end
+        if AO.enabled == false then return "off" end
+        return "on"
+    end
+
+    -- Запомнить определённый уровень (в этой сессии): если чекер в момент
+    -- нажатия ещё не успел обновить список, команда не «заблокируется».
+    function RT.rememberLevel(n, nick)
+        n = tonumber(n)
+        if not n then return end
+        RT.lvlSeen = { value = math.floor(n), nick = nick, at = os.clock() }
+    end
+
+    -- Мой уровень: (уровень, источник)
+    --   id / nick — нашли себя в списке чекера;
+    --   first     — себя не нашли, берём первую строку (список отсортирован
+    --               по уровню, заказчик там всегда первый);
+    --   stale     — список пуст/ещё не готов, но уровень уже определялся;
+    --   off/none  — данных нет (чекер выключен / списка нет).
+    -- «с 5-го уровня» — это 5 и ВЫШЕ: сравнение делает вызывающий.
     function RT.myLevel()
         local AO = _G.GRND_AO
         local list = (type(AO) == "table") and AO.list or nil
-        if type(list) ~= "table" or #list == 0 then return nil end
-        local myId, _, _, _, _, _, myNick = rtSelf()
-        for i = 1, #list do
-            local it = list[i]
-            if type(it) == "table" then
-                local byId = (it.id and myId ~= nil)
-                    and (tonumber(it.id) == myId) or false
-                local byNick = (it.nick and myNick and myNick ~= "")
-                    and (rtNickKey(it.nick) == rtNickKey(myNick)) or false
-                if byId or byNick then return tonumber(it.lvl) end
+        if type(list) == "table" and #list > 0 then
+            local okSelf, myId, _, _, _, _, _, myNick = pcall(rtSelf)
+            if not okSelf then myId, myNick = nil, nil end
+            -- 1) по ID
+            if myId ~= nil then
+                for i = 1, #list do
+                    local it = list[i]
+                    if type(it) == "table" and it.id
+                        and tonumber(it.id) == tonumber(myId) then
+                        local n = tonumber(it.lvl)
+                        if n then
+                            RT.rememberLevel(n, it.nick)
+                            return n, "id"
+                        end
+                    end
+                end
+            end
+            -- 2) по нику (цветовые коды/регистр/подчёркивания не важны)
+            local myKey = rtNickKey(myNick)
+            if myKey ~= "" then
+                for i = 1, #list do
+                    local it = list[i]
+                    if type(it) == "table" and it.nick then
+                        local k = rtNickKey(it.nick)
+                        if k ~= "" and (k == myKey
+                                or k:find(myKey, 1, true)
+                                or myKey:find(k, 1, true)) then
+                            local n = tonumber(it.lvl)
+                            if n then
+                                RT.rememberLevel(n, it.nick)
+                                return n, "nick"
+                            end
+                        end
+                    end
+                end
+            end
+            -- 3) первая строка списка (самый старший админ = заказчик)
+            local first = list[1]
+            if type(first) == "table" then
+                local n = tonumber(first.lvl)
+                if n then
+                    RT.rememberLevel(n, first.nick)
+                    return n, "first"
+                end
             end
         end
-        return nil
+        -- 4) помним прошлый определённый уровень этой сессии
+        local seen = RT.lvlSeen
+        if type(seen) == "table" and tonumber(seen.value) then
+            return tonumber(seen.value), "stale"
+        end
+        return nil, (RT.checker() == "off") and "off" or "none"
+    end
+
+    -- Перезапросить список админов: AO.nextAt = 0 → ближайший тик чекера
+    -- отправит /admins. Возвращает (получилось, причина/пояснение).
+    function RT.refreshLevels(force)
+        local AO = _G.GRND_AO
+        if type(AO) ~= "table" then
+            return false, "чекер «Админы в сети» не загружен"
+        end
+        if AO.enabled == false then
+            return false, "включите чекер «Админы в сети» в «Чекерах»"
+        end
+        local now = os.clock()
+        -- ВАЖНО: только если запрос уже был. Иначе первый же клик в первые
+        -- секунды после запуска скрипта (os.clock() ещё меньше 4) считался
+        -- бы «только что запрашивали» и молчал.
+        if not force and RT.lvlAskAt and (now - RT.lvlAskAt) < 4 then
+            return false, "уже запрашиваю"
+        end
+        RT.lvlAskAt = now
+        AO.nextAt = 0
+        return true, "обновляю списком админов"
     end
 
     -- Команда действия. p — игрок (для команд по игрокам) или nil
@@ -38684,6 +38852,8 @@ do
         if id == "vehicle" then
             return "/spcars " .. tostring(S.vehicle.mode)
         end
+        if id == "takeoff" then return "/weapall" end
+        if id == "tpself" then return "/gethere " .. s end
         return nil
     end
 
@@ -38749,13 +38919,25 @@ do
         local act = RT.actById(id)
         if not act then return false end
         if act.level and act.level > 0 then
+            -- «нужен N-й уровень» = N и ВЫШЕ: ниже — отказ, выше — проходим
             local lv = RT.myLevel()
-            if (lv or 0) < act.level then
+            if lv and lv < act.level then
                 rtToast("Нет доступа к данной команде, нужен "
                     .. tostring(act.level) .. "-й уровень", "warn", 3.5)
                 RT.lastAct = string.format(
-                    "%s: нет доступа (нужен %d-й уровень)",
-                    act.label, act.level)
+                    "%s: нет доступа (уровень %d, нужен %d-й)",
+                    act.label, lv, act.level)
+                return false
+            end
+            if not lv then
+                -- уровень определить не вышло: говорим об этом прямо и
+                -- просим чекер обновиться (раньше молча решалось «нет»)
+                local _, why = RT.refreshLevels()
+                rtToast("Уровень не определён (" .. tostring(why)
+                    .. ") — нужен " .. tostring(act.level) .. "-й уровень",
+                    "warn", 4.2)
+                RT.lastAct = string.format("%s: уровень не определён (%s)",
+                    act.label, tostring(why))
                 return false
             end
         end
@@ -38788,7 +38970,7 @@ do
             local cmds, names = {}, {}
             for i = 1, #list do
                 local pl = list[i]
-                if not (id == RT.wide.id and pl.self) then
+                if not (act.skipSelf and pl.self) then
                     local c = RT.cmdFor(id, pl)
                     if not c then
                         rtToast("«" .. act.label .. "»: сначала заполните "
@@ -39052,7 +39234,34 @@ do
         end
         y = y + bh + 10
 
-        -- ---------- сетка действий 3×3 (порядок — из макета) ----------
+        -- ---------- строка уровня (v1.19.221) ----------
+        -- Видно, что именно увидел скрипт: уровень и источник. Кнопка
+        -- «Обновить» просит чекер «Админы в сети» перезапросить /admins.
+        do
+            local lvl, lsrc = RT.myLevel()
+            local txt
+            if lvl then
+                local note = " · чекер"
+                if lsrc == "first" then note = " · первая строка"
+                elseif lsrc == "stale" then note = " · прошлый раз"
+                elseif lsrc == "nick" then note = " · по нику" end
+                txt = "Уровень: " .. tostring(lvl) .. note
+            elseif RT.checker() == "off" then
+                txt = "Уровень: чекер выключен"
+            else
+                txt = "Уровень: нет данных чекера"
+            end
+            R.uiText(cx, y, txt, lvl and mut or dim, 0.78)
+            if R.button("rt_lvl_refresh", cx + cw - 84, y - 3, 84, 20,
+                "Обновить", {}) then
+                local askOk, why = RT.refreshLevels(true)
+                rtToast(askOk and "Обновляю список админов…"
+                    or ("Не вышло: " .. tostring(why)),
+                    askOk and "info" or "warn", 2.8)
+            end
+            y = y + 18
+        end
+
         -- ---------- содержимое: сетка 3×3 или настройки шестерёнки ----------
         if RT.settingsOpen and RT.settings[RT.settingsOpen] then
             -- открытая настройка (оружие/скин/броня/транспорт) вместо сетки

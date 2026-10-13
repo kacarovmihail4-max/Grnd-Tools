@@ -1,5 +1,5 @@
 -- =====================================================================
--- Стенд v1.19.220: раздел «ВЫДАЧА В РАДИУСЕ» (GRND_RT).
+-- Стенд v1.19.221: раздел «ВЫДАЧА В РАДИУСЕ» (GRND_RT).
 --
 -- Загружает блок do...end между якорями GRND_RADTOOLS_* как функцию
 -- (то же, что для автопилота): игровые функции и конфиг — аргументы,
@@ -10,8 +10,11 @@
 --   * радиус: смена ±, клип 1..200, сохранение/загрузка конфига;
 --   * команды v1.19.220: /spawn, /freeze, /unfreeze, /gun, /setskin,
 --     /hpall, /arm, /spcars — точный текст команды;
---   * уровень из списка чекера «Админы в сети» (GRND_AO.list): не
---     хватает — тост «Нет доступа к данной команде, нужен N-й уровень»;
+--   * уровень из списка чекера «Админы в сети» (GRND_AO.list): «нужен
+--     N-й уровень» = N и ВЫШЕ, ниже — тост «Нет доступа к данной
+--     команде, нужен N-й уровень»; себя ищем по ID, затем по нику,
+--     затем берём первую строку списка, и помним уровень сессии;
+--     уровень не определён — тост про чекер и перезапрос /admins;
 --   * очередь выдачи: по одной команде за 150 мс (RT.tick);
 --   * настройки шестерёнок (панель вместо сетки): оружие (ползунок по
 --     именам + патроны), скин (поле ввода), броня (1..100), транспорт
@@ -236,6 +239,39 @@ _G.GRND_AO.list[1] = { nick = "  sELf ", lvl = 4 }
 check(RT.myLevel() == 4,
     "уровень: поиск по нику (регистр/пробелы) — если ID не совпал")
 _G.GRND_AO.list[1] = { nick = "Self", id = 1, lvl = 2 }
+-- источники уровня (v1.19.221): по ID, по нику, первая строка, память
+do
+    local lv, src = RT.myLevel()
+    check(lv == 2 and src == "id", "уровень: найден по ID: "
+        .. tostring(lv) .. "/" .. tostring(src))
+    _G.GRND_AO.list = { { nick = "Другой_Ник", id = 77, lvl = 9 },
+        { nick = "{FFCC66}Self{FFFFFF}", lvl = 6 } }
+    lv, src = RT.myLevel()
+    check(lv == 6 and src == "nick",
+        "уровень: найден по нику в цвете: " .. tostring(lv) .. "/"
+        .. tostring(src))
+    _G.GRND_AO.list = { { nick = "Starshij_Admin", id = 70, lvl = 8 } }
+    lv, src = RT.myLevel()
+    check(lv == 8 and src == "first",
+        "уровень: себя нет — берём первую строку: " .. tostring(lv) .. "/"
+        .. tostring(src))
+    _G.GRND_AO.list = {}
+    lv, src = RT.myLevel()
+    check(lv == 8 and src == "stale",
+        "уровень: список пуст — помним прошлый: " .. tostring(lv) .. "/"
+        .. tostring(src))
+    _G.GRND_AO.list = { { nick = "Self", id = 1, lvl = 2 } }
+    RT.lvlSeen = nil
+    _G.GRND_AO = nil
+    lv, src = RT.myLevel()
+    check(lv == nil and src == "off",
+        "уровень: чекера нет → off (не «ноль-уровень»)")
+    _G.GRND_AO = { enabled = false, list = {} }
+    lv, src = RT.myLevel()
+    check(lv == nil and src == "off", "уровень: чекер выключен → off")
+    _G.GRND_AO = { enabled = true, list = { { nick = "Self", id = 1, lvl = 5 } } }
+    check(RT.checker() == "on", "чекер: включён")
+end
 -- требования уровня по кнопкам (v1.19.220)
 local lvMap = {}
 for i = 1, #RT.actions do
@@ -281,10 +317,21 @@ check(RT.cmdFor("hp", p7) == "/hpall", "команда: /hpall не зависи
 RT.settings.vehicle.mode = 2
 check(RT.cmdFor("vehicle", nil) == "/spcars 2",
     "команда: /spcars {режим}")
-check(RT.cmdFor("takeoff", p7) == nil,
-    "команда: «Отобрать оружие» — ещё не назначена")
+check(RT.cmdFor("takeoff", p7) == "/weapall",
+    "команда: «Отобрать оружие» → /weapall (одна на всех)")
+check(RT.cmdFor("tpself", p7) == "/gethere 7",
+    "команда: «Телепорт всех к себе» → /gethere ID")
+check(RT.actById("tpself") ~= nil and RT.actById("tpself").level == 3
+    and RT.actById("tpself").per == true,
+    "«Телепорт всех»: 3-й уровень и выдача по игрокам")
+check(RT.actById("takeoff").solo == true,
+    "«Отобрать оружие»: одна команда на всех")
 
 -- ---------- гейт по уровню ----------
+-- «нужен N-й уровень» = N и ВЫШЕ: проверяем отказ ниже и проход на N и выше
+_G.GRND_AO.list[1] = { nick = "Self", id = 1, lvl = 2 }
+_G.GRND_AO.enabled = true
+RT.lvlSeen = nil
 RT.settings.weapon.sel = 1
 RT.settings.weapon.ammo = 30
 local before = #sent
@@ -308,6 +355,43 @@ check(toasts[#toasts].text == "Нет доступа к данной коман�
 RT.doAction("hp")
 check(toasts[#toasts].text == "Нет доступа к данной команде, нужен 4-й уровень",
     "уровень 2: тост про 4-й уровень (хп)")
+
+-- уровень определить не вышло: честный тост + перезапрос чекера
+do
+    _G.GRND_AO.list = {}
+    RT.lvlSeen = nil
+    _G.GRND_AO.nextAt = os.clock() + 60
+    before = #sent
+    RT.doAction("weapon")
+    check(#sent == before, "уровень неизвестен: чат не трогаем")
+    check(toasts[#toasts].text:find("Уровень не определён", 1, true) ~= nil
+        and toasts[#toasts].text:find("5-й уровень", 1, true) ~= nil,
+        "уровень неизвестен: тост «Уровень не определён (…) — нужен 5-й»: "
+        .. tostring(toasts[#toasts].text))
+    check(_G.GRND_AO.nextAt == 0,
+        "уровень неизвестен: чекеру заказан перезапрос (nextAt=0)")
+    check(RT.lastAct and RT.lastAct:find("уровень не определён", 1, true),
+        "уровень неизвестен: «Было:» — уровень не определён")
+    -- повторное нажатие в пределах 4 с: не долбим чекер запросами
+    _G.GRND_AO.nextAt = os.clock() + 60
+    RT.doAction("weapon")
+    check(toasts[#toasts].text:find("уже запрашиваю", 1, true) ~= nil
+        and _G.GRND_AO.nextAt ~= 0,
+        "уровень неизвестен: перезапрос не чаще раза в 4 с")
+    -- кнопка «Обновить» — запрос принудительный (force)
+    check(RT.refreshLevels(true) == true and _G.GRND_AO.nextAt == 0,
+        "кнопка «Обновить»: перезапрос даже в пределах 4 с")
+    -- чекер выключен — говорим об этом прямо
+    _G.GRND_AO = { enabled = false, list = {} }
+    local okAsk, why = RT.refreshLevels(true)
+    check(okAsk == false and tostring(why):find("включите чекер", 1, true),
+        "чекер выключен: понятная причина: " .. tostring(why))
+    RT.doAction("weapon")
+    check(toasts[#toasts].text:find("включите чекер", 1, true) ~= nil,
+        "чекер выключен: тост про включение чекера: "
+        .. tostring(toasts[#toasts].text))
+    _G.GRND_AO = { enabled = true, list = { { nick = "Self", id = 1, lvl = 5 } } }
+end
 
 -- уровень поднят: команды доступны
 _G.GRND_AO.list[1].lvl = 5
@@ -408,12 +492,26 @@ check(toasts[#toasts].text:find("никого", 1, true),
     "пустой радиус: тост «никого»")
 RT.setRadius(25)
 
--- «Отобрать оружие» — команда ещё не назначена (честно, без выдумок)
+-- «Отобрать оружие» (/weapall) и «Телепорт всех» (/gethere ID)
 before = #sent
-check(RT.doAction("takeoff") == false and #sent == before,
-    "takeoff: чат не трогаем")
-check(toasts[#toasts].text:find("команда ещё не назначена", 1, true),
-    "takeoff: тост «команда ещё не назначена»")
+check(RT.doAction("takeoff") == true and #sent - before == 1
+    and sent[#sent] == "/weapall",
+    "takeoff: /weapall — одна команда на всех")
+_G.GRND_AO.list[1].lvl = 2
+before = #sent
+RT.doAction("tpself")
+check(#sent == before, "tpself на 2-м уровне: чат не трогаем")
+check(toasts[#toasts].text
+    == "Нет доступа к данной команде, нужен 3-й уровень",
+    "tpself на 2-м уровне: тост про 3-й уровень")
+_G.GRND_AO.list[1].lvl = 3
+before = #sent
+check(RT.doAction("tpself") == true, "tpself на 3-м уровне: разрешён")
+pump(0.05)  -- 3 игрока в радиусе: 3 команды
+check(#sent - before == 3 and sent[#sent - 2] == "/gethere 7"
+    and sent[#sent] == "/gethere 2",
+    "tpself: /gethere по игрокам: " .. table.concat(sent, " | "))
+_G.GRND_AO.list[1].lvl = 5
 
 -- падение отправки
 qr.sendChat = function() return false end
@@ -633,47 +731,49 @@ RT.lastAct = "Заспавнить: 3/3 (Nick7, Nick4, Nick2)"
 resetDrawn()
 local y1 = RT.page(mkR(), 10, y0, cw)
 check(type(y1) == "number" and y1 > y0, "page: y растёт")
-check(#clicks == 12,
-    "page: 12 кнопок (−, +, 9 сетки, tp; шестерёнки — без подложки): "
-    .. #clicks)
-check(clicks[1] and clicks[1].key == "rt_minus" and clicks[1].w == 26,
-    "page: «−» слева 26×26")
-check(clicks[2] and clicks[2].key == "rt_plus", "page: «+»")
--- порядок сетки 3×3 (шестерёнки — не кнопки, а значки кликовой зоны)
-local expect = {
-    "rt_act_spawn", "rt_act_freeze", "rt_act_unfreeze",
-    "rt_act_weapon", "rt_act_skin", "rt_act_hp",
-    "rt_act_armor", "rt_act_vehicle", "rt_act_takeoff",
-}
-local orderOk = true
-for i = 1, #expect do
-    if clicks[2 + i] == nil or clicks[2 + i].key ~= expect[i] then
-        orderOk = false
+-- кнопки ищем по ключу: список ниже задаёт и состав, и порядок страницы
+local function clickOf(key)
+    for i = 1, #clicks do
+        if clicks[i].key == key then return clicks[i], i end
     end
+    return nil
 end
-check(orderOk, "page: сетка 3×3 в порядке макета (вкл. rt_act_hp)")
-check(clicks[12] and clicks[12].key == "rt_tp" and clicks[12].w == cw
-    and clicks[12].label == "Телепорт всех к себе",
+local function clickOrder()
+    local out = {}
+    for i = 1, #clicks do out[i] = clicks[i].key end
+    return table.concat(out, ",")
+end
+check(#clicks == 13,
+    "page: 13 кнопок (радиус, уровень, 9 сетки, tp): " .. #clicks)
+check(clickOrder() == "rt_minus,rt_plus,rt_lvl_refresh,"
+    .. "rt_act_spawn,rt_act_freeze,rt_act_unfreeze,"
+    .. "rt_act_weapon,rt_act_skin,rt_act_hp,"
+    .. "rt_act_armor,rt_act_vehicle,rt_act_takeoff,rt_tp",
+    "page: порядок кнопок, сетка 3×3 по макету: " .. clickOrder())
+local minus, plus = clickOf("rt_minus"), clickOf("rt_plus")
+check(minus and minus.w == 26, "page: «−» слева 26×26")
+check(plus and plus.w == 26, "page: «+» справа 26×26")
+local tp = clickOf("rt_tp")
+check(tp and tp.w == cw and tp.label == "Телепорт всех к себе",
     "page: широкая «Телепорт всех к себе» на всю ширину")
--- отступ: широкая кнопка чётко НИЖЕ сетки (последний ряд кончается на
--- y0+4+26+10+94; кнопка — ещё через 12 px)
-local gridEnd = y0 + 4 + 26 + 10 + 3 * (26 + 8) - 8
-check(clicks[12] and clicks[12].y >= gridEnd + 12 - 0.01
-    and clicks[12].y <= gridEnd + 20,
-    "page: «Телепорт» сдвинут ниже сетки (y="
-    .. tostring(clicks[12] and clicks[12].y) .. ")")
+-- отступ: широкая кнопка чётко НИЖЕ сетки (между ними — строка уровня)
+local gridEnd = y0 + 4 + 26 + 10 + 18 + 3 * (26 + 8) - 8
+check(tp and tp.y >= gridEnd + 12 - 0.01 and tp.y <= gridEnd + 20,
+    "page: «Телепорт» сдвинут ниже сетки (y=" .. tostring(tp and tp.y) .. ")")
 -- ровная сетка: все 9 кнопок одной ширины
-local actIdx = {}
-for i = 3, 11 do actIdx[#actIdx + 1] = i end
-local bw0 = clicks[actIdx[1]] and clicks[actIdx[1]].w
-local evenOk = bw0 and bw0 > 40
-for i = 1, #actIdx do
-    if clicks[actIdx[i]] == nil
-        or math.abs(clicks[actIdx[i]].w - bw0) > 0.01 then
+local actKeys = { "spawn", "freeze", "unfreeze", "weapon", "skin", "hp",
+    "armor", "vehicle", "takeoff" }
+local bw0, evenOk = nil, true
+for i = 1, #actKeys do
+    local c = clickOf("rt_act_" .. actKeys[i])
+    if c == nil then
         evenOk = false
+    else
+        if not bw0 then bw0 = c.w end
+        if math.abs(c.w - bw0) > 0.01 then evenOk = false end
     end
 end
-check(evenOk, "page: все 9 кнопок одной ширины")
+check(evenOk and bw0 ~= nil and bw0 > 40, "page: все 9 кнопок одной ширины")
 -- шестерёнки: БЕЗ подложки (не в списке кнопок), значок вплотную
 -- за краем кнопки (зона 30×30 начинается от края: +15 до центра)
 local gearKeys = {}
@@ -681,10 +781,10 @@ for i = 1, #gears do gearKeys[i] = gears[i].key end
 check(table.concat(gearKeys, ",")
     == "rt_gear_weapon,rt_gear_skin,rt_gear_armor,rt_gear_vehicle",
     "page: 4 шестерёнки без подложки: " .. table.concat(gearKeys, ","))
-local gearBtnIdx = { 6, 7, 9, 10 } -- weapon, skin, armor, vehicle
+local gearIds = { "weapon", "skin", "armor", "vehicle" }
 local gearOut = true
 for i = 1, 4 do
-    local btn, ic = clicks[gearBtnIdx[i]], gears[i]
+    local btn, ic = clickOf("rt_act_" .. gearIds[i]), gears[i]
     if btn == nil or ic == nil
         or math.abs(ic.x - (btn.x + btn.w + 15)) > 0.01
         or math.abs(ic.y - (btn.y + 13)) > 0.01 then
@@ -692,6 +792,16 @@ for i = 1, 4 do
     end
 end
 check(gearOut, "page: значок вплотную за краем кнопки (без налёта)")
+-- строка уровня (v1.19.221): видно уровень и источник + кнопка «Обновить»
+local lvlRow = nil
+for i = 1, #drawn do
+    if tostring(drawn[i].t):find("Уровень:", 1, true) then lvlRow = drawn[i] end
+end
+check(lvlRow ~= nil and lvlRow.t:find("5", 1, true) ~= nil,
+    "page: строка «Уровень: N» есть: " .. tostring(lvlRow and lvlRow.t))
+local lvlBtn = clickOf("rt_lvl_refresh")
+check(lvlBtn ~= nil and lvlBtn.w == 84 and lvlBtn.label == "Обновить",
+    "page: кнопка «Обновить» у строки уровня")
 local joined = {}
 for i = 1, #drawn do joined[i] = drawn[i].t end
 joined = table.concat(joined, "\n")
@@ -780,8 +890,8 @@ end
 RT.settingsOpen = "weapon"
 resetDrawn()
 RT.page(mkR(), 10, y0, cw)
-check(keys(clicks) == "rt_minus,rt_plus,rt_set_close,rt_set_wminus,"
-    .. "rt_set_wplus,rt_set_aminus,rt_set_aplus",
+check(keys(clicks) == "rt_minus,rt_plus,rt_lvl_refresh,rt_set_close,"
+    .. "rt_set_wminus,rt_set_wplus,rt_set_aminus,rt_set_aplus",
     "настройка оружия: закрытие и ± ползунков (радиус сверху): "
     .. keys(clicks))
 check(#sliders == 3 and sliders[1].id == "rt_radius_sl"
@@ -858,19 +968,19 @@ for i = 1, #drawn do vtxt[i] = drawn[i].t end
 vtxt = table.concat(vtxt, "\n")
 check(vtxt:find("НАСТРОЙКА: ТРАНСПОРТ", 1, true) ~= nil,
     "настройка транспорта: заголовок панели")
-check(clicks[4] and clicks[4].key == "rt_set_veh1"
-    and clicks[4].label == "Админские"
-    and clicks[5] and clicks[5].label == "Незанятые"
-    and clicks[6] and clicks[6].label == "Все",
+check(clicks[5] and clicks[5].key == "rt_set_veh1"
+    and clicks[5].label == "Админские"
+    and clicks[6] and clicks[6].label == "Незанятые"
+    and clicks[7] and clicks[7].label == "Все",
     "настройка транспорта: 3 кнопки: " .. keys(clicks))
-check(clicks[4] and clicks[4].opts and clicks[4].opts.selected == true
-    and clicks[5] and clicks[5].opts and clicks[5].opts.selected == false
-    and clicks[6] and clicks[6].opts and clicks[6].opts.selected == false,
+check(clicks[5] and clicks[5].opts and clicks[5].opts.selected == true
+    and clicks[6] and clicks[6].opts and clicks[6].opts.selected == false
+    and clicks[7] and clicks[7].opts and clicks[7].opts.selected == false,
     "настройка транспорта: подсвечен текущий режим («Админские»)")
 resetDrawn()
 RT.page(mkR(), 10, y0, cw)
-check(clicks[5] and clicks[5].opts and clicks[5].opts.selected == true
-    and clicks[4] and clicks[4].opts.selected == false,
+check(clicks[6] and clicks[6].opts and clicks[6].opts.selected == true
+    and clicks[5] and clicks[5].opts.selected == false,
     "настройка транспорта: подсветка перешла на «Незанятые»")
 check(RT.cmdFor("vehicle", nil) == "/spcars 2",
     "настройка транспорта: режим идёт в /spcars")
@@ -885,7 +995,8 @@ RT.page(mkR({ rt_set_close = true }), 10, y0, cw)
 check(RT.settingsOpen == nil, "настройка: «Закрыть» → назад к сетке")
 resetDrawn()
 RT.page(mkR(), 10, y0, cw)
-check(#clicks == 12, "настройка: после закрытия — снова сетка 9+2+1")
+check(#clicks == 13,
+    "настройка: после закрытия — снова сетка (радиус, уровень, 9, tp)")
 -- настройки без textInput/frameRect (старый рендерер) — не падает
 RT.settingsOpen = "skin"
 resetDrawn()
@@ -894,6 +1005,21 @@ stubNo.textInput, stubNo.frameRect = nil, nil
 local okNoInput = pcall(RT.page, stubNo, 10, y0, cw)
 check(okNoInput, "настройка скина: рендерер без поля ввода — без ошибки")
 RT.settingsOpen = nil
+
+-- кнопка «Обновить» у строки уровня: перезапрос чекера прямо из раздела
+do
+    _G.GRND_AO = { enabled = true, list = { { nick = "Self", id = 1, lvl = 5 } } }
+    RT.lvlSeen = nil
+    _G.GRND_AO.nextAt = os.clock() + 60
+    RT.lvlAskAt = nil
+    local beforeT2 = #toasts
+    resetDrawn()
+    RT.page(mkR({ rt_lvl_refresh = true }), 10, y0, cw)
+    check(_G.GRND_AO.nextAt == 0, "page: «Обновить» → чекер перезапросит /admins")
+    check(#toasts == beforeT2 + 1 and toasts[#toasts].text
+        :find("Обновляю список админов", 1, true) ~= nil,
+        "page: «Обновить» → тост: " .. tostring(toasts[#toasts].text))
+end
 
 -- защита: мусорный рендерер не роняет страницу
 check(RT.page(nil, 0, 0, 100) == 0, "page: R=nil → y")
