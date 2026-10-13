@@ -24,19 +24,27 @@ local a1 = assert(src:find("-- >>> GRND_UPDATE_BEGIN"))
 local a2 = assert(src:find("-- <<< GRND_UPDATE_END"))
 local block = src:sub(a1, a2 - 1)
 
-local V = "1.19.227"       -- текущая версия скрипта
-local NEW = "1.19.228"     -- версия в канале
-local OLD = "1.19.226"     -- что отдаёт зеркало из кэша
+local V = "1.19.228"       -- текущая версия скрипта
+local NEW = "1.19.229"     -- версия в канале
+local OLD = "1.19.227"     -- что отдаёт зеркало из кэша
 
 local SCRIPT_PATH = "/game/moonloader/grnd_adm_tools.lua"
-local CFG_PATH = "/game/moonloader/grnd_update.cfg"
-local LOG_PATH = "/game/moonloader/grnd_update.log"
+local CFG_PATH = "/game/moonloader/config/grnd_tools/grnd_update.cfg"
+local CFG_LEGACY = "/game/moonloader/grnd_update.cfg"
+local JUNK_TXT = "/game/moonloader/grnd_update.txt"
+local JUNK_LOG = "/game/moonloader/grnd_update.log"
 
 -- ---------- стабы ----------
 _G.grndIsSpawnedSafe = function() return _G.__spawned and true or false end
 _G.GRND_SCRIPT_VERSION = V
 _G.GRND_QR = { toast = function(text, kind, life)
-    table.insert(_G.__toasts, { text = text, kind = kind, life = life })
+    -- у скрипта такого метода нет, и он не должен зваться: проверяем ниже,
+    -- что тосты идут через notify.add
+    _G.__qrToasts = (_G.__qrToasts or 0) + 1
+end }
+_G.notify = { add = function(text, kind, life, force)
+    table.insert(_G.__toasts, { text = text, kind = kind, life = life,
+        force = force })
 end }
 local reloaded = 0
 _G.thisScript = function()
@@ -170,6 +178,48 @@ local function inetBackend()
     return { w = w, ffi = ffi }
 end
 
+-- Общий конфиг скрипта: в игре это GRND_CONFIG (config.json), в стенде —
+-- подделка с тем же API. Секции живут в памяти, файлов не создаётся.
+local gconf = { sections = {}, opens = 0, missing = 0 }
+local function installGRND_CONFIG()
+    _G.GRND_CONFIG = {
+        sources = { grnd_update = "update" },
+        open = function(path, mode)
+            gconf.opens = gconf.opens + 1
+            local name = tostring(path):match("([^/\\]+)%.cfg$")
+            local section = _G.GRND_CONFIG.sources[name]
+            if not section then error("Unknown configuration domain: " .. tostring(path)) end
+            if tostring(mode or "r"):sub(1, 1) == "r" then
+                local body = gconf.sections[section]
+                if not body then gconf.missing = gconf.missing + 1
+                    return nil, "section not present" end
+                local done = false
+                return {
+                    read = function(_, fmt)
+                        assert(not done)
+                        done = true
+                        return body
+                    end,
+                    close = function() return true end,
+                }
+            end
+            local chunks = {}
+            return {
+                write = function(_, ...)
+                    for i = 1, select("#", ...) do
+                        chunks[#chunks + 1] = tostring((select(i, ...)))
+                    end
+                    return true
+                end,
+                close = function()
+                    gconf.sections[section] = table.concat(chunks)
+                    return true
+                end,
+            }
+        end,
+    }
+end
+
 local mkModule = assert(load("return function()\n" .. block
     .. "\n    return _G.GRND_UPDATE\nend", "@upd_test"))
 local U = mkModule()()
@@ -200,8 +250,10 @@ local function resetU()
     plan, inetLog = {}, { urls = {} }
     U.io = stubIO
     U.CHANNELS = { CHA, CH1, CH2, CH3 }
+    gconf.sections, gconf.opens, gconf.missing = {}, 0, 0
+    installGRND_CONFIG()
     U.moonDl = downloadStub
-    U.inet, U.inetErr = nil, nil
+    U.inet, U.inetErr, U.road = nil, nil, nil
     U.inetLoad = function() return nil end -- WinINet «недоступен» по умолчанию
     U.state, U.err = "idle", nil
     U.job, U.newVer, U.notes, U.installed = nil, nil, nil, false
@@ -410,15 +462,21 @@ check(dl(1).url:find("https://api.test/contents/update.txt?ref=grnd-latest", 1, 
 succeed(1, apiJson(V .. "\n"))
 U.tick()
 check(U.state == "uptodate", "та же версия: состояние uptodate")
-check(hasToast("Версия " .. V .. " — последняя"), "та же версия: тост про последнюю")
+check(hasToast("Обновлений нет — версия " .. V),
+    "та же версия: тост «Обновлений нет»")
+check(not hasToast("Версия " .. V .. " — последняя"),
+    "та же версия: старый текст тоста не используется")
 check(#downloads == 1, "та же версия: файл скрипта не качается")
 check(FS[SCRIPT_PATH] == "-- старый скрипт\n", "та же версия: файл цел")
 check(U.activeId == "api", "та же версия: канал запомнен")
-check((FS[CFG_PATH] or ""):find("channel=api", 1, true) ~= nil,
-    "конфиг: канал сохранён")
+check((gconf.sections.update or ""):find("channel=api", 1, true) ~= nil,
+    "настройки: канал сохранён в общем конфиге скрипта (секция update)")
+check(gconf.opens > 0, "настройки: пишем через GRND_CONFIG, а не файлом")
+check(FS[CFG_PATH] == nil, "настройки: отдельного файла рядом со сборкой нет")
 check(U.window == true, "ручная проверка: окно открыто")
-check(logText():find("api: версия " .. V, 1, true) ~= nil,
-    "диагностика: пишется в файл (в окне её нет)")
+check(#logs == 0, "диагностика: никаких файлов не создаётся")
+check(table.concat(U.logs or {}, "\n"):find("api: версия " .. V, 1, true) ~= nil,
+    "диагностика: живёт в памяти (видна кнопкой «Проверить каналы»)")
 
 -- ---------- 5. новая версия через api: JSON → git/blobs ----------
 resetU()
@@ -460,8 +518,8 @@ check(dl(1).url:find("https://statically.test/update.txt?v=", 1, true) ~= nil,
     "зеркало: к адресу добавлена метка времени (кэш не подсовывается)")
 succeed(1, V .. "\n")
 U.tick()
-check((FS[CFG_PATH] or ""):find("channel=statically", 1, true) ~= nil,
-    "зеркало: ответившее запоминается в конфиге")
+check((gconf.sections.update or ""):find("channel=statically", 1, true) ~= nil,
+    "зеркало: ответившее запоминается в общем конфиге")
 
 -- ---------- 7. зеркало отдало прошлую версию ----------
 -- только зеркала, все со старым файлом из кэша → это НЕ «нет связи»
@@ -474,10 +532,11 @@ check(#downloads == 2, "кэш: после старой версии идём к
 succeed(2, OLD)          -- jsdelivr: тоже старый (кэш 12 часов)
 U.tick()
 check(U.state == "uptodate", "кэш: всех обошли — считаем, что версия свежая")
-check(hasToast("Версия " .. V .. " — последняя"), "кэш: говорим «последняя»")
+check(hasToast("Обновлений нет — версия " .. V),
+    "кэш: говорим «Обновлений нет», а не «нет связи»")
 check(not hasToast("нет связи"), "кэш: про «нет связи» не пугаем")
-check(logText():find("файл из кэша", 1, true) ~= nil,
-    "кэш: причина видна в диагностике (файл)")
+check(table.concat(U.logs or {}, "\n"):find("файл из кэша", 1, true) ~= nil,
+    "кэш: причина видна в диагностике (в памяти)")
 
 -- зеркало старое, а api отвечает свежим — обновление всё равно пошло
 resetU()
@@ -524,19 +583,45 @@ U.tick()
 check(#downloads == 2, "таймаут: молчащий загрузчик — следующий канал")
 
 -- ---------- 9. вторая дорога: WinINet ----------
--- штатный загрузчик молчит → та же ссылка идёт через WinINet
+-- файл версии при доступном WinINet читается В ПАМЯТЬ: никаких файлов
 resetU()
 U.inetLoad = inetBackend
 plan["https://api.test/contents/update.txt?ref=grnd-latest"] = V .. "\n"
 U.check("manual")
-now = now + 20
-U.tick()
-check(#inetLog.urls >= 1, "мост: молчащий MoonLoader → WinINet")
+check(#downloads == 0, "память: файл версии не идёт через файловый загрузчик")
+check(inetLog.headers ~= nil, "память: заголовки запроса передаются")
 local guard = 0
 while U.state == "checking" and guard < 200 do U.tick() guard = guard + 1 end
-check(U.state == "uptodate", "мост: WinINet дочитал версию")
-check(inetLog.eof and inetLog.eof >= 1, "мост: поток дочитан до конца")
-check(inetLog.closed and inetLog.closed >= 1, "мост: соединение закрыто")
+check(U.state == "uptodate", "память: версия прочитана")
+check(inetLog.eof and inetLog.eof >= 1, "память: поток дочитан до конца")
+check(inetLog.closed and inetLog.closed >= 1, "память: соединение закрыто")
+check(FS[JUNK_TXT] == nil, "память: grnd_update.txt не создавался")
+check(#logs == 0, "память: ни строки в файлы")
+
+-- WinINet не смог по одному адресу — версия идёт штатным загрузчиком, а если
+-- тот молчит на самом скрипте, WinINet доносит файл (эстафета дорог)
+resetU()
+U.inetLoad = inetBackend
+plan["https://api.test/contents/update.txt?ref=grnd-latest"] = nil -- WinINet мимо
+plan["https://api.test/contents/grnd_adm_tools.lua?ref=grnd-latest"] = apiJsonBig("beef")
+plan["https://api.test/git/blobs/beef"] = blobJson(newBody(NEW, "через мост"))
+U.check("manual")
+check(#downloads == 1, "мост: без WinINet версию берёт штатный загрузчик")
+succeed(1, apiJson(NEW))
+U.tick()
+check(U.state == "downloading", "мост: версия пришла, качаем скрипт")
+check(U.road == "moon", "мост: штатная дорога запомнена")
+check(#downloads == 2, "мост: скрипт отдан штатному загрузчику")
+now = now + 70 -- штатный загрузчик молчит: срабатывает таймаут
+U.tick()
+check(#inetLog.urls >= 1, "мост: молчащий MoonLoader → WinINet")
+check(U.road == "inet", "мост: дорога сменилась на WinINet")
+guard = 0
+while U.state ~= "ready" and guard < 800 do U.tick() guard = guard + 1 end
+check(U.state == "ready", "мост: файл доехал через WinINet")
+check(FS[SCRIPT_PATH]:find('GRND_SCRIPT_VERSION = "' .. NEW .. '"', 1, true) ~= nil,
+    "мост: новый файл встал на место")
+check(FS[SCRIPT_PATH .. ".bak"] ~= nil, "мост: бэкап сделан")
 
 -- WinINet как единственная дорога (downloadUrlToFile в сборке нет)
 resetU()
@@ -611,7 +696,9 @@ check(hasToast("Проверяю обновления"), "спавн: тост �
 succeed(1, V .. "\n")
 U.tick()
 check(U.state == "uptodate", "спавн: проверка завершилась")
-check(not hasToast("последняя"), "спавн: про «последнюю версию» молчим")
+check(hasToast("Обновлений нет — версия " .. V),
+    "спавн: результат проверки видно тостом")
+check(hasToast("Проверяю обновления"), "спавн: тост проверки тоже был")
 
 -- следующий заход (через полминуты) — проверяем снова
 wallNow = wallNow + 30
@@ -628,7 +715,7 @@ check(#downloads == 3, "спавн: через полминуты — снова
 
 -- period: реже, если задан
 resetU()
-FS[CFG_PATH] = "auto=1\nperiod=10800\nlast=0\n"
+gconf.sections.update = "auto=1\nperiod=10800\nlast=0\n"
 _G.__spawned = true
 U.tick()
 check(U.state == "checking", "period=10800: первый заход проверяет")
@@ -653,7 +740,7 @@ U.job = nil
 
 -- авто-проверка выключается
 resetU()
-FS[CFG_PATH] = "auto=0\nperiod=0\nlast=0\n"
+gconf.sections.update = "auto=0\nperiod=0\nlast=0\n"
 _G.__spawned = true
 U.tick()
 check(#downloads == 0, "auto=0: при заходе не проверяем")
@@ -793,6 +880,58 @@ plain.Button = function() return false end
 U.window = true
 check(U.draw({ im = plain, begin = function() return plain.Begin() end,
     endWin = function() end }) == true, "окно: рисуется и без TextColored")
+
+-- ---------- 13a. чистая сборка: никаких файлов рядом со скриптом ----------
+-- мусор от прежних версий убирается при запуске
+resetU()
+FS[JUNK_TXT] = "1.19.226\n"
+FS[JUNK_LOG] = "22:58:44 проверка (session)\n"
+U.tidyUp()
+check(FS[JUNK_TXT] == nil, "сборка: grnd_update.txt удалён")
+check(FS[JUNK_LOG] == nil, "сборка: grnd_update.log удалён")
+check(FS[SCRIPT_PATH] ~= nil, "сборка: сам скрипт не тронут")
+
+-- после полного цикла установки в папке скрипта только скрипт и его бэкап
+resetU()
+FS[JUNK_TXT], FS[JUNK_LOG] = "старьё", "старьё"
+U.tidyUp() -- в игре подчистка идёт при запуске скрипта
+U.CHANNELS = { CH1 }
+U.check("manual")
+succeed(1, NEW)
+U.tick()
+succeed(2, newBody(NEW, "чистая сборка"))
+U.tick()
+check(U.state == "ready", "сборка: обновление установилось")
+local junk = 0
+for path in pairs(FS) do
+    local name = tostring(path):match("([^/\\]+)$")
+    if name and name:find("grnd_update", 1, true) then junk = junk + 1 end
+end
+check(junk == 0, "сборка: в папке скрипта нет ни одного grnd_update.*")
+check(FS[SCRIPT_PATH .. ".new"] == nil, "сборка: временный .new убран")
+check(#logs == 0, "сборка: в файлы ничего не писалось")
+
+-- настройки прежних версий переносятся в общий конфиг и убираются из сборки
+resetU()
+FS[CFG_LEGACY] = "auto=1\nperiod=0\nlast=0\nchannel=api\n"
+U.loadCfg()
+check((gconf.sections.update or ""):find("channel=api", 1, true) ~= nil,
+    "перенос: настройки уехали в общий конфиг скрипта")
+check(FS[CFG_LEGACY] == nil, "перенос: старый файл из сборки удалён")
+
+-- тосты идут только через notify скрипта (в чат), а не через отсутствующий
+-- GRND_QR.toast и не в консоль
+resetU()
+check(_G.__qrToasts == nil, "тосты: GRND_QR.toast не зовём (его нет)")
+U.check("manual")
+succeed(1, V .. "\n")
+U.tick()
+local forced = true
+for _, item in ipairs(toasts()) do
+    if item.force ~= true then forced = false end
+end
+check(forced and #toasts() > 0, "тосты: каждое сообщение с force (сессия ещё «не готова»)")
+check(_G.__qrToasts == nil, "тосты: и после проверки GRND_QR.toast не тронут")
 
 -- ---------- 14. команда и глобальные обёртки ----------
 resetU()

@@ -1,6 +1,22 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.227"
+GRND_SCRIPT_VERSION = "1.19.228"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.228 — АВТООБНОВЛЕНИЕ: тост вместо строк в чате и чистая сборка:
+--   1) ТОСТЫ теперь настоящие: раньше модуль звал GRND_QR.toast, а он молчит,
+--      если сессия ещё не «готова» — сообщение про проверку обновлений на
+--      заходе молча пропадало (это и был баг «нет тоста при входе»). Теперь
+--      тост идёт через родной notify скрипта (в чат) и принудительно;
+--   2) результат проверки виден ВСЕГДА: «Обновлений нет — версия N» — тот же
+--      тост и на заходе в игру, и при ручной проверке; если нашлось новее —
+--      «Обновляюсь до версии N» и окно со списком изменений;
+--   3) в самой сборке рядом со скриптом не создаётся НИ ОДНОГО файла:
+--      grnd_update.txt (файл версии) больше не пишется — ответ читается в
+--      память через WinINet, grnd_update.log убран совсем (диагностика живёт
+--      только в памяти и видна кнопкой «Проверить каналы»), а настройки
+--      переехали в общий конфиг скрипта (config/grnd_tools/config.json,
+--      секция update). Файлы прежних версий при запуске удаляются;
+--   4) сам файл скрипта качается с отдельным таймаутом (60 с вместо 12):
+--      он весит мегабайты, и на медленном канале 12 секунд не хватало.
 -- v1.19.227 — АВТООБНОВЛЕНИЕ: свежий номер версии без ожидания кэша и
 --  окно без служебных логов:
 --   1) ПЕРВЫЙ канал — api.github.com (не CDN, кэша нет): сразу после выпуска
@@ -373,7 +389,11 @@ GRND_CONFIG = {schema=1, sources={
     -- v1.19.202: автопилот ВЫДАЧИ наказаний. v1.19.203: переключатель
     -- «Выдача / Автопилот» живёт в разделе «Наказания» ЛЕВОЙ панели меню
     -- (файл grnd_punauto.cfg, секция punishAuto).
-    grnd_punauto="punishAuto"
+    grnd_punauto="punishAuto",
+    -- v1.19.228: настройки автообновления. Раньше модуль держал свой файл
+    -- рядом со скриптом — теперь это общий конфиг скрипта (секция update),
+    -- и в самой сборке рядом со скриптом не остаётся ничего.
+    grnd_update="update"
 }}
 do
     local C=GRND_CONFIG
@@ -39583,7 +39603,8 @@ local function grndUpdInit()
     U.period  = 0            -- 0 — проверять при КАЖДОМ заходе в игру;
                              -- grnd_update.cfg: period=<сек> — реже
     U.auto    = true         -- проверять при заходе
-    U.timeout = 12           -- сколько ждём одну попытку (сек)
+    U.timeout = 12           -- сколько ждём файл версии (сек)
+    U.fileTimeout = 60       -- сколько ждём сам скрипт (он весит мегабайты)
     U.connectTimeout = 4000  -- WinINet: подключение (мс)
     U.recvTimeout    = 6000  -- WinINet: чтение ответа (мс)
 
@@ -39605,6 +39626,7 @@ local function grndUpdInit()
     U.probeLines = nil
     U.logs = {}              -- последние строки диагностики (их видно в окне)
     U.inet, U.inetErr = nil, nil
+    U.road = nil             -- сработавшая дорога загрузки: moon | inet
 
     -- Всё, что трогает диск/сеть, собрано здесь: стенд подменяет U.io,
     -- U.moonDl и U.inetLoad и проверяет логику без игры и интернета.
@@ -39712,8 +39734,68 @@ local function grndUpdInit()
         return dir or ""
     end
 
-    function U.cfgFile() return U.dirOf(U.scriptPath()) .. "grnd_update.cfg" end
-    function U.logFile() return U.dirOf(U.scriptPath()) .. "grnd_update.log" end
+    -- Настройки обновления живут вместе с остальными настройками скрипта —
+    -- в общем конфиге (config/grnd_tools/config.json, секция update). Рядом со
+    -- скриптом, в самой сборке, не создаётся ни одного файла.
+    function U.cfgFile()
+        return U.dirOf(U.scriptPath()) .. "config\\grnd_tools\\grnd_update.cfg"
+    end
+    -- Откуда настройки читались в прежних версиях (для переноса).
+    function U.cfgLegacy() return U.dirOf(U.scriptPath()) .. "grnd_update.cfg" end
+
+    -- Создать папку под файл (нужно только там, где общего конфига нет).
+    function U.ensureDir(path)
+        if type(createDirectory) ~= "function" then return end
+        local base = U.dirOf(U.scriptPath())
+        local rel = tostring(path or ""):sub(#base + 1)
+        rel = rel and rel:match("^(.-)[/\\][^/\\]*$")
+        if not rel then return end
+        local acc = base
+        for part in rel:gmatch("[^/\\]+") do
+            acc = acc .. part
+            pcall(createDirectory, acc)
+            acc = acc .. "\\"
+        end
+    end
+
+    -- Чтение и запись настроек. В игре — через общий конфиг скрипта
+    -- (GRND_CONFIG), вне игры (стенд) — обычным файлом.
+    function U.cfgRead()
+        local C = rawget(_G, "GRND_CONFIG")
+        if type(C) == "table" and type(C.open) == "function" then
+            local ok, f = pcall(C.open, U.cfgFile(), "r")
+            if ok and f then
+                local body = f:read("*a")
+                pcall(f.close, f)
+                if type(body) == "string" then return body end
+            end
+            return nil
+        end
+        return U.readFile(U.cfgFile(), 8192)
+    end
+
+    function U.cfgWrite(body)
+        local C = rawget(_G, "GRND_CONFIG")
+        if type(C) == "table" and type(C.open) == "function" then
+            local ok, f = pcall(C.open, U.cfgFile(), "w")
+            if ok and f then
+                local okW = pcall(f.write, f, body)
+                pcall(f.close, f)
+                if okW then return true end
+            end
+        end
+        U.ensureDir(U.cfgFile())
+        return U.writeFile(U.cfgFile(), body)
+    end
+
+    -- В прежних версиях рядом со скриптом оставались служебные файлы —
+    -- убираем их, чтобы в сборке не было ничего лишнего.
+    function U.tidyUp()
+        local dir = U.dirOf(U.scriptPath())
+        for _, name in ipairs({ "grnd_update.txt", "grnd_update.log" }) do
+            if U.io.exists(dir .. name) then pcall(U.io.remove, dir .. name) end
+        end
+    end
 
     local function normBase(u)
         u = tostring(u or ""):gsub("%s+$", "")
@@ -39722,13 +39804,24 @@ local function grndUpdInit()
         return u
     end
 
+    -- Тост = сообщение в чат через родной notify скрипта. force=true нужен
+    -- обязательно: у notify.add есть проверка «сессия готова», а проверка
+    -- обновлений идёт ровно на заходе, когда она ещё не сработала — сообщение
+    -- молча пропадало (это и было «нет тоста при входе»).
     function U.notify(text, kind, life)
-        local QRm = _G.GRND_QR
-        if QRm and type(QRm.toast) == "function" then
+        text = tostring(text or "")
+        local N = rawget(_G, "notify")
+        if type(N) == "table" and type(N.add) == "function" then
+            local ok = pcall(N.add, text, kind or "ok", life or 3, true)
+            if ok then return true end
+        end
+        local QRm = rawget(_G, "GRND_QR")
+        if type(QRm) == "table" and type(QRm.toast) == "function" then
             local ok = pcall(QRm.toast, text, kind or "info", life or 3)
-            if ok then return end
+            if ok then return true end
         end
         pcall(print, text)
+        return false
     end
 
     function U.refreshFrame()
@@ -39756,17 +39849,12 @@ local function grndUpdInit()
     end
 
     -- ---------- журнал ----------
-    -- Диагностику видно в окне обновления и в grnd_update.log рядом со
-    -- скриптом: если обновление не приходит — по нему понятно, почему.
+    -- Только в памяти и только для кнопки «Проверить каналы»: ни в чат, ни в
+    -- файл — в сборке рядом со скриптом не должно оставаться следов.
     function U.diag(text)
         local line = os.date("%H:%M:%S") .. " " .. tostring(text)
         U.logs[#U.logs + 1] = line
         if #U.logs > 80 then table.remove(U.logs, 1) end
-        local f = U.io.open(U.logFile(), "a")
-        if f then
-            pcall(f.write, f, line .. "\n")
-            pcall(f.close, f)
-        end
         return line
     end
 
@@ -39920,8 +40008,9 @@ local function grndUpdInit()
         if ok == 0 then return nil, "обрыв связи" end
         if n == 0 then
             local body = table.concat(job.parts)
-            if not U.writeFile(job.path, body) then return nil, "файл не записался" end
             job.size = #body
+            if job.mem then job.body = body return true end -- в память
+            if not U.writeFile(job.path, body) then return nil, "файл не записался" end
             return true
         end
         job.parts[#job.parts + 1] = L.ffi.string(job.buf, n)
@@ -39933,11 +40022,41 @@ local function grndUpdInit()
         inetClose(job)
     end
 
-    local function startJob(url, path, wantInet, headers)
+    -- Временный файл для файла версии (только когда WinINet недоступен):
+    -- во временной папке системы, а не в сборке.
+    function U.tmpFile()
+        for _, key in ipairs({ "TEMP", "TMP" }) do
+            local v = os.getenv and os.getenv(key)
+            if type(v) == "string" and v ~= "" then
+                return (v:gsub("[/\\]+$", "")) .. "\\grnd_update.txt"
+            end
+        end
+        return U.dirOf(U.scriptPath()) .. "grnd_update.txt"
+    end
+
+    -- Тело ответа: либо из памяти (job.mem), либо из файла — файл после
+    -- чтения убираем (ничего не остаётся).
+    local function jobBody(job)
+        if job.body then return job.body end
+        if not job.path then return nil end
+        local body = U.readFile(job.path, 200000)
+        pcall(U.io.remove, job.path)
+        return body
+    end
+
+    -- opts: mem — держать ответ в памяти (файл не создаётся), long — дать
+    -- файлу скрипта больше времени (он весит мегабайты).
+    local function startJob(url, path, wantInet, headers, opts)
         if U.job then return false, "уже качаю" end
+        opts = opts or {}
+        -- Дорога, которая уже сработала, идёт первой: если штатный загрузчик
+        -- молчит, не ждём его таймаут заново на каждом файле.
+        if U.road == "inet" then wantInet = true end
         local job = {
             url = url, path = path, parts = {}, headers = headers,
-            started = U.io.clock(), deadline = U.io.clock() + U.timeout,
+            mem = opts.mem and true or false, long = opts.long and true or false,
+            started = U.io.clock(),
+            deadline = U.io.clock() + (opts.long and U.fileTimeout or U.timeout),
             inetTried = wantInet and true or false,
         }
         U.job = job
@@ -39951,7 +40070,7 @@ local function grndUpdInit()
                 end
             end)
             if ok and ret ~= false then
-                job.backend = "moon"
+                job.backend, U.road = "moon", "moon"
                 U.diag("→ MoonLoader: " .. url)
                 return true
             end
@@ -39959,7 +40078,7 @@ local function grndUpdInit()
         end
         local okInet, errInet = inetStart(job)
         if okInet then
-            job.backend, job.inetTried = "inet", true
+            job.backend, job.inetTried, U.road = "inet", true, "inet"
             U.diag(("→ WinINet%s: %s%s"):format(
                 job.http and (" (HTTP " .. job.http .. ")") or "", url, ""))
             return true
@@ -39980,12 +40099,26 @@ local function grndUpdInit()
     function U.loadCfg()
         if U.cfgLoaded then return end
         U.cfgLoaded = true
-        local body = U.readFile(U.cfgFile(), 8192)
-        if not body then return end
+        local old = U.cfgLegacy()
+        local body = U.cfgRead()
+        local moved = nil
+        -- настройки прежних версий (файл рядом со скриптом) переносим в общий
+        -- конфиг и убираем из сборки
+        if not body and U.io.exists(old) then
+            body, moved = U.readFile(old, 8192), true
+        end
+        if not body then
+            if moved then pcall(U.io.remove, old) end
+            return
+        end
         local custom = {}
         for line in body:gmatch("[^\r\n]+") do
             local k, v = tostring(line):match("^([%w_%-]+)=(.*)$")
-            if k == "auto" then U.auto = (v == "1") end
+            -- в общем конфиге булево может вернуться числом/строкой
+            if k == "auto" then
+                local sv = tostring(v):lower()
+                U.auto = not (sv == "0" or sv == "false")
+            end
             if k == "period" then
                 local n = tonumber(v)
                 if n and n >= 0 then U.period = n end
@@ -40005,24 +40138,27 @@ local function grndUpdInit()
             table.insert(U.CHANNELS, 1, custom[i])
         end
         if #custom > 0 then U.diag("канал из конфига: " .. custom[1].base) end
+        if moved then
+            -- перенесли: сохраняем в новый дом и убираем старый файл
+            U.saveCfg()
+            pcall(U.io.remove, old)
+        end
     end
 
     function U.saveCfg()
-        local f = U.io.open(U.cfgFile(), "w")
-        if not f then return false end
-        f:write("auto=" .. (U.auto and "1" or "0") .. "\n")
-        f:write("period=" .. tostring(math.floor(U.period)) .. "\n")
-        f:write("last=" .. tostring(math.floor(U.lastAt or 0)) .. "\n")
-        if U.activeId then f:write("channel=" .. tostring(U.activeId) .. "\n") end
-        -- свои зеркала из конфига не теряем при перезаписи файла
+        local out = {}
+        out[#out + 1] = "auto=" .. (U.auto and "1" or "0")
+        out[#out + 1] = "period=" .. tostring(math.floor(U.period))
+        out[#out + 1] = "last=" .. tostring(math.floor(U.lastAt or 0))
+        if U.activeId then out[#out + 1] = "channel=" .. tostring(U.activeId) end
+        -- свои зеркала из конфига не теряем при перезаписи
         for i = 1, #U.CHANNELS do
             local c = U.CHANNELS[i]
             if c.id == "cfg-repo" or c.id == "cfg-mirror" then
-                f:write((c.id == "cfg-repo" and "repo=" or "mirror=") .. c.base .. "\n")
+                out[#out + 1] = (c.id == "cfg-repo" and "repo=" or "mirror=") .. c.base
             end
         end
-        pcall(f.close, f)
-        return true
+        return U.cfgWrite(table.concat(out, "\n") .. "\n")
     end
 
     -- ---------- заход в игру ----------
@@ -40043,6 +40179,10 @@ local function grndUpdInit()
         local k = rawget(_G, "GRND_KEYS")
         return (type(k) == "table" and k.spawnedNow == true) and true or false
     end
+
+    -- Подчистка следов прежних версий (grnd_update.txt и grnd_update.log рядом
+    -- со скриптом) — в сборке не должно оставаться ничего лишнего.
+    U.tidyUp()
 
     -- ---------- проверка ----------
     U.checkReason = nil
@@ -40080,9 +40220,7 @@ local function grndUpdInit()
                 -- у зеркал в кэше ещё прошлый выпуск. Не пугаем человека.
                 if U.staleSeen then
                     U.state = "uptodate"
-                    if U.checkReason ~= "spawn" then
-                        U.notify("Версия " .. U.cur .. " — последняя", "ok", 2.6)
-                    end
+                    U.notify("Обновлений нет — версия " .. U.cur, "ok", 2.6)
                     U.finish()
                     return false
                 end
@@ -40091,9 +40229,15 @@ local function grndUpdInit()
             end
             U.diag(("канал %s: пробую %s"):format(c.id, U.VER_FILE))
             U.chan = c
-            if startJob(chanUrl(c, "version"),
-                    U.dirOf(U.scriptPath()) .. "grnd_update.txt", nil,
-                    (c.kind == "api") and U.API_HDR or nil) then
+            local url = chanUrl(c, "version")
+            local hdr = (c.kind == "api") and U.API_HDR or nil
+            -- файл версии качаем В ПАМЯТЬ (WinINet): в сборке не должно
+            -- появляться grnd_update.txt. Если WinINet недоступен — обычным
+            -- загрузчиком во временный файл, который тут же удаляем.
+            if U.inetLoad() and startJob(url, nil, true, hdr, { mem = true }) then
+                return true
+            end
+            if startJob(url, U.tmpFile(), nil, hdr) then
                 return true
             end
             -- дорогу начать не удалось (нет загрузчика / хост сразу отбил) —
@@ -40112,7 +40256,7 @@ local function grndUpdInit()
             U.diag("качаю сам скрипт: " .. c.id)
             U.chan = c
             if startJob(chanUrl(c, "script"), U.scriptPath() .. ".new", nil,
-                    (c.kind == "api") and U.API_HDR or nil) then
+                    (c.kind == "api") and U.API_HDR or nil, { long = true }) then
                 return true
             end
         end
@@ -40127,7 +40271,7 @@ local function grndUpdInit()
         U.diag("api: файл большой — беру содержимое по sha "
             .. tostring(sha):sub(1, 8))
         if startJob(chanUrl({ kind = "api", base = base }, "blob", sha),
-                U.scriptPath() .. ".new", nil, U.API_HDR) then
+                U.scriptPath() .. ".new", nil, U.API_HDR, { long = true }) then
             return true
         end
         return U.dlScript() -- дорогу начать не удалось — идём по зеркалам
@@ -40166,9 +40310,7 @@ local function grndUpdInit()
 
     -- ---------- итоги ----------
     local function finishVersion(job)
-        local raw = U.readFile(job.path, 200000)
-        pcall(U.io.remove, job.path)
-        local body = tostring(raw or "")
+        local body = tostring(jobBody(job) or "")
         local id = tostring(U.chan and U.chan.id)
         -- api.github.com отвечает JSON: содержимое лежит в «content» (base64),
         -- а у файла меньше мегабайта ещё и «sha» есть — по нему можно взять
@@ -40219,9 +40361,9 @@ local function grndUpdInit()
             U.activeId = c.id
             U.saveCfg()
         end
-        if U.checkReason ~= "spawn" then
-            U.notify("Версия " .. U.cur .. " — последняя", "ok", 2.6)
-        end
+        -- Про результат сообщаем и на заходе: человек должен видеть, что
+        -- проверка была и что обновляться некуда (просили именно так).
+        U.notify("Обновлений нет — версия " .. U.cur, "ok", 2.6)
         U.finish()
         return true
     end
@@ -40313,7 +40455,7 @@ local function grndUpdInit()
         U.job = nil
         if U.phase == "blob" then
             -- пришёл git-объект: содержимое в base64 внутри JSON
-            local raw = U.readFile(job.path)
+            local raw = jobBody(job)
             local data = raw and U.b64decode(U.jsonField(raw, "content") or "")
             if not data or #data < U.MIN_BYTES or not U.writeFile(job.path, data) then
                 pcall(U.io.remove, job.path)
