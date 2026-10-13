@@ -1,6 +1,9 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.218"
+GRND_SCRIPT_VERSION = "1.19.219"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.219 — «ВЫДАЧА В РАДИУСЕ»: значение пишется прямо по дорожке
+--   слайдера (по центру, в фоне — как на макете); дорожка тянется
+--   от «−» до «+» на всю ширину ряда.
 -- v1.19.218 — «ВЫДАЧА В РАДИУСЕ» + все ползунки меню:
 --   1) шестерёнки сдвинуты к кнопкам: кликовая зона примыкает к краю
 --      кнопки (на кнопку не налегает), значок — сразу за ней;
@@ -38573,40 +38576,38 @@ do
         local TH = (type(R.theme) == "function") and R.theme() or {}
         local dim = R.c4(TH.textDim or { 185, 185, 190, 255 })
         local mut = R.c4(TH.textMuted or { 140, 140, 150, 255 })
-        local ac  = (type(TH.accent) == "table") and TH.accent or { 164, 112, 224, 255 }
+        local hi  = R.c4(TH.textHi or { 240, 240, 245, 255})
 
         local function W(text, scale)
             local ok, v = pcall(R.tsize, tostring(text or ""))
             return (tonumber(v) or (#tostring(text or "") * 7)) * (tonumber(scale) or 1)
         end
 
-        -- ---------- радиус: [−] полоса «Радиус: N» [+] ----------
+        -- ---------- радиус: [−] дорожка с текстом «Радиус: N» [+] ----------
+        -- v1.19.219: значение пишется прямо ПО ДОРОЖКЕ (по центру, поверх),
+        -- как на макете: дорожка тянется от «−» до «+».
         y = y + 4
         local bh = 26
         if R.button("rt_minus", cx, y, bh, bh, "-", {}) then
             RT.setRadius(RT.radius - 1)
         end
-        local labW = math.ceil(W("Радиус: 200", 0.8))
-        local labX = cx + cw - bh - 8 - labW
         local slX = cx + bh + 8
-        local slW = math.max(40, labX - slX - 8)
+        local slW = math.max(40, cw - bh * 2 - 8 * 2)
         local frac = (RT.radius - RT.RMIN) / (RT.RMAX - RT.RMIN)
-        -- общий слайдер меню (grndUiSlider): дорожка, акцент, кругляш, drag
+        -- общий слайдер меню (grndUiSlider): дорожка-«стекло», «пилюля», drag
         if type(R.slider) == "function" then
             local nr = R.slider("rt_radius_sl", slX, y, slW, bh, frac)
             if nr then
                 RT.setRadius(RT.RMIN + nr * (RT.RMAX - RT.RMIN) + 0.5)
             end
         else
-            R.roundRect(R.dl, R.at(slX, y + bh / 2 - 3.5),
-                R.at(slX + slW, y + bh / 2 + 3.5), R.col32(255, 255, 255, 30), 3.5)
-            if slW * frac >= 3.5 then
-                R.roundRect(R.dl, R.at(slX, y + bh / 2 - 3.5),
-                    R.at(slX + slW * frac, y + bh / 2 + 3.5),
-                    R.col32(ac[1], ac[2], ac[3], 235), 3.5)
-            end
+            R.roundRect(R.dl, R.at(slX, y + bh / 2 - 8),
+                R.at(slX + slW, y + bh / 2 + 8), R.col32(255, 255, 255, 30), 5)
         end
-        R.uiText(labX, y + (bh - 12) / 2, "Радиус: " .. RT.radius, dim, 0.8)
+        -- текст — по центру дорожки (рисуется после слайдера — поверх)
+        local lab = "Радиус: " .. RT.radius
+        local labW = W(lab, 0.8)
+        R.uiText(slX + (slW - labW) / 2, y + (bh - 12) / 2, lab, hi, 0.8)
         if R.button("rt_plus", cx + cw - bh, y, bh, bh, "+", {}) then
             RT.setRadius(RT.radius + 1)
         end

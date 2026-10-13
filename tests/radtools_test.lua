@@ -375,7 +375,7 @@ local drawn, clicks, gears, sliders = {}, {}, {}, {}
 local function mkR(allow)
     allow = allow or {}
     return {
-        uiText = function(x, y, t) table.insert(drawn, { x = x, t = t }) end,
+        uiText = function(x, y, t) table.insert(drawn, { x = x, y = y, t = t }) end,
         tsize = function(t) return #tostring(t) * 7 end,
         col32 = function(r, g, b, a) return { r, g, b, a } end,
         c4 = function(c) return c end,
@@ -478,6 +478,19 @@ local joined = {}
 for i = 1, #drawn do joined[i] = drawn[i].t end
 joined = table.concat(joined, "\n")
 check(joined:find("Радиус: 25", 1, true), "page: строка «Радиус: 25»")
+-- v1.19.219: текст — ПО ЦЕНТРУ ДОРОЖКИ (дорожка от «−» до «+»)
+local slX0 = 10 + 26 + 8 -- cx + bh + 8
+local slW0 = cw - 2 * 26 - 16
+local lw0 = #("Радиус: 25") * 7 * 0.8
+local labRow = nil
+for i = 1, #drawn do
+    if drawn[i].t == "Радиус: 25" then labRow = drawn[i] end
+end
+check(labRow ~= nil
+    and math.abs(labRow.x - (slX0 + (slW0 - lw0) / 2)) < 0.01
+    and math.abs(labRow.y - (y0 + 4 + (26 - 12) / 2)) < 0.01,
+    "page: «Радиус: N» по центру дорожки (x="
+    .. tostring(labRow and labRow.x) .. ")")
 check(joined:find("В радиусе", 1, true) == nil,
     "page: строка «В радиусе…» убрана")
 check(joined:find("Было:", 1, true), "page: строка «Было:»")
