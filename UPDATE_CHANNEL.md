@@ -19,20 +19,34 @@
 от версии к версии, поэтому у уже установленных скриптов адрес остаётся
 рабочим навсегда.
 
-Зеркал в скрипте четыре (порядок проб; ответившее запоминается в
+Каналов в скрипте пять (порядок проб; ответивший запоминается в
 `grnd_update.cfg` строкой `channel=<id>` и дальше пробуется первым):
 
-| id | адрес |
-|----|-------|
-| `statically` | `https://cdn.statically.io/gh/<акк>/Grnd-Tools/grnd-latest/` |
-| `githack` | `https://raw.githack.com/<акк>/Grnd-Tools/grnd-latest/` |
-| `raw` | `https://raw.githubusercontent.com/<акк>/Grnd-Tools/grnd-latest/` |
-| `jsdelivr` | `https://cdn.jsdelivr.net/gh/<акк>/Grnd-Tools@grnd-latest/` |
+| id | адрес | кэш |
+|----|-------|-----|
+| `api` | `https://api.github.com/repos/<акк>/Grnd-Tools/` (`contents/<файл>?ref=grnd-latest`) | нет |
+| `statically` | `https://cdn.statically.io/gh/<акк>/Grnd-Tools/grnd-latest/` | часы |
+| `githack` | `https://raw.githack.com/<акк>/Grnd-Tools/grnd-latest/` | часы |
+| `raw` | `https://raw.githubusercontent.com/<акк>/Grnd-Tools/grnd-latest/` | ~5 мин |
+| `jsdelivr` | `https://cdn.jsdelivr.net/gh/<акк>/Grnd-Tools@grnd-latest/` | до 12 ч |
 
-`raw.githubusercontent.com` в РФ часто заблокирован, а `jsDelivr` держит файл
-в кэше до 12 часов — поэтому они не первые. Если у игрока не работает ни одно
-зеркало, `/grndupdate test` покажет ответ каждого (и пишет всё в
-`grnd_update.log` рядом со скриптом).
+Первым идёт **`api.github.com`**: это сам GitHub, а не CDN, поэтому сразу
+после выпуска он отдаёт уже новый номер версии (зеркала в это время ещё
+держат прошлый файл). Зеркала остались запасными дорогами: у них к адресу
+добавляется метка времени (`?v=<минуты>`), но часть CDN строку запроса
+игнорирует, поэтому «свежесть» обеспечивает именно api-канал.
+
+Если канал отдал версию **старее** установленной (старый файл из кэша), скрипт
+идёт к следующему каналу; если старым ответили все — сообщает «версия — самая
+свежая», а не «нет связи с сервером».
+
+Ответ `api.github.com` скрипт умеет читать в трёх видах: как сам файл (WinINet
+ставит заголовок `Accept: application/vnd.github.raw`), как JSON с base64 в
+поле `content` (и с экранированными переводами строк) и как `git/blobs/<sha>`
+для файла больше мегабайта (у него в Contents API содержимого нет).
+
+Если у игрока не работает ни один канал, `/grndupdate test` покажет ответ
+каждого (всё это пишется в `grnd_update.log` рядом со скриптом).
 
 ```
 https://raw.githubusercontent.com/kacarovmihail4-max/Grnd-Tools/grnd-latest/update.txt

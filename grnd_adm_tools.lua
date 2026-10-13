@@ -1,6 +1,23 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.226"
+GRND_SCRIPT_VERSION = "1.19.227"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.227 — АВТООБНОВЛЕНИЕ: свежий номер версии без ожидания кэша и
+--  окно без служебных логов:
+--   1) ПЕРВЫЙ канал — api.github.com (не CDN, кэша нет): сразу после выпуска
+--      новой версии проверка видит именно её, а не прошлый файл из кэша
+--      зеркал. Зеркала остались как запасные дороги;
+--   2) у зеркал в адрес добавлена метка времени: кэш CDN считает строку
+--      запроса, поэтому file из кэша больше не подсовывается;
+--   3) если канал отдал версию СТАРЕЕ нашей (старый файл из кэша) — идём к
+--      следующему каналу, а если старым ответили все, говорим «версия — самая
+--      свежая», а не «нет связи с сервером»;
+--   4) окно обновления — только «что изменилось» и кнопки: раздел
+--      диагностики и «Канал: …» из окна убраны. Ответы каналов видно
+--      отдельно — кнопкой «Проверить каналы» (или /grndupdate test), полный
+--      лог по-прежнему пишется в grnd_update.log рядом со скриптом;
+--   5) файл скрипта с api.github.com приходит либо просто файлом, либо JSON
+--      с содержимым в base64, а для файла больше мегабайта — через git/blobs
+--      по sha (там base64) — разбор встроен.
 -- v1.19.226 — АВТООБНОВЛЕНИЕ: зеркал стало четыре, вторая дорога загрузки
 --  и живая диагностика (правки по живому отчёту «нет связи с сервером»):
 --   1) проверка при заходе больше не зависит от одной функции спавна:
@@ -39537,12 +39554,21 @@ local function grndUpdInit()
     U.MIN_BYTES = 100000     -- меньше — это не скрипт, а страница ошибки
     U.UA = "GrndTools/" .. U.cur .. " (MoonLoader)"
 
-    -- Зеркала канала. Порядок = порядок проб; первое ответившее запоминается
-    -- в grnd_update.cfg (channel=) и дальше пробуется первым.
-    -- Порядок для нашего игрока: сначала зеркала на Cloudflare (raw.
-    -- githubusercontent в РФ часто заблокирован), канонический GitHub — после
-    -- них, jsDelivr — последним (он держит файл в кэше до 12 часов).
+    -- Каналы обновлений. Порядок = порядок проб; ответивший запоминается в
+    -- grnd_update.cfg (channel=) и дальше пробуется первым.
+    -- ПЕРВЫМ — api.github.com: это не CDN с кэшем, а сам GitHub, поэтому
+    -- номер версии там всегда свежий. Зеркала кэшируют файл по адресу метки
+    -- (statically и githack — часы, jsDelivr — до 12 часов) и сразу после
+    -- выпуска отдают прошлую версию; к ним идём, только если api недоступен.
+    -- Заодно у зеркал сбиваем кэш меткой времени в адресе: кэш CDN считает
+    -- строку запроса.
+    U.API = "https://api.github.com/repos/" .. U.OWNER .. "/" .. U.REPO .. "/"
+    -- С этим заголовком api.github.com отдаёт сам файл, а не JSON с base64
+    -- (заголовок умеет ставить только дорога WinINet — без него тоже можно,
+    -- JSON мы разбираем).
+    U.API_HDR = "Accept: application/vnd.github.raw\r\n"
     U.CHANNELS = {
+        { id = "api", kind = "api", base = U.API },
         { id = "statically", base = "https://cdn.statically.io/gh/"
             .. U.OWNER .. "/" .. U.REPO .. "/" .. U.TAG .. "/" },
         { id = "githack", base = "https://raw.githack.com/"
@@ -39565,6 +39591,7 @@ local function grndUpdInit()
     U.state = "idle"         -- idle|checking|downloading|uptodate|ready|error
     U.err, U.job = nil, nil
     U.newVer, U.notes, U.installed = nil, nil, false
+    U.staleSeen = nil       -- канал отдал версию старее нашей (кэш зеркала)
     U.window = false         -- открыто ли окно (изменения + диагностика)
     U.lastAt, U.wasSpawn = 0, false
     U.reloadPending = false  -- просьба перезапуска (её исполняет тик)
@@ -39601,6 +39628,65 @@ local function grndUpdInit()
         local a, b, c = tostring(v or ""):match("^(%d+)%.(%d+)%.?(%d*)")
         return (tonumber(a) or 0) * 1000000 + (tonumber(b) or 0) * 1000
             + (tonumber(c) or 0)
+    end
+
+    -- Метка времени в адресе зеркала: у CDN строка запроса входит в ключ
+    -- кэша, поэтому такой адрес тянется с оригинала, а не из кэша.
+    function U.bustQ()
+        local t = math.floor((tonumber(U.io.time()) or 0) / 60)
+        return "?v=" .. tostring(t)
+    end
+
+    -- Ответ api.github.com — JSON. Строки в нём экранированы: перевод строки
+    -- приходит как \n (в git/blobs содержимое так разбито на строки по 60
+    -- символов), поэтому экранирование снимаем: иначе «хвост» уехал бы в
+    -- base64 мусорными байтами.
+    function U.jsonField(body, key)
+        local v = tostring(body or ""):match('"' .. key .. '"%s*:%s*"(.-)"')
+        if not v then return nil end
+        v = v:gsub("\\u(%x%x%x%x)", function(h)
+            return string.char(tonumber(h, 16) % 256)
+        end)
+        v = v:gsub("\\(.)", function(c)
+            if c == "n" or c == "r" or c == "t" then return "" end
+            return c
+        end)
+        return v
+    end
+
+    -- Декодер base64 (им отдаёт содержимое api.github.com; в JSON base64
+    -- разбит переносами — их и любой мусор просто пропускаем).
+    function U.b64decode(s)
+        if type(s) ~= "string" then return nil end
+        local t = U.b64tab
+        if not t then
+            t = {}
+            local abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                .. "abcdefghijklmnopqrstuvwxyz0123456789+/"
+            for i = 1, #abc do t[abc:sub(i, i)] = i - 1 end
+            U.b64tab = t
+        end
+        local out, part, acc, bits = {}, {}, 0, 0
+        for i = 1, #s do
+            local ch = s:sub(i, i)
+            if ch == "=" then break end -- дальше только «хвост» кодировки
+            local v = t[ch]
+            if v then
+                acc = acc * 64 + v
+                bits = bits + 6
+                while bits >= 8 do
+                    bits = bits - 8
+                    part[#part + 1] = string.char(math.floor(acc / 2 ^ bits) % 256)
+                    acc = acc % 2 ^ bits
+                    if #part >= 8192 then
+                        out[#out + 1] = table.concat(part)
+                        part = {}
+                    end
+                end
+            end
+        end
+        if #part > 0 then out[#out + 1] = table.concat(part) end
+        return table.concat(out)
     end
 
     function U.workDir()
@@ -39714,6 +39800,22 @@ local function grndUpdInit()
         return c
     end
 
+    -- Адрес файла у канала: у зеркал — адрес плюс имя файла, у api.github.com
+    -- это Contents API (у файла больше мегабайта содержимого там нет, тогда
+    -- идёт отдельный запрос к git/blobs по sha).
+    local function chanUrl(c, what, sha)
+        if c and c.kind == "api" then
+            if what == "blob" then
+                return c.base .. "git/blobs/" .. tostring(sha)
+            end
+            local f = (what == "version") and U.VER_FILE or U.SCRIPT_FILE
+            return c.base .. "contents/" .. f .. "?ref=" .. U.TAG
+        end
+        if what == "blob" then return nil end
+        local f = (what == "version") and U.VER_FILE or U.SCRIPT_FILE
+        return c.base .. f .. U.bustQ()
+    end
+
     -- ---------- транспорт 1: штатный загрузчик MoonLoader ----------
     U.moonDl = (type(downloadUrlToFile) == "function") and downloadUrlToFile or nil
 
@@ -39780,7 +39882,10 @@ local function grndUpdInit()
         ms[0] = U.recvTimeout
         w.InternetSetOptionA(h, OPT_RECV, ms, 4)
         w.InternetSetOptionA(h, OPT_SEND, ms, 4)
-        local req = w.InternetOpenUrlA(h, job.url, nil, 0, FLAGS, nil)
+        -- заголовки (api.github.com по Accept отдаёт сам файл, а не JSON)
+        local hdr, hlen = job.headers, 0
+        if hdr then hlen = #hdr end
+        local req = w.InternetOpenUrlA(h, job.url, hdr, hlen, FLAGS, nil)
         if req == nil then
             pcall(w.InternetCloseHandle, h)
             return false, "хост не ответил"
@@ -39828,10 +39933,10 @@ local function grndUpdInit()
         inetClose(job)
     end
 
-    local function startJob(url, path, wantInet)
+    local function startJob(url, path, wantInet, headers)
         if U.job then return false, "уже качаю" end
         local job = {
-            url = url, path = path, parts = {},
+            url = url, path = path, parts = {}, headers = headers,
             started = U.io.clock(), deadline = U.io.clock() + U.timeout,
             inetTried = wantInet and true or false,
         }
@@ -39953,7 +40058,7 @@ local function grndUpdInit()
             U.notify(text, "warn", 3.5)
         elseif not U.failOnceShown then
             U.failOnceShown = true
-            U.notify("Обновления: сервер не отвечает (подробности — в разделе «Выдача в радиусе»)", "warn", 5)
+            U.notify("Обновления: сервер не отвечает — проверю при следующем заходе", "warn", 5)
         end
     end
 
@@ -39971,17 +40076,28 @@ local function grndUpdInit()
         while true do
             local c = nextChan()
             if not c then
-                U.finish("нет связи ни с одним зеркалом (" .. #U.order .. " шт.)")
+                -- Все каналы ответили, но версией СТАРЕЕ нашей: сеть есть, это
+                -- у зеркал в кэше ещё прошлый выпуск. Не пугаем человека.
+                if U.staleSeen then
+                    U.state = "uptodate"
+                    if U.checkReason ~= "spawn" then
+                        U.notify("Версия " .. U.cur .. " — последняя", "ok", 2.6)
+                    end
+                    U.finish()
+                    return false
+                end
+                U.finish("нет связи ни с одним каналом (" .. #U.order .. " шт.)")
                 return false
             end
-            U.diag(("зеркало %s: пробую %s"):format(c.id, U.VER_FILE))
+            U.diag(("канал %s: пробую %s"):format(c.id, U.VER_FILE))
             U.chan = c
-            if startJob(c.base .. U.VER_FILE,
-                    U.dirOf(U.scriptPath()) .. "grnd_update.txt") then
+            if startJob(chanUrl(c, "version"),
+                    U.dirOf(U.scriptPath()) .. "grnd_update.txt", nil,
+                    (c.kind == "api") and U.API_HDR or nil) then
                 return true
             end
             -- дорогу начать не удалось (нет загрузчика / хост сразу отбил) —
-            -- это не повод сдаваться: пробуем следующее зеркало
+            -- это не повод сдаваться: пробуем следующий канал
         end
     end
 
@@ -39990,15 +40106,31 @@ local function grndUpdInit()
         while true do
             local c = nextChan()
             if not c then
-                U.finish("файл не скачался ни с одного зеркала")
+                U.finish("файл не скачался ни с одного канала")
                 return false
             end
             U.diag("качаю сам скрипт: " .. c.id)
             U.chan = c
-            if startJob(c.base .. U.SCRIPT_FILE, U.scriptPath() .. ".new") then
+            if startJob(chanUrl(c, "script"), U.scriptPath() .. ".new", nil,
+                    (c.kind == "api") and U.API_HDR or nil) then
                 return true
             end
         end
+    end
+
+    -- У файла больше мегабайта содержимого api.github.com не отдаёт: в JSON
+    -- вместо «content» приходит только «sha» — содержимое добираем из
+    -- git/blobs (git-объект, отдаётся в base64).
+    function U.dlBlob(sha)
+        U.phase = "blob"
+        local base = (U.chan and U.chan.kind == "api") and U.chan.base or U.API
+        U.diag("api: файл большой — беру содержимое по sha "
+            .. tostring(sha):sub(1, 8))
+        if startJob(chanUrl({ kind = "api", base = base }, "blob", sha),
+                U.scriptPath() .. ".new", nil, U.API_HDR) then
+            return true
+        end
+        return U.dlScript() -- дорогу начать не удалось — идём по зеркалам
     end
 
     -- ---------- разбор списка изменений ----------
@@ -40034,23 +40166,44 @@ local function grndUpdInit()
 
     -- ---------- итоги ----------
     local function finishVersion(job)
-        local body = U.readFile(job.path, 4096)
+        local raw = U.readFile(job.path, 200000)
         pcall(U.io.remove, job.path)
-        local ver = tostring(body or ""):match("(%d+%.%d+%.%d+)")
+        local body = tostring(raw or "")
+        local id = tostring(U.chan and U.chan.id)
+        -- api.github.com отвечает JSON: содержимое лежит в «content» (base64),
+        -- а у файла меньше мегабайта ещё и «sha» есть — по нему можно взять
+        -- git-объект напрямую, без разбора base64.
+        if body:sub(1, 1) == "{" then
+            local b64 = U.jsonField(body, "content")
+            if b64 and #b64 > 0 then
+                body = U.b64decode(b64) or ""
+            else
+                body = ""
+            end
+        end
+        local ver = body:match("(%d+%.%d+%.%d+)")
         if not ver then
-            U.diag(("зеркало %s: в ответе нет номера версии (%d байт)")
-                :format(tostring(U.chan and U.chan.id), #tostring(body or "")))
-            -- ответ мусорный — это зеркало не наше, пробуем следующее
+            U.diag(("канал %s: в ответе нет номера версии (%d байт)")
+                :format(id, #body))
+            -- содержимого в ответе нет (файл больше мегабайта или ответ
+            -- мусорный) — это не наш ответ, пробуем следующий канал
             return U.dlVersion()
         end
-        U.diag(("зеркало %s: версия %s (у нас %s)")
-            :format(tostring(U.chan and U.chan.id), ver, U.cur))
+        U.diag(("канал %s: версия %s (у нас %s)"):format(id, ver, U.cur))
         if U.probing then
-            U.probeLines[#U.probeLines + 1] = ("%s: версия %s"):format(
-                tostring(U.chan and U.chan.id), ver)
+            U.probeLines[#U.probeLines + 1] = ("%s: версия %s"):format(id, ver)
             return U.probeNext()
         end
         local c = U.chan
+        if U.verNum(ver) < U.verNum(U.cur) then
+            -- канал отдаёт версию старее нашей: у зеркал это старый файл из
+            -- кэша (api.github.com кэша не имеет). Помечаем и идём дальше —
+            -- свежий номер принесёт следующий канал; если все ответят
+            -- старым, честно скажем «версия — последняя», а не «нет связи».
+            U.staleSeen = ver
+            U.diag("канал " .. id .. ": файл из кэша (" .. ver .. ")")
+            return U.dlVersion()
+        end
         if U.verNum(ver) > U.verNum(U.cur) then
             U.newVer, U.state = ver, "downloading"
             if c and c.id ~= U.activeId then
@@ -40058,7 +40211,7 @@ local function grndUpdInit()
                 U.saveCfg()
             end
             U.notify("Обновляюсь до версии " .. ver, "info", 3.2)
-            buildOrder() -- качаем файл с того же зеркала первым
+            buildOrder() -- качаем файл с того же канала первым
             return U.dlScript()
         end
         U.state = "uptodate"
@@ -40075,6 +40228,20 @@ local function grndUpdInit()
 
     local function install(job)
         local body = U.readFile(job.path)
+        -- api.github.com без заголовка Accept отвечает JSON: содержимое файла
+        -- в «content» (base64), а у файла больше мегабайта его нет — тогда
+        -- содержимое берём из git/blobs по «sha».
+        if body and body:sub(1, 1) == "{" then
+            local b64 = U.jsonField(body, "content")
+            if b64 and #b64 > 0 then
+                body = U.b64decode(b64)
+            else
+                local sha = U.jsonField(body, "sha")
+                pcall(U.io.remove, job.path)
+                if sha then return U.dlBlob(sha) end
+                body = nil
+            end
+        end
         local ver = body and tostring(body):match(
             'GRND_SCRIPT_VERSION%s*=%s*"([%d%.]+)"')
         if not body or #body < U.MIN_BYTES or not ver
@@ -40121,7 +40288,7 @@ local function grndUpdInit()
     end
 
     local function jobFailed(job, why)
-        U.diag(("зеркало %s: %s"):format(tostring(U.chan and U.chan.id), tostring(why)))
+        U.diag(("канал %s: %s"):format(tostring(U.chan and U.chan.id), tostring(why)))
         if job.backend == "moon" and not job.inetTried then
             if retryInet(job) then return end
         end
@@ -40144,6 +40311,17 @@ local function grndUpdInit()
         end
         jobClose(job)
         U.job = nil
+        if U.phase == "blob" then
+            -- пришёл git-объект: содержимое в base64 внутри JSON
+            local raw = U.readFile(job.path)
+            local data = raw and U.b64decode(U.jsonField(raw, "content") or "")
+            if not data or #data < U.MIN_BYTES or not U.writeFile(job.path, data) then
+                pcall(U.io.remove, job.path)
+                U.diag("api: содержимое по sha не пришло — иду по зеркалам")
+                return U.dlScript()
+            end
+            return install(job)
+        end
         if U.phase == "version" then return finishVersion(job) end
         return install(job)
     end
@@ -40160,8 +40338,9 @@ local function grndUpdInit()
         end
         U.probeLines[#U.probeLines + 1] = ("%s: проверяю…"):format(c.id)
         U.phase = "version"
-        return startJob(c.base .. U.VER_FILE,
-            U.dirOf(U.scriptPath()) .. "grnd_update.txt")
+        return startJob(chanUrl(c, "version"),
+            U.dirOf(U.scriptPath()) .. "grnd_update.txt", nil,
+            (c.kind == "api") and U.API_HDR or nil)
     end
 
     function U.probe()
@@ -40185,6 +40364,7 @@ local function grndUpdInit()
         if U.probing or U.job then return false, "уже проверяю" end
         U.state, U.err = "checking", nil
         U.installed, U.window, U.notes = false, false, nil
+        U.staleSeen = nil
         U.lastAt = math.floor(U.io.time())
         U.saveCfg()
         buildOrder()
@@ -40287,18 +40467,31 @@ local function grndUpdInit()
         return ok and res and true or false
     end
 
-    local function windowTail(im, w, lines)
-        if type(im.Separator) == "function" then pcall(im.Separator) end
-        txt(im, "Диагностика (то же самое — в grnd_update.log рядом со скриптом):")
-        if type(im.BeginChild) ~= "function" or type(im.ImVec2) ~= "function" then
-            for i = 1, #lines do txt(im, lines[i]) end
-            return
-        end
-        local ok, vis = pcall(im.BeginChild, "##grnd_upd_log", im.ImVec2(w - 24, 96), false, 0)
-        if not (ok and vis) then return end
-        for i = 1, #lines do txt(im, lines[i]) end
-        pcall(im.EndChild)
+    -- «Наш стиль»: цвета берём из палитры скрипта (GRND_UIKIT.TH), а если
+    -- её нет (стенд) — из запасных значений.
+    local function themeColor(name, fallback)
+        local th = _G.GRND_UIKIT and _G.GRND_UIKIT.TH
+        local c = type(th) == "table" and th[name] or nil
+        if type(c) == "table" and tonumber(c[1]) then return c end
+        return fallback
     end
+
+    local function colored(im, color, text)
+        text = tostring(text or "")
+        local c = color or themeColor("text", { 234, 230, 244, 255 })
+        if type(im.TextColored) == "function" and type(im.ImVec4) == "function" then
+            local ok = pcall(im.TextColored, im.ImVec4(c[1] / 255, c[2] / 255,
+                c[3] / 255, (c[4] or 255) / 255), text)
+            if ok then return end
+        end
+        txt(im, text)
+    end
+
+    local function hi(im, text) colored(im, themeColor("textHi", nil), text) end
+    local function label(im, text) colored(im, themeColor("text", nil), text) end
+    local function muted(im, text) colored(im, themeColor("textMuted", { 172, 166, 190, 255 }), text) end
+    local function accent(im, text) colored(im, themeColor("accent", { 164, 112, 224, 255 }), text) end
+    local function sep(im) if type(im.Separator) == "function" then pcall(im.Separator) end end
 
     function U.draw(H)
         if not U.window then return false end
@@ -40326,78 +40519,71 @@ local function grndUpdInit()
         local okB, shown = pcall(H.begin, "АВТООБНОВЛЕНИЕ##grnd_upd", flags)
         if okB and shown then
             local okD, err = pcall(function()
-                local head
+                -- 1) заголовок окна и состояние
+                accent(im, "ОБНОВЛЕНИЕ СКРИПТА")
+                local head, sub
                 if U.probeLines then
-                    head = "Проверка каналов:"
+                    head = "Проверка связи с каналами"
                 elseif U.installed then
                     head = "Установлена версия " .. tostring(U.newVer)
-                        .. " (была " .. U.cur .. ")"
+                    sub = "Была " .. U.cur .. ". Нажмите «Перезагрузить скрипт», "
+                        .. "чтобы включить сразу — иначе она включится при "
+                        .. "следующем запуске игры."
                 elseif U.state == "error" then
-                    head = "Обновление не удалось: " .. tostring(U.err or "?")
+                    head = "Не удалось проверить обновления"
+                    sub = "Сервер не ответил. Это не страшно: проверка идёт "
+                        .. "при каждом заходе в игру и сама догонит новую версию."
+                elseif U.state == "downloading" then
+                    head = "Обновляюсь до версии " .. tostring(U.newVer or "")
+                    sub = "Скачиваю новую версию…"
                 else
                     head = "Версия " .. U.cur
+                    sub = "У вас самая свежая версия."
                 end
-                txt(im, head)
-                if U.probeLines then
-                    txt(im, "Ниже — какие зеркала ответили. Если ни одно — "
-                        .. "напишите мне, что видно в диагностике.")
-                    for i = 1, #U.probeLines do txt(im, U.probeLines[i]) end
-                elseif U.installed then
-                    txt(im, "Нажмите «Перезагрузить скрипт» — изменения вступят "
-                        .. "в силу сразу (без кнопки они подхватятся при "
-                        .. "следующем запуске игры).")
-                else
-                    txt(im, "Список изменений ниже. Кнопка «Проверить снова» "
-                        .. "повторит проверку, «Каналы» — обход всех зеркал.")
-                end
-                if type(im.TextColored) == "function" and im.ImVec4 then
-                    pcall(im.TextColored, im.ImVec4(0.62, 0.62, 0.68, 1),
-                        "Канал: " .. tostring(U.activeId or "подбирается")
-                        .. " · загрузка: " .. tostring(U.moonDl and "MoonLoader+WinINet" or "WinINet"))
-                else
-                    txt(im, "Канал: " .. tostring(U.activeId or "подбирается"))
-                end
-                if type(im.Separator) == "function" then pcall(im.Separator) end
+                hi(im, head)
+                if sub then muted(im, sub) end
+                sep(im)
 
+                -- 2) что изменилось
                 local notes = U.notes or {}
-                local bodyH = HH - 300
-                local child = false
-                if type(im.BeginChild) == "function" and type(im.ImVec2) == "function" then
-                    local okC, vis = pcall(im.BeginChild, "##grnd_upd_body",
-                        im.ImVec2(W - 24, bodyH), false, 0)
-                    child = okC and vis and true or false
-                end
-                for i = 1, #notes do
-                    local item = notes[i]
-                    txt(im, "v" .. tostring(item.ver))
-                    for j = 1, #(item.lines or {}) do
-                        txt(im, "   " .. item.lines[j])
+                if #notes > 0 then
+                    muted(im, "ЧТО ИЗМЕНИЛОСЬ")
+                    local child = false
+                    if type(im.BeginChild) == "function" and type(im.ImVec2) == "function" then
+                        local okC, vis = pcall(im.BeginChild, "##grnd_upd_body",
+                            im.ImVec2(W - 24, HH - 300), false, 0)
+                        child = okC and vis and true or false
                     end
+                    for i = 1, #notes do
+                        local item = notes[i]
+                        accent(im, "v" .. tostring(item.ver))
+                        for j = 1, #(item.lines or {}) do
+                            label(im, "   " .. item.lines[j])
+                        end
+                    end
+                    if child then pcall(im.EndChild) end
+                elseif U.probeLines then
+                    muted(im, "ОТВЕТЫ КАНАЛОВ")
+                    for i = 1, #U.probeLines do label(im, U.probeLines[i]) end
+                elseif U.installed then
+                    muted(im, "В самой новой версии отдельных пометок об "
+                        .. "изменениях нет.")
                 end
-                if #notes == 0 then
-                    txt(im, U.installed and "Заголовков изменений в новой версии нет."
-                        or "Изменений не найдено.")
-                end
-                if child then pcall(im.EndChild) end
+                sep(im)
 
-                local tail = {}
-                local from = math.max(1, #U.logs - 24)
-                for i = from, #U.logs do tail[#tail + 1] = U.logs[i] end
-                windowTail(im, W, tail)
-
-                if type(im.Separator) == "function" then pcall(im.Separator) end
+                -- 3) кнопки (диагностики и логов в окне нет вовсе)
                 if U.installed then
                     if btn(im, "Перезагрузить скрипт##grnd_upd_reload", 220) then
                         U.requestReload()
                         return
                     end
                 elseif U.state ~= "downloading" and U.state ~= "checking"
-                    and not U.probing then
+                    and not U.probing and not U.probeLines then
                     if btn(im, "Проверить снова##grnd_upd_again", 180) then
                         U.window = false
                         U.check("manual")
                     end
-                    if btn(im, "Каналы##grnd_upd_probe", 120) then
+                    if btn(im, "Проверить каналы##grnd_upd_probe", 170) then
                         U.probeLines = nil
                         U.probe()
                     end
