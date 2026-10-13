@@ -1,6 +1,21 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.230"
+GRND_SCRIPT_VERSION = "1.19.231"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.231 — АВТООБНОВЛЕНИЕ: скрипт можно скомпилировать в байткод:
+--   1) команда /grndupdate compile собирает скрипт в байткод ПРЯМО В ИГРЕ —
+--      тем же LuaJIT, что у MoonLoader, поэтому файл гарантированно запустится
+--      (байткод LuaJIT 2.0 и 2.1 несовместим: чужой файл не грузится с
+--      ошибкой «cannot load incompatible bytecode»). Рядом появляется
+--      grnd_adm_tools.luac — закройте игру, удалите .lua и запустите снова;
+--   2) обновления для скомпилированной сборки приходят байткодом: канал
+--      всегда хранит исходник (в нём видны версия и список изменений), а
+--      скрипт собирает из него байткод своими руками и пишет в ТОТ ЖЕ файл —
+--      поэтому он всегда совместим с вашей сборкой и .bak не создаётся;
+--   3) список изменений после обновления скомпилированной сборки берётся из
+--      настроек (в байткоде комментариев нет) — окно по-прежнему показывает,
+--      что изменилось;
+--   4) байткод занимает меньше места: 2.7 МБ исходника → 1.2 МБ, а текста
+--      скрипта в файле не видно.
 -- v1.19.230 — АВТООБНОВЛЕНИЕ: проверка только после входа и обновление
 --  прямо на месте:
 --   1) проверка обновлений идёт ТОЛЬКО после успешной авторизации, когда
@@ -39593,6 +39608,8 @@ local function grndUpdInit()
     U.REPO   = "Grnd-Tools"
     U.VER_FILE, U.SCRIPT_FILE = "update.txt", "grnd_adm_tools.lua"
     U.MIN_BYTES = 100000     -- меньше — это не скрипт, а страница ошибки
+    U.MIN_BYTE_BYTES = 200000 -- то же для скомпилированного файла (байткод
+                              -- примерно вдвое легче исходника)
     U.UA = "GrndTools/" .. U.cur .. " (MoonLoader)"
 
     -- Каналы обновлений. Порядок = порядок проб; ответивший запоминается в
@@ -39822,7 +39839,11 @@ local function grndUpdInit()
         if base then
             drop[#drop + 1] = base .. ".bak"
             drop[#drop + 1] = base .. ".new"
-            drop[#drop + 1] = base:gsub("%.lua$", ".luac") .. ".bak"
+            local stem = base:gsub("%.[Ll][Uu][Aa][Cc]?$", "")
+            drop[#drop + 1] = stem .. ".lua.bak"
+            drop[#drop + 1] = stem .. ".luac.bak"
+            drop[#drop + 1] = stem .. ".lua.new"
+            drop[#drop + 1] = stem .. ".luac.new"
         end
         for _, name in ipairs(drop) do
             local full = dir .. name
@@ -39874,6 +39895,62 @@ local function grndUpdInit()
 
     -- Первые байты файла (список изменений живёт в шапке, весь файл читать
     -- незачем — он весит мегабайты).
+    -- Байткод LuaJIT начинается с ESC 'LJ'. Так мы понимаем, что на месте
+    -- стоит скомпилированный файл (в нём нет текста исходника).
+    function U.isBytecode(body)
+        return tostring(body or ""):sub(1, 2) == "\27L"
+    end
+
+    -- Версия из тела файла: у исходника — строкой из шапки, у байткода —
+    -- по строковым константам (текста исходника там нет, поэтому шаблон
+    -- «GRND_SCRIPT_VERSION = "…"» не находится).
+    function U.detectVersion(body)
+        body = tostring(body or "")
+        local v = body:match('GRND_SCRIPT_VERSION%s*=%s*"([%d%.]+)"')
+        if v then return v end
+        if not U.isBytecode(body) then return nil end
+        if not body:find("GRND_SCRIPT_VERSION", 1, true) then return nil end
+        local best
+        for ver in body:gmatch("(%d+%.%d+%.%d+)") do
+            if not best or U.verNum(ver) > U.verNum(best) then best = ver end
+        end
+        return best
+    end
+
+    -- Стоит ли У НАС скомпилированный файл (обновлять его тоже надо байткодом).
+    function U.installedBytecode()
+        local head = U.readHead(U.scriptPath(), 4)
+        if type(head) == "string" and #head >= 2 then
+            return U.isBytecode(head)
+        end
+        return tostring(U.scriptPath()):lower():sub(-5) == ".luac"
+    end
+
+    -- Компиляция исходника в байткод тем же LuaJIT, что работает в игре.
+    -- Только так байткод гарантированно совместим: у LuaJIT 2.0 и 2.1 форматы
+    -- разные (чужой файл не грузится: «cannot load incompatible bytecode»).
+    function U.compileSource(src, chunkName)
+        if type(string.dump) ~= "function" then
+            return nil, "в сборке нет string.dump"
+        end
+        local chunk, cerr = load(tostring(src or ""),
+            "@" .. tostring(chunkName or U.SRC_FILE))
+        if not chunk then
+            return nil, "исходник не компилируется: " .. tostring(cerr)
+        end
+        -- LuaJIT 2.1 умеет писать байткод без отладочной информации (вдвое
+        -- меньше), LuaJIT 2.0 просто игнорирует второй аргумент.
+        local okD, bc = pcall(string.dump, chunk, true)
+        if not (okD and type(bc) == "string" and #bc > 0) then
+            okD, bc = pcall(string.dump, chunk)
+        end
+        if not (okD and type(bc) == "string" and #bc > 0) then
+            return nil, "string.dump: " .. tostring(bc)
+        end
+        if not U.isBytecode(bc) then return nil, "string.dump вернул не байткод" end
+        return bc
+    end
+
     function U.readHead(path, bytes)
         bytes = bytes or 16384
         if type(U.io.open) ~= "function" then return nil end
@@ -40177,6 +40254,7 @@ local function grndUpdInit()
             end
             if k == "last" then U.lastAt = tonumber(v) or U.lastAt end
             if k == "updatedVer" then U.updatedVer = v end
+            if k == "notesCache" then U.notesCache = v end
             if k == "updatedFrom" then U.updatedFrom = v end
             if k == "channel" then U.activeId = v end
             -- своё зеркало: сначала оно, потом наши
@@ -40208,6 +40286,9 @@ local function grndUpdInit()
         if U.updatedVer then
             out[#out + 1] = "updatedVer=" .. tostring(U.updatedVer)
             out[#out + 1] = "updatedFrom=" .. tostring(U.updatedFrom or "0.0.0")
+        end
+        if U.notesCache and U.notesCache ~= "" then
+            out[#out + 1] = "notesCache=" .. tostring(U.notesCache)
         end
         -- свои зеркала из конфига не теряем при перезаписи
         for i = 1, #U.CHANNELS do
@@ -40402,9 +40483,49 @@ local function grndUpdInit()
     -- ---------- отметка «только что обновились» ----------
     -- Нужна, чтобы ПОСЛЕ перезапуска новая версия сама открыла окно со списком
     -- изменений: старая версия оставляет from/to в настройках, новая читает.
-    function U.markInstalled(fromVer, toVer)
+    function U.markInstalled(fromVer, toVer, notes)
         U.updatedFrom, U.updatedVer = tostring(fromVer), tostring(toVer)
+        -- Список изменений кладём в настройки: у скомпилированного файла
+        -- текст изменений прочитать нельзя (в байткоде нет комментариев),
+        -- а показать «что изменилось» надо и после перезапуска.
+        U.notesCache = U.encodeNotes(notes)
         U.saveCfg()
+    end
+
+    -- Список изменений одной строкой (в настройках нельзя переносов строк).
+    function U.encodeNotes(notes)
+        local out = {}
+        for i = 1, #(notes or {}) do
+            local it = notes[i]
+            local lines = {}
+            for j = 1, #(it.lines or {}) do
+                lines[#lines + 1] = tostring(it.lines[j]):gsub("|", "/")
+                    :gsub("~~", "~")
+            end
+            out[#out + 1] = "v" .. tostring(it.ver) .. "|"
+                .. table.concat(lines, "|")
+        end
+        local text = table.concat(out, "~~")
+        if #text > 8000 then text = text:sub(1, 8000) end
+        return text
+    end
+
+    function U.decodeNotes(text)
+        text = tostring(text or "")
+        if text == "" then return nil end
+        local out = {}
+        for part in (text .. "~~"):gmatch("(.-)~~") do
+            local ver, rest = part:match("^v([%d%.]+)|(.*)$")
+            if ver then
+                local lines = {}
+                for line in (rest .. "|"):gmatch("(.-)|") do
+                    if line ~= "" then lines[#lines + 1] = line end
+                end
+                out[#out + 1] = { ver = ver, lines = lines }
+            end
+        end
+        if #out == 0 then return nil end
+        return out
     end
 
     -- Читаем отметку (после перезапуска) и готовим окно «что изменилось».
@@ -40415,12 +40536,15 @@ local function grndUpdInit()
         local to, from = U.updatedVer, U.updatedFrom
         if not to or U.verNum(to) ~= U.verNum(U.cur) then return end
         local body = U.readHead(U.scriptPath(), 16384)
-        local notes = body and U.changelogOf(body, from) or nil
-        if not notes or #notes == 0 then notes = U.savedNotes or {} end
-        U.notes = notes
+        local notes
+        if body and not U.isBytecode(body) then
+            notes = U.changelogOf(body, from)
+        end
+        if not notes or #notes == 0 then notes = U.decodeNotes(U.notesCache) end
+        U.notes = notes or {}
         U.justUpdated = { from = from or "?", to = to }
         U.state, U.window = "ready", true
-        U.updatedVer, U.updatedFrom = nil, nil
+        U.updatedVer, U.updatedFrom, U.notesCache = nil, nil, nil
         -- автопроверка на этом же заходе уже не нужна: версию поставили только
         -- что (зазор 20 с гасит повторный тост)
         U.lastAt = math.floor(U.io.time())
@@ -40511,9 +40635,11 @@ local function grndUpdInit()
                 body = nil
             end
         end
-        local ver = body and tostring(body):match(
-            'GRND_SCRIPT_VERSION%s*=%s*"([%d%.]+)"')
-        if not body or #body < U.MIN_BYTES or not ver
+        local ver = U.detectVersion(body)
+        local asBytecode = U.installedBytecode()
+        -- байткод легче исходника, поэтому порог размера у них разный
+        local minBytes = U.isBytecode(body) and U.MIN_BYTE_BYTES or U.MIN_BYTES
+        if not body or #body < minBytes or not ver
             or U.verNum(ver) ~= U.verNum(U.newVer) then
             dropTemp(job)
             U.diag(("скачанный файл не прошёл проверку (%d байт, версия %s)")
@@ -40522,12 +40648,33 @@ local function grndUpdInit()
             -- следующий канал, а не сдаёмся
             return U.dlScript()
         end
+        -- У нас скомпилированный файл — значит и обновление ставим байткодом,
+        -- собранным ТЕМ ЖЕ LuaJIT, что работает в игре: чужой байткод
+        -- MoonLoader не примет («cannot load incompatible bytecode»).
+        local out = body
+        if asBytecode then
+            local bc, cerr = U.compileSource(body, U.SRC_FILE)
+            -- Проверяем по делу: из готового байткода должна читаться ровно та
+            -- версия, которую мы скачали (по размеру судить нельзя — одни
+            -- комментарии в байткод не попадают).
+            if not bc or #bc < 64
+                or U.verNum(U.detectVersion(bc) or "0") ~= U.verNum(U.newVer) then
+                dropTemp(job)
+                U.diag("не смог собрать байткод: " .. tostring(cerr))
+                U.state, U.err = "error", "обновление не скомпилировалось"
+                failToast("Обновление не установилось: не удалось собрать "
+                    .. "байткод — версия " .. U.cur .. " на месте")
+                return false
+            end
+            out = bc
+            U.diag(("байткод собран: %d байт (из %d байт исходника)"):format(#bc, #body))
+        end
         U.notes = U.changelogOf(body)
         -- ОБНОВЛЕНИЕ В ОДНОМ ФАЙЛЕ: пишем прямо в текущий файл скрипта.
         -- Никаких .bak и .new рядом не остаётся — MoonLoader прочитал исходник
         -- при запуске и файл не держит, поэтому перезапись безопасна.
         local target = U.scriptPath()
-        if not U.writeFile(target, body) then
+        if not U.writeFile(target, out) then
             dropTemp(job)
             U.diag("не смог записать файл скрипта (занят?)")
             U.state = "error"
@@ -40546,7 +40693,7 @@ local function grndUpdInit()
         -- Окно со списком изменений покажет УЖЕ НОВАЯ версия после
         -- перезапуска: отметку про только что установленную версию кладём в
         -- настройки, а перезапускаемся сразу — от человека ничего не требуется.
-        U.markInstalled(U.cur, tostring(U.newVer))
+        U.markInstalled(U.cur, tostring(U.newVer), U.notes)
         U.requestReload()
         return true
     end
@@ -40874,11 +41021,55 @@ local function grndUpdInit()
     _G.grndUpdDraw = U.draw
     _G.grndUpdWanted = function() return U.window and true or false end
 
+    -- ---------- компиляция в байткод прямо в игре ----------
+    -- Никаких сторонних программ не нужно: компилируем тем же LuaJIT, что
+    -- работает в игре, поэтому байткод гарантированно совместим. Файл .lua
+    -- не удаляем сами (он сейчас и работает) — человеку говорим, что убрать.
+    function U.compile()
+        local target = U.scriptPath()
+        if U.installedBytecode() then
+            U.notify("Скрипт уже скомпилирован — обновления приходят в том же "
+                .. "виде (.luac)", "ok", 4)
+            return false
+        end
+        local src = U.readFile(target)
+        if not src then
+            U.notify("Не смог прочитать свой файл — компиляция отменена",
+                "error", 4)
+            return false
+        end
+        local bc, cerr = U.compileSource(src, U.SRC_FILE)
+        if not bc then
+            U.notify("Компиляция не удалась: " .. tostring(cerr), "error", 5)
+            return false
+        end
+        local name = tostring(target):match("([^/\\]+)$") or U.SRC_FILE
+        local base = name:gsub("%.[Ll][Uu][Aa][Cc]?$", "")
+        local out = U.dirOf(target) .. base .. ".luac"
+        if not U.writeFile(out, bc) then
+            U.notify("Не смог записать " .. base .. ".luac", "error", 4)
+            return false
+        end
+        U.compiledTo = out
+        U.notify(("Скомпилировано: %s.luac (%.1f МБ из %.1f МБ). Закройте игру, "
+            .. "удалите %s и запустите снова — дальше обновления будут "
+            .. "ставиться в .luac сами"):format(base, #bc / 1048576,
+            #src / 1048576, name), "ok", 14)
+        return true
+    end
+
     -- ---------- команда ----------
     if type(sampRegisterChatCommand) == "function" then
         pcall(sampRegisterChatCommand, "grndupdate", function(arg)
             local a = tostring(arg or ""):lower()
             U.window = false
+            if a:find("compile", 1, true) or a:find("компил", 1, true)
+                or a:find("байт", 1, true) or a:find("luac", 1, true) then
+                U.window = false
+                U.compile()
+                U.refreshFrame()
+                return
+            end
             if a:find("test", 1, true) or a:find("канал", 1, true) then
                 U.probe()
             else

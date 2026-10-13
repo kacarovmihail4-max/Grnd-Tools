@@ -24,9 +24,9 @@ local a1 = assert(src:find("-- >>> GRND_UPDATE_BEGIN"))
 local a2 = assert(src:find("-- <<< GRND_UPDATE_END"))
 local block = src:sub(a1, a2 - 1)
 
-local V = "1.19.230"       -- текущая версия скрипта
-local NEW = "1.19.231"     -- версия в канале
-local OLD = "1.19.229"     -- что отдаёт зеркало из кэша
+local V = "1.19.231"       -- текущая версия скрипта
+local NEW = "1.19.232"     -- версия в канале
+local OLD = "1.19.230"     -- что отдаёт зеркало из кэша
 
 local SCRIPT_PATH = "/game/moonloader/grnd_adm_tools.lua"
 local CFG_PATH = "/game/moonloader/config/grnd_tools/grnd_update.cfg"
@@ -357,6 +357,18 @@ local function blobJson(body)
     return '{"sha":"x","encoding":"base64","content":"'
         .. table.concat(lines, "\\n") .. '"}'
 end
+
+-- Настоящий байткод из исходника стенда — тем же LuaJIT, что запускает стенд
+-- (в игре это делает MoonLoader своим LuaJIT).
+local function asLuac(body)
+    local chunk = assert(load(body, "@grnd_adm_tools.lua"))
+    local ok, bc = pcall(string.dump, chunk, true)
+    if not (ok and type(bc) == "string" and #bc > 0) then
+        bc = string.dump(chunk)
+    end
+    return bc
+end
+local LUAC_PATH = "/game/moonloader/grnd_adm_tools.luac"
 
 -- ---------- 1. начальное состояние ----------
 check(U.cur == V, "старт: текущая версия из шапки")
@@ -964,6 +976,124 @@ plain.Button = function() return false end
 U.window = true
 check(U.draw({ im = plain, begin = function() return plain.Begin() end,
     endWin = function() end }) == true, "окно: рисуется и без TextColored")
+
+-- ---------- 12a. скомпилированный скрипт (.luac) ----------
+-- Установлен байткод: определяем его по магии, а не по расширению
+resetU()
+FS[SCRIPT_PATH] = asLuac(newBody(V, "скомпилированная сборка"))
+check(U.installedBytecode() == true, "байткод: скомпилированный файл распознан")
+check(U.isBytecode(FS[SCRIPT_PATH]), "байткод: магия LuaJIT на месте")
+check(U.detectVersion(FS[SCRIPT_PATH]) == V,
+    "байткод: версия вынимается из строковых констант")
+
+-- обновление скомпилированной сборки: исходник из канала → байткод своими
+-- руками (тем же LuaJIT), запись прямо в тот же файл
+U.CHANNELS = { CH1 }
+U.check("manual")
+succeed(1, NEW)
+U.tick()
+succeed(2, newBody(NEW, "обновление скомпилированной сборки"))
+U.tick()
+check(U.state == "ready", "байткод: обновление установлено")
+check(U.isBytecode(FS[SCRIPT_PATH]),
+    "байткод: на месте снова СКОМПИЛИРОВАННЫЙ файл, а не исходник")
+check(load(FS[SCRIPT_PATH]) ~= nil, "байткод: собранный файл читается LuaJIT")
+check(U.detectVersion(FS[SCRIPT_PATH]) == NEW, "байткод: новая версия внутри")
+check(not FS[SCRIPT_PATH]:find("script_name(%s*%(", 1),
+    "байткод: текста исходника в файле нет")
+check(#FS[SCRIPT_PATH] < 20000, "байткод: файл без комментариев (короткий)")
+check(FS[SCRIPT_PATH .. ".bak"] == nil, "байткод: .bak не создаётся")
+check(FS[SCRIPT_PATH .. ".new"] == nil, "байткод: .new не остаётся")
+check((gconf.sections.update or ""):find("notesCache=", 1, true) ~= nil,
+    "байткод: список изменений сохранён в настройках")
+check((gconf.sections.update or ""):find("updatedVer=" .. NEW, 1, true) ~= nil,
+    "байткод: отметка о версии сохранена")
+
+-- после перезапуска (файл — байткод) окно изменений берёт список из настроек
+_G.GRND_SCRIPT_VERSION = NEW
+_G.GRND_UPDATE = nil
+local U4 = mkModule()()
+U4.io = stubIO
+U4.moonDl = downloadStub
+U4.CHANNELS = { CHA, CH1, CH2, CH3 }
+U4.inetLoad = function() return nil end
+U4.inet, U4.inetErr, U4.road = nil, nil, nil
+U4.cfgLoaded = false
+U4.tick()
+check(U4.window == true, "байткод: окно изменений открылось после перезапуска")
+check(#(U4.notes or {}) >= 1, "байткод: список изменений восстановлен из настроек")
+check(table.concat(U4.notes[1] and U4.notes[1].lines or {}, " ")
+    :find("обновление скомпилированной сборки", 1, true) ~= nil,
+    "байткод: в списке — строки из новой версии")
+check((gconf.sections.update or ""):find("notesCache", 1, true) == nil,
+    "байткод: из настроек список убран после показа")
+
+-- список изменений переживает кодирование одной строкой
+local enc = U.encodeNotes({ { ver = "1.2.3", lines = { "строка один", "строка|два" } },
+    { ver = "1.2.4", lines = { "ещё строка" } } })
+check(enc:find("\n") == nil, "заметки: переносов строк нет (конфиг однострочный)")
+local dec = U.decodeNotes(enc)
+check(dec and #dec == 2 and dec[2].ver == "1.2.4", "заметки: разбираются обратно")
+check(dec and dec[1].lines[2] == "строка/два", "заметки: «|» внутри текста заменён")
+check(U.decodeNotes(nil) == nil, "заметки: пусто → nil")
+
+-- если байткод собрать нельзя — обновление не ставим (файл остаётся рабочим)
+resetU()
+FS[SCRIPT_PATH] = asLuac(newBody(V, "рабочая сборка"))
+local oldLuac = FS[SCRIPT_PATH]
+local realDump = string.dump
+string.dump = function() error("в этой LuaJIT нет string.dump") end
+U.CHANNELS = { CH1 }
+U.check("manual")
+succeed(1, NEW)
+U.tick()
+succeed(2, newBody(NEW, "не соберётся"))
+U.tick()
+string.dump = realDump
+check(U.state == "error", "байткод: без string.dump обновление не ставится")
+check(U.err ~= nil and U.err:find("компил", 1, true) ~= nil,
+    "байткод: причина — не удалось скомпилировать")
+check(FS[SCRIPT_PATH] == oldLuac, "байткод: рабочая сборка цела")
+check(hasToast("не удалось собрать"), "байткод: честный тост про сбой")
+
+-- ---------- 12b. /grndupdate compile ----------
+resetU()
+local cmdsB = {}
+_G.sampRegisterChatCommand = function(name, fn) cmdsB[name] = fn end
+local U5 = mkModule()()
+U5.io = stubIO
+U5.moonDl = downloadStub
+U5.CHANNELS = { CHA, CH1, CH2, CH3 }
+U5.inetLoad = function() return nil end
+U5.state, U5.window = "idle", false
+FS[SCRIPT_PATH] = newBody(V, "для компиляции")
+check(U5.compile() == true, "компиляция: команда собрала байткод")
+check(U5.installedBytecode() == false, "компиляция: рабочий файл — по-прежнему .lua")
+local luac = FS[LUAC_PATH]
+check(type(luac) == "string" and U.isBytecode(luac),
+    "компиляция: рядом появился .luac с байткодом")
+check(load(luac) ~= nil, "компиляция: .luac читается LuaJIT")
+check(U.detectVersion(luac) == V, "компиляция: версия внутри байткода верна")
+check(#luac < #FS[SCRIPT_PATH], "компиляция: байткод легче исходника")
+check(hasToast("Скомпилировано"), "компиляция: тост с именем файла")
+check(hasToast(".luac"), "компиляция: в тосте сказано, что дальше .luac")
+-- повторный вызов: файл уже скомпилирован
+FS[SCRIPT_PATH] = luac
+check(U5.compile() == false, "компиляция: повторный вызов ничего не делает")
+check(hasToast("уже скомпилирован"), "компиляция: и говорит об этом")
+-- команда /grndupdate compile — то же самое
+resetU()
+local cmdsC = {}
+_G.sampRegisterChatCommand = function(name, fn) cmdsC[name] = fn end
+local U6 = mkModule()()
+U6.io = stubIO
+U6.moonDl = downloadStub
+U6.CHANNELS = { CH1 }
+U6.inetLoad = function() return nil end
+FS[SCRIPT_PATH] = newBody(V, "через команду")
+cmdsC["grndupdate"]("compile")
+check(U.isBytecode(FS[LUAC_PATH] or ""), "компиляция: /grndupdate compile работает")
+check(U6.probing ~= true, "компиляция: команда не запускает обход каналов")
 
 -- ---------- 13a. чистая сборка: никаких файлов рядом со скриптом ----------
 -- мусор от прежних версий убирается при запуске
