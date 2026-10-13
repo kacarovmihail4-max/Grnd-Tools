@@ -1,6 +1,14 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.224"
+GRND_SCRIPT_VERSION = "1.19.225"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.225 — тише при заходе в игру (проверка идёт на каждый спавн):
+--   1) при заходе в игру больше НЕ показываем «Версия N — последняя»: эта
+--      строка осталась только у ручной проверки (/grndupdate и кнопка);
+--   2) сбой сети на заходе тоже молчит (в разделе «Выдача в радиусе»
+--      по-прежнему видно статус) — иначе при проверке на каждый спавн
+--      игрока засыпало бы тостами; ошибки ручной проверки показываем;
+--   3) об «Обновляюсь до версии N» и «Обновление N установлено» сообщаем
+--      всегда — это то, ради чего проверка идёт.
 -- v1.19.224 — КАНАЛ ОБНОВЛЕНИЙ и проверка на КАЖДЫЙ заход в игру:
 --   1) обновления идут из нашего публичного канала — тот же репозиторий
 --      Grnd-Tools, метка (тег) grnd-latest: update.txt — номер версии,
@@ -39732,7 +39740,9 @@ do
         local urls = urlList(U.VER_FILE)
         if not (urls[i] and dlStart(urls[i], U.workDir() .. "\\grnd_update.txt", "version")) then
             U.state, U.err = "error", "сервер обновлений недоступен"
-            U.notify("Обновления: нет связи с сервером", "warn", 3.5)
+            if U.checkReason ~= "spawn" then
+                U.notify("Обновления: нет связи с сервером", "warn", 3.5)
+            end
             return false
         end
         U.mi = i
@@ -39751,6 +39761,7 @@ do
     end
 
     function U.check(reason)
+        U.checkReason = reason or "manual"
         U.loadCfg()
         if U.pend then return false, "уже проверяю" end
         U.state, U.err = "checking", nil
@@ -39779,7 +39790,10 @@ do
         if not ok then
             if U.dlVersion((U.mi or 1) + 1) then return end
             U.state, U.err = "error", "нет связи (" .. tostring(P.err or "таймаут") .. ")"
-            U.notify("Обновления: нет связи, попробуем позже", "warn", 3.5)
+            -- на заходе в игру молчим (статус виден в разделе); вручную — тост
+            if U.checkReason ~= "spawn" then
+                U.notify("Обновления: нет связи, попробуем позже", "warn", 3.5)
+            end
             return
         end
         local body = U.readFile(P.path, 4096)
@@ -39787,7 +39801,9 @@ do
         local ver = tostring(body or ""):match("(%d+%.%d+%.%d+)")
         if not ver then
             U.state, U.err = "error", "сервер ответил непонятно"
-            U.notify("Обновления: не понял номер версии", "warn", 3.5)
+            if U.checkReason ~= "spawn" then
+                U.notify("Обновления: не понял номер версии", "warn", 3.5)
+            end
             return
         end
         if U.verNum(ver) > U.verNum(U.cur) then
@@ -39798,7 +39814,11 @@ do
             return
         end
         U.state = "uptodate"
-        U.notify("Версия " .. U.cur .. " — последняя", "ok", 2.6)
+        -- на заходе в игру «последняя версия» не показываем (проверка идёт
+        -- каждый спавн — иначе тост мозолил бы глаза); ручная — показывает
+        if U.checkReason ~= "spawn" then
+            U.notify("Версия " .. U.cur .. " — последняя", "ok", 2.6)
+        end
     end
 
     local function install(P)
