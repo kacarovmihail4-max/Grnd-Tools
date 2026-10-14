@@ -48,7 +48,7 @@ do
     local chunk = "return function(grndUtf8Text)\n local GRND_LOG={}\n local L=GRND_LOG\n"
         .. " function L.utf(s) return grndUtf8Text and grndUtf8Text(s) or tostring(s or '') end\n"
         .. cut("    function L.clean(s)", "    function L.lower(s)")
-        .. cut("    -- ---------- строки, скрытые от игрока", "    function L.capture(text,source)")
+        .. cut("    L.muted={}", "    function L.capture(text,source)")   -- v1.19.233: якорь кодовой
         .. "\n return L\nend"
     local L = assert(loadstring(chunk, "@logmute"))()(function(s) return s end)
 
@@ -86,8 +86,8 @@ return function(grndUtf8Text, grndLowerUtf, grndFormAdminLine)
         .. cut("    function L.warn(s,kind)", "    function L.validDate(")
         .. cut("    function L.response(text)", "    function L.resolve(text)")
         .. cut("    function L.resolve(text)", "    function L.duplicate(")
-        .. cut("    function L.duplicate(text,source)", "    -- ---------- строки, скрытые от игрока")
-        .. cut("    -- ---------- строки, скрытые от игрока", "    function L.capture(text,source)")
+        .. cut("    function L.duplicate(text,source)", "    L.muted={}")
+        .. cut("    L.muted={}", "    function L.capture(text,source)")   -- v1.19.233: якорь кодовой
         .. cut("    function L.capture(text,source)", "    function L.nick(id)")
         .. "\n    return L\nend"
     local L = assert(loadstring(chunk, "@logcapture"))()(function(s) return s end, nil, nil)

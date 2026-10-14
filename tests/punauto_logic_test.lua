@@ -3,13 +3,12 @@ local function loadLogic(path, lower, utf, osmod)
     local file = assert(io.open(path, "rb"))
     local src = file:read("*a")
     file:close()
-    local a = src:find(">>> GRND_PUNAUTO_LOGIC_BEGIN", 1, true)
+    -- v1.19.233: якоря КОДОВЫЕ — комментариев-маркеров в файле больше нет
+    local a = src:find("\n    local PA_FN = {}", 1, true)
     assert(a, "нет якоря BEGIN")
-    local e = src:find("<<< GRND_PUNAUTO_LOGIC_END", a, true)
+    local e = src:find("\n    PA_FN.one = paOne", a, true)
     assert(e, "нет якоря END")
-    local block = src:sub(a, e)
-    block = block:gsub("^[^\n]*\n", "", 1)   -- строка с BEGIN
-    block = block:gsub("[^\n]*$", "", 1)     -- строка с END
+    local block = src:sub(a + 1, e + #"\n    PA_FN.one = paOne")
     local chunk = "local grndLowerUtf, grndUtf8Text, os = ...\n" .. block .. "\nreturn PA_FN\n"
     local fn, err = loadstring(chunk, "@punauto_logic")
     assert(fn, err)
