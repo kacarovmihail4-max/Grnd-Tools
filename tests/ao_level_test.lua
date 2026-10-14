@@ -24,7 +24,8 @@ end
 -- ---------- вырезаем модуль GRND_AO ----------
 local src = assert(io.open("grnd_adm_tools.lua")):read("*a")
 local a1 = assert(src:find("GRND_AO = _G.GRND_AO or {}", 1, true))
-local a2 = assert(src:find("--  МОДУЛЬ 13", a1, true))
+-- v1.19.233: конец блока — по коду модуля 13 (комментариев-маркеров больше нет)
+local a2 = assert(src:find("\nGRND_RC = _G.GRND_RC or {}", a1, true))
 -- отступаем к началу комментария-разделителя перед модулем 13
 local block = src:sub(a1, a2 - 1)
 

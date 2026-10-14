@@ -20,9 +20,10 @@ end
 
 -- ---------- загрузка модуля ----------
 local src = assert(io.open("grnd_adm_tools.lua")):read("*a")
-local a1 = assert(src:find("-- >>> GRND_UPDATE_BEGIN"))
-local a2 = assert(src:find("-- <<< GRND_UPDATE_END"))
-local block = src:sub(a1, a2 - 1)
+local UPD_END = "\ngrndUpdInit()\n"
+local a1 = assert(src:find("GRND_UPDATE = _G.GRND_UPDATE or {}"))
+local a2 = assert(src:find(UPD_END, a1, true))  -- plain: в якоре есть "()" — магия паттернов
+local block = src:sub(a1, a2 + #UPD_END - 1)
 
 local V = "1.19.231"       -- текущая версия скрипта
 local NEW = "1.19.232"     -- версия в канале
@@ -459,6 +460,31 @@ check(joined:find("первое изменение", 1, true) ~= nil, "changelog
 check(joined:find("второе изменение", 1, true) ~= nil, "changelog: строки 2")
 check(joined:find("наше", 1, true) == nil, "changelog: своя версия не попала")
 check(#U.changelogOf(nil) == 0, "changelog: nil → пусто")
+
+-- v1.19.233: список изменений живёт В КОДЕ — строка GRND_CHANGELOG,
+-- комментарии файлу больше не нужны
+local embBody = table.concat({
+    'GRND_SCRIPT_VERSION = "' .. NEW .. '"',
+    "GRND_CHANGELOG = [[",
+    "v" .. NEW .. " — Тест встроенного списка:",
+    "  1) первая строка.",
+    "  2) вторая строка.",
+    "v" .. V .. " — старое:",
+    "  1) не должно попасть.",
+    "]]",
+}, "\n") .. "\n"
+local embNotes = U.changelogOf(embBody)
+check(#embNotes == 1, "changelog: встроенный блок — только новые версии")
+check(embNotes[1] and embNotes[1].ver == NEW, "changelog: встроенный блок — версия")
+check(embNotes[1].lines[1] == "Тест встроенного списка:",
+    "changelog: встроенный заголовок без мусора")
+check(#embNotes[1].lines == 3, "changelog: встроенный блок — все строки")
+check(embNotes[1].lines[2] == "1) первая строка.", "changelog: встроенная строка 1")
+check(embNotes[1].lines[3] == "2) вторая строка.", "changelog: встроенная строка 2")
+check(#U.changelogOf(embBody, NEW) == 0, "changelog: встроенный блок — своя версия отфильтрована")
+local realNotes = U.changelogOf(src:sub(1, 16384), "1.19.232")
+check(realNotes[1] ~= nil and realNotes[1].ver == "1.19.233",
+    "changelog: реальная шапка файла парсится")
 
 -- ---------- 3. источники спавна ----------
 resetU()

@@ -30,8 +30,9 @@ local SRC = assert(findScript(), "не нашёл grnd_adm_tools.lua (задай
 
 local src = assert(io.open(SRC, "rb")):read("*a")
 local a = assert(src:find("do\n    local PA = QR.punAuto", 1, true), "нет начала блока")
-local e = assert(src:find("\nend\n\n-- ---------- самопроверка логики", a, true), "нет конца блока")
-local block = src:sub(a, e + 4)   -- вместе с закрывающим end
+-- v1.19.233: конец блока — по коду за ним (комментарии-маркеры убраны)
+local e = assert(src:find("\nfunction QR.selfTest()", a, true), "нет конца блока")
+local block = src:sub(a, e)   -- вместе с закрывающим end
 
 -- в самой игре конвертер — глобальная функция (function grndAnsiText), поэтому
 -- кладём заглушку и в _G: модуль ищет её именно там
@@ -1506,7 +1507,21 @@ do
     -- команда уходит ПРЯМОЙ отправкой, а очередь репорта (0.35 с на строку) —
     -- только последний запас
     eq("nodelay.direct", count("if type(QR.sendChat) == \"function\" then"), 1)
-    eq("nodelay.queue.last", count("последний запас: очередь репорта"), 1)
+    -- v1.19.233: прежняя проверка считала фразу из комментария («последний
+    -- запас: очередь репорта»); комментарии из файла убраны — проверяем КОД
+    -- запасной ступени ВНУТРблока автопилота (у очереди репорта своя такая же
+    -- ступень вне блока, поэтому считаем не по всему файлу)
+    local function countIn(needle, hay)
+        local n, i = 0, 1
+        while true do
+            local a, b = hay:find(needle, i, true)
+            if not a then break end
+            n = n + 1
+            i = b + 1
+        end
+        return n
+    end
+    eq("nodelay.queue.last", countIn("return pcall(sampSendChat, out) and true or false", block), 1)
     -- ТИПЫ МЕТОДОВ D3D9. Из-за записи без «(*)» в игре было
     -- «bad argument #1 to 'bind' (invalid C type)»: LuaJIT такие типы не
     -- принимает, и съёмка падала ещё до первого вызова D3D. Проверяем, что в

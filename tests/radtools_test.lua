@@ -41,9 +41,10 @@ end
 
 -- ---------- загрузка модуля ----------
 local src = assert(io.open("grnd_adm_tools.lua")):read("*a")
-local a1 = assert(src:find("-- >>> GRND_RADTOOLS_BEGIN"))
-local a2 = assert(src:find("-- <<< GRND_RADTOOLS_END"))
-local block = src:sub(a1, a2 - 1) -- до первой «-» маркера END
+-- v1.19.233: якоря КОДОВЫЕ — комментариев в файле больше нет
+local a1 = assert(src:find("\ndo\n    local RT = {"))
+local a2 = assert(src:find("GRND_UPDATE = _G.GRND_UPDATE or {}", a1))
+local block = src:sub(a1, a2 - 1)
 local WRAP_ARGS = [[
 QR_PATH, GRND_CONFIG, ffi,
 sampIsPlayerConnected, sampGetCharHandleBySampPlayerId,
