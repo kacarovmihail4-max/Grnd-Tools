@@ -452,6 +452,25 @@ PA.onChat("Nik_Name[7]: дм")
 eq("off.no.send", #queued, 0)
 PA.on = true
 
+-- v1.19.232 — Оптимизация всех систем: выключенный автопилот вообще НЕ
+-- разбирает строку: ни разбор «Ник: текст», ни ключ защиты от дублей, ни
+-- PA.lastLine. Раньше строка гонялась через полный разбор ещё дважды.
+PA.on = false
+PA.lastCheck = nil
+PA.lastLine = "sentinel"
+PA.seenKey, PA.seenAt = "sentinel", os.clock()
+queued = {}
+PA.onChat("Nik_Name[7]: дм")
+eq("off.no.send2", #queued, 0)
+eq("off.no.parse", PA.lastLine, "sentinel")
+eq("off.no.dedupe", PA.seenKey, "sentinel")
+ok("off.reason", tostring(PA.lastCheck):find("выключен", 1, true) ~= nil)
+PA.on = true
+PA.lastAt = os.clock() - 5
+queued = {}
+PA.onChat("Nik_Name[7]: дм")   -- после включения та же строка доходит
+eq("off.then.on.fires", #queued, 1)
+
 -- v1.19.214: «не трогать админов» ВКЛЮЧЁН по умолчанию — администратору
 -- наказания нет, а себе (предохранитель пока выключен) — есть
 PA.lastAt = os.clock() - 5

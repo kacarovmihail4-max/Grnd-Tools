@@ -451,6 +451,10 @@ check(#notes == 1, "changelog: только версии новее текуще
 check(notes[1] and notes[1].ver == NEW, "changelog: версия в первой записи")
 local joined = notes[1] and table.concat(notes[1].lines, "|") or ""
 check(joined:find("ТЕСТ: свежая правка", 1, true) ~= nil, "changelog: заголовок")
+-- v1.19.232: тире «—» в UTF-8 — три байта; заголовок версии в окне не должен
+-- начинаться с битых байтов (раньше класс [—%-]? съедал только первый байт)
+check(notes[1].lines[1] == "ТЕСТ: свежая правка:",
+    "changelog: заголовок без битых байтов тире")
 check(joined:find("первое изменение", 1, true) ~= nil, "changelog: строки 1")
 check(joined:find("второе изменение", 1, true) ~= nil, "changelog: строки 2")
 check(joined:find("наше", 1, true) == nil, "changelog: своя версия не попала")

@@ -1,6 +1,33 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.231"
+GRND_SCRIPT_VERSION = "1.19.232"
 script_version(GRND_SCRIPT_VERSION)
+-- v1.19.232 — Оптимизация всех систем:
+--   1) ПЕРЕХВАТЧИКИ SYNC-ПАКЕТОВ больше не работают вхолостую: разбор
+--      координат, HP и брони из пакетов движения (onPlayerSync /
+--      onVehicleSync / onPassengerSync) нужен только табличкам «нового WH»
+--      (GRND_WH.onSync — их единственный потребитель), поэтому при
+--      выключенном WH сотни пакетов в секунду больше не разбираются зря;
+--   2) РАЗБОР SYNC-ПАКЕТОВ УСКОРИЛСЯ: имена полей библиотеки samp.events
+--      (health/armor/position) за сессию не меняются — первое найденное
+--      имя запоминается (своя ячейка на вид пакета: игрок / машина /
+--      пассажир), и дальше поле читается одним прямым доступом, без
+--      перебора пяти имён с pcall и запасного скана pairs() на КАЖДЫЙ пакет;
+--   3) ТРЕЙСЕР: направление прицела из onAimSync запоминается только когда
+--      трейсер включён — эти данные читает только отрисовка лучей, а кадр
+--      и так стирал их каждый раз при выключенном трейсере; пакеты
+--      выстрелов (onBulletSync) и проверка скорострельности работают как
+--      раньше — это отдельные тумблеры;
+--   4) АВТОПИЛОТ НАКАЗАНИЙ: строка чата больше не разбирается ДВАЖДЫ и не
+--      гоняет ключ защиты от дублей, когда автопилот выключен, — ранний
+--      выход до разбора; на каждую строку чата экономится полный разбор
+--      «Ник: текст» ×2 и utf-преобразования. При включённом автопилоте —
+--      как раньше (задержек нет, предохранители на месте);
+--   5) ЧЕКЕР «АДМИНЫ В СЕТИ»: чистка строки чата (коды цвета, нумерация)
+--      делается только когда чекер ждёт ответ на /admins или держит
+--      трёхсекундный хвост «игроков онлайн» — в остальное время серверная
+--      строка не обрабатывается вовсе;
+--   6) НИЧЕГО НЕ ПЕРЕНАСТРОЕНО: команды, вкладки, настройки и конфиги
+--      работают как раньше — все 903 проверки стендов пройдены.
 -- v1.19.231 — АВТООБНОВЛЕНИЕ: скрипт можно скомпилировать в байткод:
 --   1) команда /grndupdate compile собирает скрипт в байткод ПРЯМО В ИГРЕ —
 --      тем же LuaJIT, что у MoonLoader, поэтому файл гарантированно запустится
@@ -4994,7 +5021,12 @@ do
     end
     function T.aim(id,data)
         -- Данные прицела нужны только трейсеру: по ним достраивается
-        -- приблизительный луч промаха (см. T.endpoint).
+        -- приблизительный луч промаха (см. T.endpoint). v1.19.232: при
+        -- выключенном трейсере пакет не разбираем вовсе — T.add всё равно
+        -- ничего не рисует (сам проверяет enabled), а T.frame стирает aims
+        -- на каждом кадре. Скорострельность (T.receive) тут ни при чём —
+        -- у неё свой тумблер.
+        if not T.cfg.enabled then return end
         if type(id)~='number' or id<0 or id>1003 then return end
         local v=point(data and data.camFront)
         if not v then return end
@@ -19229,7 +19261,9 @@ do
 
     -- Скрываем ТОЛЬКО строки ответа /admins, когда запрос отправлен фоновым чекером (AO.hide == true)
     function grndAoOnChat(color, text)
-        local s=aoStrip(text)
+        -- v1.19.232 — Оптимизация всех систем: чистка строки (коды цвета,
+        -- нумерация) нужна только когда чекер ждёт ответ на /admins или
+        -- держит хвост «игроков онлайн»; в простое строка не обрабатывается.
         local now=os.clock()
         -- v1.19.202: строку, которую чекер прячет от игрока, помечаем для
         -- журнала («Общий чат») — иначе служебный ответ на /admins каждые
@@ -19243,6 +19277,8 @@ do
         -- The server may send played-online AFTER the list footer. Retain only
         -- this narrowly matched trailer for three seconds; never mute all chat.
         if AO.replyTailUntil and now>AO.replyTailUntil then AO.replyTailUntil=nil end
+        if not AO.waiting and not AO.replyTailUntil then return false end
+        local s=aoStrip(text)
         if AO.replyTailUntil and aoIsOnlineReply(s) then
             AO.replyTailUntil=nil
             return aoHideLine()
@@ -38019,6 +38055,14 @@ do
     -- Приём строки: зовётся из хука чата на КАЖДОЙ серверной строке.
     function PA.onChat(text)
         if type(text) ~= "string" or text == "" then return false end
+        -- v1.19.232 — Оптимизация всех систем: выключенный автопилот не
+        -- разбирает строку вовсе (раньше здесь шёл полный разбор «Ник: текст»
+        -- ещё дважды — в ключе дублей и в PA.check). Включённый работает
+        -- как раньше: без задержек, с теми же предохранителями.
+        if not PA.on then
+            PA.lastCheck = "Автопилот выключен"
+            return false
+        end
         PA.ensure()
         -- Одна и та же строка чата приходит из ДВУХ хуков, и в разном виде:
         -- «Ник[7]: текст» (onChatMessage) и «Ник: текст» / «Ник крикнул: текст»
@@ -40461,7 +40505,11 @@ local function grndUpdInit()
                 if U.verNum(ver) > min then
                     cur = ver
                     out[#out + 1] = { ver = ver, lines = {} }
-                    local head = line:match("^%-%- v[%d%.]+%s*[—%-]?%s*(.*)$")
+                    -- v1.19.232: тире «—» в UTF-8 — три байта; раньше класс
+                    -- [—%-]? съедал только ПЕРВЫЙ байт, и в окне изменений
+                    -- перед названием версии оставались два битых символа
+                    -- (например: «?? Оптимизация всех систем»).
+                    local head = line:match("^%-%- v[%d%.]+%s*[—%-]*%s*(.*)$")
                     if head and head ~= "" then
                         out[#out].lines[#out[#out].lines + 1] = head
                     end
@@ -52150,7 +52198,12 @@ function grndMainBody()
                 pcall(GRND_TRACER.aim, playerId, data)
             end
             function sampev.onSendAimSync(data)
-                pcall(function() GRND_TRACER.aim(GRND_TRACER.localId(), data) end)
+                -- v1.19.232: без замыкания на каждый пакет — цель та же,
+                -- что у гейта в T.aim (данные прицела нужны только трейсеру)
+                if GRND_TRACER.cfg and GRND_TRACER.cfg.enabled then
+                    local okId, lid = pcall(GRND_TRACER.localId)
+                    if okId then pcall(GRND_TRACER.aim, lid, data) end
+                end
             end
             function sampev.onBulletSync(playerId, data)
                 GRND_TRACER.receive(playerId, data, false)
@@ -52218,26 +52271,71 @@ function grndMainBody()
                 if x and y and z then return x, y, z end
                 return nil
             end
-            function sampev.onPlayerSync(playerId, data)
-                if data then
-                    local hp,armor=whSyncFind(data,'hp'),whSyncFind(data,'armor')
-                    local x,y,z=whSyncPos(data)
-                    pcall(GRND_WH.onSync,playerId,hp,armor,x,y,z)
+            -- v1.19.232 — Оптимизация всех систем: sync-пакеты разбираются,
+            -- только когда включён «новый WH» (таблички): его кэш
+            -- (GRND_WH.onSync → W.vitals/W.headTop) — единственный потребитель
+            -- этих данных, при выключенном WH разбор был пустой тратой на
+            -- каждый пакет каждого игрока. Имена полей (health/armor/position)
+            -- у библиотеки samp.events за сессию не меняются: первое найденное
+            -- имя запоминается (своя ячейка на вид пакета — игрок/машина/
+            -- пассажир), дальше поле читается одним прямым доступом.
+            local whSyncNamesHp = { 'playerHealth', 'health', 'hp', 'playerHP', 'bPlayerHealth' }
+            local whSyncNamesAr = { 'playerArmor', 'playerArmour', 'armor', 'armour', 'bPlayerArmour' }
+            local whSyncSlotPlayer, whSyncSlotVehicle, whSyncSlotPassenger = {}, {}, {}
+            local function whSyncRead(data, name)
+                local ok, v = pcall(function() return data[name] end)
+                if ok and tonumber(v) ~= nil then return tonumber(v) end
+                return nil
+            end
+            local function whSyncFindCached(data, slot, kind)
+                local name = slot[kind]
+                if name ~= nil then
+                    -- имя уже известно: один прямой доступ. nil — в ЭТОМ пакете
+                    -- поля нет (например, у пассажира нет HP), само имя верное
+                    return whSyncRead(data, name)
                 end
+                local names = (kind == 'hp') and whSyncNamesHp or whSyncNamesAr
+                for i = 1, #names do
+                    local v = whSyncRead(data, names[i])
+                    if v ~= nil then slot[kind] = names[i]; return v end
+                end
+                return whSyncFind(data, kind) -- запасной разбор по подстроке
+            end
+            local function whSyncPosCached(data, slot)
+                if slot.pos then
+                    local okP, pos = pcall(function() return data.position end)
+                    if not okP or pos == nil then
+                        slot.pos = nil -- имя сломалось — как раньше, до разбора
+                        return whSyncPos(data)
+                    end
+                    local function one(k)
+                        local ok, v = pcall(function() return pos[k] end)
+                        if ok then return tonumber(v) end
+                    end
+                    local x, y, z = one('x'), one('y'), one('z')
+                    if x and y and z then return x, y, z end
+                    return nil
+                end
+                local x, y, z = whSyncPos(data)
+                if x then slot.pos = true end
+                return x, y, z
+            end
+            local function whSyncFeed(slot, playerId, data)
+                local W = GRND_WH
+                if W == nil or W.newwh ~= true then return end
+                local hp = whSyncFindCached(data, slot, 'hp')
+                local armor = whSyncFindCached(data, slot, 'armor')
+                local x, y, z = whSyncPosCached(data, slot)
+                pcall(W.onSync, playerId, hp, armor, x, y, z)
+            end
+            function sampev.onPlayerSync(playerId, data)
+                if data then whSyncFeed(whSyncSlotPlayer, playerId, data) end
             end
             function sampev.onVehicleSync(playerId, vehicleId, data)
-                if data then
-                    local hp,armor=whSyncFind(data,'hp'),whSyncFind(data,'armor')
-                    local x,y,z=whSyncPos(data)
-                    pcall(GRND_WH.onSync,playerId,hp,armor,x,y,z)
-                end
+                if data then whSyncFeed(whSyncSlotVehicle, playerId, data) end
             end
             function sampev.onPassengerSync(playerId, data)
-                if data then
-                    local hp,armor=whSyncFind(data,'hp'),whSyncFind(data,'armor')
-                    local x,y,z=whSyncPos(data)
-                    pcall(GRND_WH.onSync,playerId,hp,armor,x,y,z)
-                end
+                if data then whSyncFeed(whSyncSlotPassenger, playerId, data) end
             end
             function sampev.onShowDialog(dialogId, style, title, button1, button2, text)
                 if not grndSessionReady() then return end
