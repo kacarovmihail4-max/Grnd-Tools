@@ -1,7 +1,10 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.238"
+GRND_SCRIPT_VERSION = "1.19.239"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.239 — Без уведомлений при входе в слежку:
+  1) убраны всплывающие уведомления при начале слежки (через команду
+     и через Kill List);
 v1.19.238 — Платформа после слежки:
   1) при выходе из слежки платформа под ногами больше не появляется
      автоматически (только по F4);
@@ -17186,7 +17189,6 @@ local function grndSpecTrackCommand(cmd)
                         _G.GRND_SPEC_AUTOREF.graceUntil = os.clock() + 2.5
                     end
                     local who = "#" .. id .. (GRND_SPEC.nick ~= "" and (" (" .. GRND_SPEC.nick .. ")") or "")
-                    notify.add("Слежка: " .. who, "info", 5)
                 end
             end
         elseif GRND_SPEC.active then
@@ -36522,9 +36524,6 @@ function grndMainBody()
             if type(GRND_TAB) ~= "table" then return false end
             GRND_TAB.specId = id
             GRND_TAB.open = false
-            if type(notify.add) == "function" then
-                pcall(notify.add, "Слежка: " .. tostring(nick) .. " (#" .. tostring(id) .. ")", "info", 3)
-            end
             return true
         end
         local klDx = { fonts = {}, dead = false, fam = nil }
