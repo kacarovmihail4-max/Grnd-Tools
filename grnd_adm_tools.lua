@@ -1,7 +1,11 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.253"
+GRND_SCRIPT_VERSION = "1.19.254"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.254 — GM запоминается:
+  1) если GM включён (карточка «GM» в читах, /gm, хоткей), он остаётся
+     включённым и сам активируется при каждом заходе на сервер;
+  2) выключенный GM при заходе не включается;
 v1.19.253 — Skip ZZ прячет окно, нарисованное текстдравами:
   1) окно «Зеленая зона» на сервере — это текстдравы (чёрный фон, текст,
      кнопка «Принять»), а не диалог: скрипт теперь прячет их по тексту и
@@ -8128,6 +8132,7 @@ local function camCfgLoad()
             elseif k == "chatInputHistory" then
                 GRND_INPUT.showHistory = (v == "1")
             elseif k == "gmAuto" then
+                _G.GRND_GM_AUTO = (v == "1")
                 if _G.GRND_GM then
                     _G.GRND_GM.autoClient = (v == "1")
                     _G.GRND_GM.autoServer = (v == "1")
@@ -33992,7 +33997,8 @@ function grndMainBody()
     local plainCursorOn = false
     local GRND_GM = { on = false, lastHp = 100, car = nil, cmdReg = false,
         srv = false, srvKnown = false,
-        autoClient = false, autoServer = false, autoFired = false }
+        autoClient = _G.GRND_GM_AUTO == true, autoServer = _G.GRND_GM_AUTO == true,
+        autoFired = false }
     _G.GRND_GM = GRND_GM
     local function clwGetGroundZ(x, y)
         if type(getGroundZForCoord) == "function" then
@@ -34475,6 +34481,11 @@ function grndMainBody()
     end
     function grndGMToggle()
         local target = not GRND_GM.on
+        -- включил — GM остаётся включённым и активируется при каждом заходе;
+        -- выключил — при заходе не включается
+        GRND_GM.autoClient, GRND_GM.autoServer = target, target
+        _G.GRND_GM_AUTO = target
+        pcall(grndCamCfgSave)
         grndGMClientSet(target)
         grndGMSrvSet(target)
         grndGMToast(target)
