@@ -1,7 +1,11 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.239"
+GRND_SCRIPT_VERSION = "1.19.240"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.240 — Серверное окно и выход из слежки:
+  1) убран тост при выходе из слежки;
+  2) при открытом серверном окне Tab больше не перехватывается GRND,
+     а функционал GRND продолжает работать;
 v1.19.239 — Без уведомлений при входе в слежку:
   1) убраны всплывающие уведомления при начале слежки (через команду
      и через Kill List);
@@ -10794,7 +10798,7 @@ function onWindowMessage(msg, wparam, lparam)
             nativeDialogInput = (GRND_KEYS.dlgActive or GRND_KEYS.authBusy) and true or false
         end
     end
-    if nativeDialogInput then return end
+    -- серверное окно больше не блокирует весь ввод GRND
     if isMouseInput or isKeyInput then
         local uiGate=GRND_UI_MOUSE.uiGuard or grndUiMouseUpdate()
         local pressMsg=grndMsgIsPress(msgN)
@@ -11210,6 +11214,14 @@ function onWindowMessage(msg, wparam, lparam)
         return
     end
     if wp == 0x09 then
+        local sdOpen = false
+        if type(sampIsDialogActive) == "function" then
+            local okD, vD = pcall(sampIsDialogActive)
+            if okD and vD then sdOpen = true end
+        end
+        if sdOpen then
+            return
+        end
         if tapOnce(0x09) then
             GRND_TAB.hook = true
             GRND_TAB.held = false
@@ -17203,7 +17215,6 @@ local function grndSpecTrackCommand(cmd)
                 _G.GRND_SPEC_AUTOREF.lostSince = nil
                 _G.GRND_SPEC_AUTOREF.refreshCount = 0
             end
-            notify.add("Слежка выключена", "info", 3)
         end
     elseif SPEC_OFF_CMDS[name] then
         if GRND_SPEC.active then
@@ -17218,7 +17229,6 @@ local function grndSpecTrackCommand(cmd)
                 _G.GRND_SPEC_AUTOREF.lostSince = nil
                 _G.GRND_SPEC_AUTOREF.refreshCount = 0
             end
-            notify.add("Слежка выключена", "info", 3)
         end
     end
 end
