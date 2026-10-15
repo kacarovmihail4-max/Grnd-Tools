@@ -1,7 +1,10 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.237"
+GRND_SCRIPT_VERSION = "1.19.238"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.238 — Платформа после слежки:
+  1) при выходе из слежки платформа под ногами больше не появляется
+     автоматически (только по F4);
 v1.19.237 — Мгновенное обновление слежки:
   1) пропажа цели замечается мгновенно (убрана задержка 3 с и 0.75 с);
   2) при обновлении слежки показывается тост «Обновляю рекон»;
@@ -7246,8 +7249,8 @@ do
             return
         end
         if specNow then
-            if A.obj then airDespawn(A, "слежка (платформа вернётся при выходе)") end
-            A.needSpawn = true
+            if A.obj then airDespawn(A, "слежка") end
+            A.needSpawn = false
             A.lastPX = nil
             return
         end
