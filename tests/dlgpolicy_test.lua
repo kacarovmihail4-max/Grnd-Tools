@@ -291,7 +291,7 @@ ok("run.cfg", src:find('f:write("runOn="', 1, true) ~= nil and src:find('k == "r
 ok("run.frame", src:find("pcall(grndRunFrame)", 1, true) ~= nil)
 -- шрифт подписей чата увеличен
 ok("font.meta", src:find("metaScale=2.90", 1, true) ~= nil)
-ok("font.hint", src:find("fit(hint,r.w-28,measure,1.8)", 1, true) ~= nil)
+ok("font.hint", src:find("fit(hint,r.w-28,measureFont,1.8)", 1, true) ~= nil)
 
 -- Бесконечный кислород и сбив анимации после падения: натив MoonLoader, карточка, конфиг
 ok("oxy.native", src:find("pcall(setCharDrownsInWater, PLAYER_PED, false)", 1, true) ~= nil)
@@ -308,6 +308,9 @@ ok("font.meta.reachable", 2.90 * 16 <= 52)
 
 -- остаток кегля переносится в масштаб, даже если лестница не содержит нужного размера
 ok("font.ratio.carry", src:find("cached.ratio=ratio", 1, true) ~= nil and src:find("pcall(fn,native and (cached.ratio or 1) or scale,...)", 1, true) ~= nil)
+
+-- раскладка подписей чата измеряется тем же шрифтом, что и отрисовка
+ok("font.align.measure", src:find("C.layout(measureFont,metaFontHeight)", 1, true) ~= nil and src:find("local function measureFont(str,scale)", 1, true) ~= nil)
 
 print(string.format("--- серверное окно и окна скрипта: %d/%d ok ---", total - fails, total))
 if fails > 0 then os.exit(1) end

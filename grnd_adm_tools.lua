@@ -1,7 +1,10 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.264"
+GRND_SCRIPT_VERSION = "1.19.265"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.265 — ровная раскладка подписей чата:
+  1) ширина подписей режимов и строки TAB/раскладки считается тем же шрифтом,
+     которым они рисуются (раньше расхождение давало неровные промежутки);
 v1.19.264 — подписи чата увеличиваются даже без крупной лестницы шрифтов:
   1) разница между нужным и ближайшим размером шрифта переносится в масштаб текста;
 v1.19.263 — подписи чата реально увеличиваются:
@@ -6648,8 +6651,12 @@ do
                 return width,math.max(1,height)
             end
             local function measure(label,scale) return (metrics(label,scale)) end
+            local function measureFont(str,scale)
+                local w=fontCall(function(k) return ctx.measure(str,k) end,scale)
+                return tonumber(w) or 0
+            end
             local _,metaFontHeight=metrics(C.channels.normal.label,C.metaScale)
-            local L=C.layout(measure,metaFontHeight)
+            local L=C.layout(measureFont,metaFontHeight)
             local win=L.window
             im.SetNextWindowPos(im.ImVec2(win.x,win.y),ctx.always)
             im.SetNextWindowSize(im.ImVec2(win.w,win.h),ctx.always)
@@ -6688,7 +6695,7 @@ do
                 rect({x=r.x+1,y=r.y+6,w=2,h=math.max(2,r.h-12)},color(accent[1],accent[2],accent[3],210),1)
                 if C.readText()=='' then
                     local hint=info.hint..'  |  Введите сообщение...'
-                    centeredText(r.x+15,r.y,r.h,fit(hint,r.w-28,measure,1.8),{160,164,174,155},1.8)
+                    centeredText(r.x+15,r.y,r.h,fit(hint,r.w-28,measureFont,1.8),{160,164,174,155},1.8)
                 end
             end
             local hit={panel=L.panel,meta=L.meta,rows={}}
@@ -6698,8 +6705,8 @@ do
                 text(x,y,label,rgba,C.metaScale)
             end
             local function metaFit(label,width)
-                if measure(label,C.metaScale)<=width then return label end
-                if measure('...',C.metaScale)<=width then return fit(label,width,measure,C.metaScale) end
+                if measureFont(label,C.metaScale)<=width then return label end
+                if measureFont('...',C.metaScale)<=width then return fit(label,width,measureFont,C.metaScale) end
                 return ''
             end
             for _,group in ipairs(L.groups) do
