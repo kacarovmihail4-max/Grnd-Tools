@@ -1,7 +1,10 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.265"
+GRND_SCRIPT_VERSION = "1.19.266"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.266 — диагностика шрифта подписей чата:
+  1) в отчёте /grndkl dump (раздел ШРИФТ И ТЕКСТ) видно, какой кегль нужен,
+     какой взят из лестницы и применился ли нативный шрифт;
 v1.19.265 — ровная раскладка подписей чата:
   1) ширина подписей режимов и строки TAB/раскладки считается тем же шрифтом,
      которым они рисуются (раньше расхождение давало неровные промежутки);
@@ -6620,6 +6623,7 @@ do
                 end
                 local native=cached.font and type(im.PushFont)=='function' and type(im.PopFont)=='function'
                     and pcall(im.PushFont,cached.font)
+                GRND_FONT.lastCall={want=basePx*scale,pick=cached.pixels,ratio=cached.ratio or 1,native=native and true or false}
                 local success,a,b=pcall(fn,native and (cached.ratio or 1) or scale,...)
                 if native then pcall(im.PopFont) end
                 if not success then error(a) end
@@ -15002,6 +15006,19 @@ GRND_KL_ATLAS_PNG  = GRND_KL_ATLAS_PNG or table.concat({
         w("")
         w("=== ШРИФТ И ТЕКСТ (v1.5.7) ===")
         local CH2 = GRND_FONT or {}
+        do
+            local lc = CH2.lastCall
+            if type(lc) == "table" then
+                w("последний вызов подписи чата: нужно " .. tostring(lc.want) .. " px, лестница дала "
+                    .. tostring(lc.pick) .. " px, масштаб " .. tostring(lc.ratio)
+                    .. ", нативный шрифт применён: " .. tostring(lc.native))
+            else
+                w("подписи чата ещё не рисовались (вызовов шрифта не было)")
+            end
+            local imx = _G.GRND_IM or _G.grndImgui
+            w("PushFont в обёртке: " .. type(imx and imx.PushFont) .. ", SetWindowFontScale: "
+                .. type(imx and imx.SetWindowFontScale))
+        end
         w("загруженный шрифт: " .. tostring(CH2.fontLoadedPath or "НЕ загружен — системный шрифт обёртки"))
         w("выбран в настройках: " .. tostring(CH2.fontPath or "не выбран")
             .. ", базовый кегль: " .. tostring(CH2.fontBase or "—"))
