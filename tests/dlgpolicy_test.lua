@@ -306,6 +306,9 @@ ok("cheats.frames", src:find("pcall(grndOxyFrame)", 1, true) ~= nil and src:find
 ok("font.ladder.46", src:find("38, 40, 42, 44, 46, 48, 52 }", 1, true) ~= nil)
 ok("font.meta.reachable", 2.90 * 16 <= 52)
 
+-- остаток кегля переносится в масштаб, даже если лестница не содержит нужного размера
+ok("font.ratio.carry", src:find("cached.ratio=ratio", 1, true) ~= nil and src:find("pcall(fn,native and (cached.ratio or 1) or scale,...)", 1, true) ~= nil)
+
 print(string.format("--- серверное окно и окна скрипта: %d/%d ok ---", total - fails, total))
 if fails > 0 then os.exit(1) end
 os.exit(0)

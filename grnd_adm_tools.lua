@@ -1,7 +1,9 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.263"
+GRND_SCRIPT_VERSION = "1.19.264"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.264 — подписи чата увеличиваются даже без крупной лестницы шрифтов:
+  1) разница между нужным и ближайшим размером шрифта переносится в масштаб текста;
 v1.19.263 — подписи чата реально увеличиваются:
   1) шрифт подписей чата не рос дальше 40 px: добавлены крупные размеры;
 v1.19.262 — ещё крупнее подписи чата:
@@ -6606,12 +6608,16 @@ do
                     if type(_G.grndUiFontPick)=='function' then
                         local got,font,pixels=pcall(_G.grndUiFontPick,basePx*scale)
                         if got and font then cached.font,cached.pixels=font,pixels end
+                        if cached.font and tonumber(cached.pixels) and cached.pixels>0 then
+                            local ratio=(basePx*scale)/cached.pixels
+                            if math.abs(ratio-1)>0.02 then cached.ratio=ratio end
+                        end
                     end
                     fontCache[scale]=cached
                 end
                 local native=cached.font and type(im.PushFont)=='function' and type(im.PopFont)=='function'
                     and pcall(im.PushFont,cached.font)
-                local success,a,b=pcall(fn,native and 1 or scale,...)
+                local success,a,b=pcall(fn,native and (cached.ratio or 1) or scale,...)
                 if native then pcall(im.PopFont) end
                 if not success then error(a) end
                 return a,b,native,cached.pixels
