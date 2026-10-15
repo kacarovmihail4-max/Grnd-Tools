@@ -1,7 +1,12 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.254"
+GRND_SCRIPT_VERSION = "1.19.255"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.255 — GM без лишних настроек:
+  1) убрана шестерёнка GM и пункт «Авто-GM при заходе» — включённый GM
+     и так остаётся включённым и активируется при заходе;
+  2) убрана команда /cgmauto;
+  3) в окне обновления больше не показывается строка с номером версии;
 v1.19.254 — GM запоминается:
   1) если GM включён (карточка «GM» в читах, /gm, хоткей), он остаётся
      включённым и сам активируется при каждом заходе на сервер;
@@ -22982,26 +22987,6 @@ function grndCheatBindAbrk()
     if _G.GRND_CATCH then _G.GRND_CATCH.binding = false end
     if _G.GRND_CHAT then _G.GRND_CHAT.binding = false end
 end
-function grndSetBodyGM(pc)
-    local TH = pc.TH
-    local hi = grndSetCol(pc, TH.textHi)
-    local muted = grndSetCol(pc, TH.textMuted)
-    local GM = _G.GRND_GM
-    local RX = pc.w - 20
-    grndSetText(pc, 16, 14, "Авто-GM при заходе", hi, 1.0)
-    local aOn = (GM and GM.autoClient and GM.autoServer) and true or false
-    if pc.toggle(RX - 46, 10, aOn, "gm_auto") and GM then
-        local v = not aOn
-        GM.autoClient, GM.autoServer = v, v
-        pcall(grndCamCfgSave)
-        if notify and type(notify.add) == "function" then
-            pcall(notify.add, "Авто-GM: " .. (v and "ВКЛ" or "ВЫКЛ"), "info", 3)
-        end
-    end
-    grndSetText(pc, 16, 50, grndSetFit(pc,
-        "После авторизации сам включает GM (клиент + сервер)", RX - 16, 0.8), muted, 0.8)
-    return 76
-end
 function grndSetBodyInvis(pc)
     local I = _G.GRND_INVIS
     if not I then return 40 end
@@ -23049,8 +23034,6 @@ function grndSetBodyAirBreak(pc)
     return y + 76
 end
 function grndSetDrawCheatPopups(c)
-    grndSetUiPopup(c, "gm", { title = "GM", sub = "God Mode и авто-включение при заходе",
-        width = 340, h0 = 110, body = grndSetBodyGM })
     grndSetUiPopup(c, "invis", { title = "Невидимость", sub = "клавиша включения",
         width = 340, h0 = 110, body = grndSetBodyInvis, onClose = grndCheatBindClose })
     grndSetUiPopup(c, "airbreak", { title = "AirBreak", sub = "клавиша и скорость полёта",
@@ -33576,7 +33559,6 @@ local function grndUpdInit()
                     end
                     for i = 1, #notes do
                         local item = notes[i]
-                        accent(im, "v" .. tostring(item.ver))
                         for j = 1, #(item.lines or {}) do
                             label(im, "   " .. item.lines[j])
                         end
@@ -38341,7 +38323,7 @@ function grndMainBody()
                                 o.on and c4(TH.accent) or c4(TH.textMuted))
                         end
                         local gmOn = (GRND_GM and GRND_GM.on) and true or false
-                        cheatCard(rowY, 46, { title = "GM", tag = "gm", on = gmOn, gearKey = "gm",
+                        cheatCard(rowY, 46, { title = "GM", tag = "gm", on = gmOn,
                             desc = "God Mode: клиент + сервер (/gm)",
                             onToggle = function()
                                 if type(grndGMToggle) == "function" then grndGMToggle() end
@@ -43523,14 +43505,6 @@ function grndMainBody()
                 GRND_GM.cmdReg = true
                 if type(sampRegisterChatCommand) == "function" then
                     pcall(sampRegisterChatCommand, "cgm", function() grndGMToggle() end)
-                    pcall(sampRegisterChatCommand, "cgmauto", function()
-                        local v = not (GRND_GM.autoClient and GRND_GM.autoServer)
-                        GRND_GM.autoClient, GRND_GM.autoServer = v, v
-                        pcall(grndCamCfgSave)
-                        if notify and type(notify.add) == "function" then
-                            pcall(notify.add, "Авто-GM: " .. (v and "ВКЛ" or "ВЫКЛ"), "info", 3)
-                        end
-                    end)
                 end
             end
             grndGMFrame()

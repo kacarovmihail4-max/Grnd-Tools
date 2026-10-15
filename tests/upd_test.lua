@@ -947,7 +947,7 @@ check(body:find("Установлена версия " .. NEW, 1, true) ~= nil, 
 check(body:find("Была " .. V, 1, true) ~= nil, "окно: прежняя версия видна")
 check(body:find("ЧТО ИЗМЕНИЛОСЬ", 1, true) ~= nil, "окно: подзаголовок изменений")
 check(body:find("в окне видно", 1, true) ~= nil, "окно: строка изменений")
-check(body:find("v" .. NEW, 1, true) ~= nil, "окно: номер версии в списке")
+check(body:find("v" .. NEW, 1, true) == nil, "окно: строки «v<версия>» нет (только текст изменений)")
 check(body:find("Диагностика", 1, true) == nil, "окно: диагностики нет")
 check(body:find("Канал:", 1, true) == nil, "окно: служебного «Канал:» нет")
 check(body:find("grnd_update.log", 1, true) == nil, "окно: про лог не пишем")
