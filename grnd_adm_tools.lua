@@ -1,7 +1,9 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.246"
+GRND_SCRIPT_VERSION = "1.19.247"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.247 — Отладка (v3):
+  1) debug-логи в grndCamWindowsRaw для всех причин;
 v1.19.246 — Отладка (v2):
   1) debug-логи в grndCamWindowsRaw и grndKeysTick;
 v1.19.245 — Отладка:
@@ -8900,18 +8902,42 @@ function grndCamWindowsRaw()
     end
     if type(isPauseMenuActive) == "function" then
         local ok, a = pcall(isPauseMenuActive)
-        if ok and a then return true end
+        if ok and a then
+            print("[GRND DEBUG] grndCamWindowsRaw: pauseMenu=true")
+            return true
+        end
     end
     if type(sampIsScoreboardOpen) == "function" then
         local ok, a = pcall(sampIsScoreboardOpen)
-        if ok and a then return true end
+        if ok and a then
+            print("[GRND DEBUG] grndCamWindowsRaw: scoreboard=true")
+            return true
+        end
     end
-    if GRND_REF and GRND_REF.menu and GRND_REF.menu.open then return true end
-    if GRND_REF and GRND_REF.clw and GRND_REF.clw.aiming then return true end
-    if GRND_TAB and GRND_TAB.open then return true end
-    if _G.GRND_REP and _G.GRND_REP.open then return true end
-    if _G.GRND_RC and _G.GRND_RC.show and _G.GRND_RC.cursor then return true end
-    if _G.GRND_RC and _G.GRND_RC.prompt then return true end
+    if GRND_REF and GRND_REF.menu and GRND_REF.menu.open then
+        print("[GRND DEBUG] grndCamWindowsRaw: menu=true")
+        return true
+    end
+    if GRND_REF and GRND_REF.clw and GRND_REF.clw.aiming then
+        print("[GRND DEBUG] grndCamWindowsRaw: clw.aiming=true")
+        return true
+    end
+    if GRND_TAB and GRND_TAB.open then
+        print("[GRND DEBUG] grndCamWindowsRaw: tab=true")
+        return true
+    end
+    if _G.GRND_REP and _G.GRND_REP.open then
+        print("[GRND DEBUG] grndCamWindowsRaw: rep=true")
+        return true
+    end
+    if _G.GRND_RC and _G.GRND_RC.show and _G.GRND_RC.cursor then
+        print("[GRND DEBUG] grndCamWindowsRaw: rc.cursor=true")
+        return true
+    end
+    if _G.GRND_RC and _G.GRND_RC.prompt then
+        print("[GRND DEBUG] grndCamWindowsRaw: rc.prompt=true")
+        return true
+    end
     if _G.GRND_FORMS and _G.GRND_FORMS.active then return true end
     if _G.GRND_GNEWS and _G.GRND_GNEWS.active then return true end
     if _G.GRND_LOG and (_G.GRND_LOG.viewerOpen or _G.GRND_LOG.dateOpen) then
