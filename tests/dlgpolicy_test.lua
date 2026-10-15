@@ -281,6 +281,9 @@ ok("gm.srv.saved", src:find('f:write("gmSrv="', 1, true) ~= nil and src:find('k 
 -- автоматика при заходе не пишет в чат: grndGMSrvSet(true) (он шлёт /gm) в ней не вызывается
 ok("gm.auto.noChat", src:find("grndGMSrvSet(true)", 1, true) == nil)
 
+-- автоактивация при заходе молчит: тост grndGMToast(true) (дублируется в чат) не вызывается
+ok("gm.auto.silent", src:find("grndGMToast(true)", 1, true) == nil)
+
 print(string.format("--- серверное окно и окна скрипта: %d/%d ok ---", total - fails, total))
 if fails > 0 then os.exit(1) end
 os.exit(0)
