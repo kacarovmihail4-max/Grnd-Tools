@@ -1,7 +1,10 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.240"
+GRND_SCRIPT_VERSION = "1.19.241"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.241 — Убран тост при выходе клавишей:
+  1) больше нет уведомления «Слежка: трекинг сброшен (выход клавишей)»
+     и при ручном сбросе;
 v1.19.240 — Серверное окно и выход из слежки:
   1) убран тост при выходе из слежки;
   2) при открытом серверном окне Tab больше не перехватывается GRND,
@@ -17122,7 +17125,6 @@ function grndSpecForget(reason)
     elseif reason == "spawn" then why = " (респавн)"
     elseif reason == "key" then why = " (выход клавишей)"
     end
-    notify.add("Слежка: трекинг сброшен" .. why, "warn", 3)
 end
 local function specConfirm()
     GRND_SPEC.confirmT = os.clock()
@@ -43037,7 +43039,6 @@ function grndMainBody()
                     _G.GRND_SPEC_AUTOREF.lostSince = nil
                     _G.GRND_SPEC_AUTOREF.refreshCount = 0
                 end
-                notify.add("Слежка: трекинг сброшен вручную", "info", 3)
             else
                 local id = tonumber(a)
                 if id then
