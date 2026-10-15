@@ -1,7 +1,9 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.262"
+GRND_SCRIPT_VERSION = "1.19.263"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.263 — подписи чата реально увеличиваются:
+  1) шрифт подписей чата не рос дальше 40 px: добавлены крупные размеры;
 v1.19.262 — ещё крупнее подписи чата:
   1) «Обычный / Админский / Семейный», строка «TAB для смены чата | Раскладка»
      и подсказка «Введите сообщение» увеличены;
@@ -36122,7 +36124,7 @@ function grndMainBody()
                 if ranges then
                     for _, lsz in ipairs({ 9, 11, 13, 15, 16, 17, 19, 20, 21,
                                            23, 24, 26, 28, 29, 32, 34, 36,
-                                           38, 40 }) do
+                                           38, 40, 42, 44, 46, 48, 52 }) do
                         if not ladder[lsz] then
                             local lf = addTTF(lsz, true)
                             if lf then ladder[lsz] = lf end

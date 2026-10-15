@@ -302,6 +302,10 @@ ok("getup.fallAnims", src:find('"FALL_FRONT", "FALL_BACK"', 1, true) ~= nil)
 ok("getup.card", src:find('tag = "getup"', 1, true) ~= nil and src:find('f:write("getupOn="', 1, true) ~= nil)
 ok("cheats.frames", src:find("pcall(grndOxyFrame)", 1, true) ~= nil and src:find("pcall(grndGetupFrame)", 1, true) ~= nil)
 
+-- крупные подписи чата: лестница шрифтов доходит до размера, нужного для metaScale
+ok("font.ladder.46", src:find("38, 40, 42, 44, 46, 48, 52 }", 1, true) ~= nil)
+ok("font.meta.reachable", 2.90 * 16 <= 52)
+
 print(string.format("--- серверное окно и окна скрипта: %d/%d ok ---", total - fails, total))
 if fails > 0 then os.exit(1) end
 os.exit(0)
