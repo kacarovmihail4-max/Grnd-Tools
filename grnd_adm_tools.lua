@@ -1,7 +1,9 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.247"
+GRND_SCRIPT_VERSION = "1.19.248"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.248 — Отладка (v4):
+  1) debug-лог для sampIsChatInputActive;
 v1.19.247 — Отладка (v3):
   1) debug-логи в grndCamWindowsRaw для всех причин;
 v1.19.246 — Отладка (v2):
@@ -16979,7 +16981,10 @@ local function grndKeysTick()
     local natTyping = false
     if type(sampIsChatInputActive) == "function" then
         local okT, rT = pcall(sampIsChatInputActive)
+        print("[GRND DEBUG] sampIsChatInputActive=" .. tostring(rT) .. " ok=" .. tostring(okT))
         if okT and rT then natTyping = true end
+    else
+        print("[GRND DEBUG] sampIsChatInputActive not a function")
     end
     GRND_KEYS.typing = natTyping
     if natTyping then
