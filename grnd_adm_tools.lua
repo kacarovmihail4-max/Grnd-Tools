@@ -1,7 +1,10 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.259"
+GRND_SCRIPT_VERSION = "1.19.260"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.260 — новые читы:
+  1) «Бесконечный кислород» (вкладка «Читы»): персонаж не тонет под водой;
+  2) «Сбив анимации после падения»: после падения сразу встаёт, без анимации вставания;
 v1.19.259 — крупнее подписи чата и новый чит:
   1) подписи оверлея чата («Обычный», «Админский», «Семейный», «TAB для смены
      чата | Раскладка», подсказка ввода) стали крупнее;
@@ -5888,6 +5891,10 @@ _G.GRND_INVIS = GRND_INVIS
 GRND_SKIPZZ = { on = false }
 -- Бесконечный бег: натив setPlayerNeverGetsTired (MoonLoader)
 GRND_RUN = { on = false, applied = false, at = 0 }
+-- Бесконечный кислород: натив setCharDrownsInWater (персонаж не тонет)
+GRND_OXY = { on = false, applied = false, at = 0 }
+-- Сбив анимации после падения: натив isCharPlayingAnim + clearCharTasksImmediately
+GRND_GETUP = { on = false, at = 0 }
 local GRND_ABRK = {
     on = false,
     key = 0xA1,
@@ -7985,6 +7992,40 @@ function grndRunFrame()
         pcall(setPlayerNeverGetsTired, PLAYER_HANDLE, false)
     end
 end
+-- Бесконечный кислород: персонаж не тонет (раз в секунду), при выключении возвращаем
+function grndOxyFrame()
+    local O = GRND_OXY
+    if not O or type(setCharDrownsInWater) ~= "function" or PLAYER_PED == nil then return end
+    if O.on then
+        local now = os.clock()
+        if now - (O.at or 0) >= 1 then
+            O.at = now
+            pcall(setCharDrownsInWater, PLAYER_PED, false)
+        end
+        O.applied = true
+    elseif O.applied then
+        O.applied = false
+        O.at = 0
+        pcall(setCharDrownsInWater, PLAYER_PED, true)
+    end
+end
+-- Сбив анимации после падения: как только начинается вставание, обрываем его
+function grndGetupFrame()
+    local G = GRND_GETUP
+    if not G or not G.on then return end
+    if type(isCharPlayingAnim) ~= "function" or type(clearCharTasksImmediately) ~= "function" then return end
+    if PLAYER_PED == nil then return end
+    local now = os.clock()
+    if now - (G.at or 0) < 0.25 then return end
+    for _, anim in ipairs({ "GETUP_FRONT", "GETUP_BACK" }) do
+        local ok, playing = pcall(isCharPlayingAnim, PLAYER_PED, anim)
+        if ok and playing then
+            G.at = now
+            pcall(clearCharTasksImmediately, PLAYER_PED)
+            return
+        end
+    end
+end
 function grndCamCfgSave()
     local ok, f = pcall(GRND_CONFIG.open, camCfgPath(), "w")
     if not ok or not f then return false end
@@ -8008,6 +8049,8 @@ function grndCamCfgSave()
     f:write("airOn=" .. ((GRND_AIR and GRND_AIR.on) and "1" or "0") .. "\n")
     f:write("skipZZOn=" .. ((GRND_SKIPZZ and GRND_SKIPZZ.on) and "1" or "0") .. "\n")
     f:write("runOn=" .. ((GRND_RUN and GRND_RUN.on) and "1" or "0") .. "\n")
+    f:write("oxyOn=" .. ((GRND_OXY and GRND_OXY.on) and "1" or "0") .. "\n")
+    f:write("getupOn=" .. ((GRND_GETUP and GRND_GETUP.on) and "1" or "0") .. "\n")
     f:write("ringKeyOn=" .. ((GRND_RING_KEY and GRND_RING_KEY.on == false) and "0" or "1") .. "\n")
     f:write("arepOn=" .. (GRND_AREP.enabled and "1" or "0") .. "\n")
     f:write("arepKey=" .. tostring(GRND_AREP.key or 0) .. "\n")
@@ -8130,6 +8173,10 @@ local function camCfgLoad()
                 if GRND_SKIPZZ then GRND_SKIPZZ.on = (v == "1") end
             elseif k == "runOn" then
                 if GRND_RUN then GRND_RUN.on = (v == "1") end
+            elseif k == "oxyOn" then
+                if GRND_OXY then GRND_OXY.on = (v == "1") end
+            elseif k == "getupOn" then
+                if GRND_GETUP then GRND_GETUP.on = (v == "1") end
             elseif k == "ringKeyOn" then
                 if GRND_RING_KEY then GRND_RING_KEY.on = (v ~= "0") end
             elseif k == "arepOn" then
@@ -38411,6 +38458,22 @@ function grndMainBody()
                                 GRND_RUN.on = not runOn
                                 pcall(grndCamCfgSave)
                             end })
+                        local oxyOn = (GRND_OXY and GRND_OXY.on) and true or false
+                        local y8 = y7 + 48 + 10
+                        cheatCard(y8, 48, { title = "Бесконечный кислород", tag = "oxy", on = oxyOn,
+                            desc = "Персонаж не тонет под водой",
+                            onToggle = function()
+                                GRND_OXY.on = not oxyOn
+                                pcall(grndCamCfgSave)
+                            end })
+                        local getupOn = (GRND_GETUP and GRND_GETUP.on) and true or false
+                        local y9 = y8 + 48 + 10
+                        cheatCard(y9, 48, { title = "Сбив анимации после падения", tag = "getup", on = getupOn,
+                            desc = "После падения сразу встаёт, без анимации вставания",
+                            onToggle = function()
+                                GRND_GETUP.on = not getupOn
+                                pcall(grndCamCfgSave)
+                            end })
                         grndSetUiSync("cheats", im)
                         local okCP, errCP = pcall(grndSetDrawCheatPopups, cheatCtx)
                         if not okCP then
@@ -43560,6 +43623,8 @@ function grndMainBody()
             grndGMFrame()
             pcall(grndInvisFrame)
             pcall(grndRunFrame)
+            pcall(grndOxyFrame)
+            pcall(grndGetupFrame)
             if GRND_AIR.frame then pcall(GRND_AIR.frame) end
             local gmSpawned = false
             if type(grndIsSpawned) == "function" then

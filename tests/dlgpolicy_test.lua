@@ -293,6 +293,13 @@ ok("run.frame", src:find("pcall(grndRunFrame)", 1, true) ~= nil)
 ok("font.meta", src:find("metaScale=2.40", 1, true) ~= nil)
 ok("font.hint", src:find("fit(hint,r.w-28,measure,1.4)", 1, true) ~= nil)
 
+-- Бесконечный кислород и сбив анимации после падения: натив MoonLoader, карточка, конфиг
+ok("oxy.native", src:find("pcall(setCharDrownsInWater, PLAYER_PED, false)", 1, true) ~= nil)
+ok("oxy.card", src:find('tag = "oxy"', 1, true) ~= nil and src:find('f:write("oxyOn="', 1, true) ~= nil)
+ok("getup.natives", src:find("pcall(clearCharTasksImmediately, PLAYER_PED)", 1, true) ~= nil and src:find("pcall(isCharPlayingAnim, PLAYER_PED, anim)", 1, true) ~= nil)
+ok("getup.card", src:find('tag = "getup"', 1, true) ~= nil and src:find('f:write("getupOn="', 1, true) ~= nil)
+ok("cheats.frames", src:find("pcall(grndOxyFrame)", 1, true) ~= nil and src:find("pcall(grndGetupFrame)", 1, true) ~= nil)
+
 print(string.format("--- серверное окно и окна скрипта: %d/%d ok ---", total - fails, total))
 if fails > 0 then os.exit(1) end
 os.exit(0)
