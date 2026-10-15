@@ -1,7 +1,10 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.260"
+GRND_SCRIPT_VERSION = "1.19.261"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.261 — сбив анимации после падения срабатывает сразу:
+  1) проверка каждый кадр, без паузы;
+  2) обрываются и анимации падения, а не только вставания;
 v1.19.260 — новые читы:
   1) «Бесконечный кислород» (вкладка «Читы»): персонаж не тонет под водой;
   2) «Сбив анимации после падения»: после падения сразу встаёт, без анимации вставания;
@@ -8009,18 +8012,20 @@ function grndOxyFrame()
         pcall(setCharDrownsInWater, PLAYER_PED, true)
     end
 end
--- Сбив анимации после падения: как только начинается вставание, обрываем его
+-- Сбив анимации после падения: проверяем каждый кадр; как только играет анимация
+-- падения или вставания — сразу обрываем её
+local GRND_GETUP_ANIMS = {
+    "FALL_FRONT", "FALL_BACK", "KO_SKID_FRONT", "KO_SKID_BACK", "FLOOR_HIT",
+    "FLOOR_HIT_F", "GETUP_FRONT", "GETUP_BACK",
+}
 function grndGetupFrame()
     local G = GRND_GETUP
     if not G or not G.on then return end
     if type(isCharPlayingAnim) ~= "function" or type(clearCharTasksImmediately) ~= "function" then return end
     if PLAYER_PED == nil then return end
-    local now = os.clock()
-    if now - (G.at or 0) < 0.25 then return end
-    for _, anim in ipairs({ "GETUP_FRONT", "GETUP_BACK" }) do
+    for _, anim in ipairs(GRND_GETUP_ANIMS) do
         local ok, playing = pcall(isCharPlayingAnim, PLAYER_PED, anim)
         if ok and playing then
-            G.at = now
             pcall(clearCharTasksImmediately, PLAYER_PED)
             return
         end

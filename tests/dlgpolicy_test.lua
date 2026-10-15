@@ -297,6 +297,8 @@ ok("font.hint", src:find("fit(hint,r.w-28,measure,1.4)", 1, true) ~= nil)
 ok("oxy.native", src:find("pcall(setCharDrownsInWater, PLAYER_PED, false)", 1, true) ~= nil)
 ok("oxy.card", src:find('tag = "oxy"', 1, true) ~= nil and src:find('f:write("oxyOn="', 1, true) ~= nil)
 ok("getup.natives", src:find("pcall(clearCharTasksImmediately, PLAYER_PED)", 1, true) ~= nil and src:find("pcall(isCharPlayingAnim, PLAYER_PED, anim)", 1, true) ~= nil)
+ok("getup.everyFrame", src:find("if now - (G.at or 0) < 0.25 then return end", 1, true) == nil)
+ok("getup.fallAnims", src:find('"FALL_FRONT", "FALL_BACK"', 1, true) ~= nil)
 ok("getup.card", src:find('tag = "getup"', 1, true) ~= nil and src:find('f:write("getupOn="', 1, true) ~= nil)
 ok("cheats.frames", src:find("pcall(grndOxyFrame)", 1, true) ~= nil and src:find("pcall(grndGetupFrame)", 1, true) ~= nil)
 
