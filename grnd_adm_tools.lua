@@ -1,7 +1,12 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.255"
+GRND_SCRIPT_VERSION = "1.19.256"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.256 — GM не выключается после перезахода и обновления:
+  1) включённый GM активируется при заходе и после обновления скрипта
+     (раньше ждал окна входа, которого после обновления не бывает);
+  2) серверный GM больше не переключается /gm-ом вслепую: если на сервере
+     он остался включён, скрипт его не выключает;
 v1.19.255 — GM без лишних настроек:
   1) убрана шестерёнка GM и пункт «Авто-GM при заходе» — включённый GM
      и так остаётся включённым и активируется при заходе;
@@ -7992,6 +7997,7 @@ function grndCamCfgSave()
     f:write("chatInputOverlay=" .. (GRND_INPUT.enabled and "1" or "0") .. "\n")
     f:write("chatInputHistory=" .. (GRND_INPUT.showHistory and "1" or "0") .. "\n")
     f:write("gmAuto=" .. ((_G.GRND_GM and _G.GRND_GM.autoClient) and "1" or "0") .. "\n")
+    f:write("gmSrv=" .. ((_G.GRND_GM and _G.GRND_GM.srv) and "1" or "0") .. "\n")
     f:write("uiTheme=" .. tostring((_G.GRND_UIKIT and _G.GRND_UIKIT.current) or "graphite") .. "\n")
     if GRND_UIKIT and GRND_UIKIT.customRGB then
         f:write("uiAccent=" .. table.concat(GRND_UIKIT.customRGB,",") .. "\n")
@@ -8136,6 +8142,8 @@ local function camCfgLoad()
                 GRND_INPUT.enabled = (v == "1")
             elseif k == "chatInputHistory" then
                 GRND_INPUT.showHistory = (v == "1")
+            elseif k == "gmSrv" then
+                _G.GRND_GM_SRV = (v == "1")
             elseif k == "gmAuto" then
                 _G.GRND_GM_AUTO = (v == "1")
                 if _G.GRND_GM then
@@ -34460,6 +34468,7 @@ function grndMainBody()
         if type(sampSendChat) ~= "function" then return end
         pcall(sampSendChat, "/gm")
         GRND_GM.srv, GRND_GM.srvKnown = on, false
+        pcall(grndCamCfgSave)
     end
     function grndGMToggle()
         local target = not GRND_GM.on
@@ -43517,7 +43526,7 @@ function grndMainBody()
             end
             if not gmSpawned then
                 GRND_GM.autoFired = false
-            elseif AUTH.showedAuthOk and not GRND_GM.autoFired then
+            elseif not GRND_GM.autoFired and grndSessionReady() then
                 GRND_GM.autoFired = true
                 local changed = false
                 if GRND_GM.autoClient and not GRND_GM.on then
@@ -43525,7 +43534,12 @@ function grndMainBody()
                     changed = true
                 end
                 if GRND_GM.autoServer and not GRND_GM.srv then
-                    grndGMSrvSet(true)
+                    if _G.GRND_GM_SRV == true then
+                        -- на сервере GM остался включён с прошлого захода: не трогаем его /gm-ом
+                        GRND_GM.srv, GRND_GM.srvKnown = true, false
+                    else
+                        grndGMSrvSet(true)
+                    end
                     changed = true
                 end
                 if changed then grndGMToast(true) end

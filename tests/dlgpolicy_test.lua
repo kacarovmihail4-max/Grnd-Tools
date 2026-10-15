@@ -268,6 +268,16 @@ do
     ok("zz.td.forget", src:find("pcall(grndSkipZZForget, id)", 1, true) ~= nil)
 end
 
+-- =====================================================================
+--  Часть 3. GM запоминается: активация при заходе и после обновления
+-- =====================================================================
+-- автоактивация не ждёт окна входа (после обновления его не бывает)
+ok("gm.auto.noAuthGate", src:find("elseif AUTH.showedAuthOk and not GRND_GM.autoFired", 1, true) == nil)
+ok("gm.auto.sessionGate", src:find("elseif not GRND_GM.autoFired and grndSessionReady() then", 1, true) ~= nil)
+-- серверный GM, который уже включён с прошлого захода, не переключается /gm-ом
+ok("gm.srv.noBlindToggle", src:find("if _G.GRND_GM_SRV == true then", 1, true) ~= nil)
+ok("gm.srv.saved", src:find('f:write("gmSrv="', 1, true) ~= nil and src:find('k == "gmSrv"', 1, true) ~= nil)
+
 print(string.format("--- серверное окно и окна скрипта: %d/%d ok ---", total - fails, total))
 if fails > 0 then os.exit(1) end
 os.exit(0)
