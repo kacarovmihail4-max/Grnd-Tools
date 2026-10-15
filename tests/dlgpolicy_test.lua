@@ -290,7 +290,7 @@ ok("run.card", src:find('tag = "run"', 1, true) ~= nil)
 ok("run.cfg", src:find('f:write("runOn="', 1, true) ~= nil and src:find('k == "runOn"', 1, true) ~= nil)
 ok("run.frame", src:find("pcall(grndRunFrame)", 1, true) ~= nil)
 -- шрифт подписей чата увеличен
-ok("font.meta", src:find("metaScale=2.90", 1, true) ~= nil)
+ok("font.meta", src:find("metaScale=1.60", 1, true) ~= nil)
 ok("font.hint", src:find("fit(hint,r.w-28,measureFont,1.8)", 1, true) ~= nil)
 
 -- Бесконечный кислород и сбив анимации после падения: натив MoonLoader, карточка, конфиг
@@ -304,7 +304,7 @@ ok("cheats.frames", src:find("pcall(grndOxyFrame)", 1, true) ~= nil and src:find
 
 -- крупные подписи чата: лестница шрифтов доходит до размера, нужного для metaScale
 ok("font.ladder.46", src:find("38, 40, 42, 44, 46, 48, 52 }", 1, true) ~= nil)
-ok("font.meta.reachable", 2.90 * 16 <= 52)
+ok("font.meta.reachable", 1.60 * 16 <= 52)
 
 -- остаток кегля переносится в масштаб, даже если лестница не содержит нужного размера
 ok("font.ratio.carry", src:find("cached.ratio=ratio", 1, true) ~= nil and src:find("pcall(fn,native and (cached.ratio or 1) or scale,...)", 1, true) ~= nil)

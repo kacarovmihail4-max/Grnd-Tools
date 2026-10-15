@@ -2,9 +2,12 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.267"
+GRND_SCRIPT_VERSION = "1.19.268"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.268 — подписи режимов чата уменьшены:
+  1) «Обычный / Админский / Семейный» и строка «TAB для смены чата | Раскладка»
+     приведены к разумному размеру (подсказка ввода не менялась);
 v1.19.267 — шрифт подписей чата действительно увеличивается:
   1) функции PushFont / SetWindowFontScale обёртки ImGui имеют тип cdata, а проверка
      требовала function, поэтому крупный шрифт и масштаб никогда не применялись;
@@ -5998,7 +6001,7 @@ local GRND_CHAT = {
 _G.GRND_CHAT = GRND_CHAT
 GRND_INPUT = {
     enabled=true, showHistory=true, channel="normal", admin=false, family=false,
-    history={}, maxHistory=100, visibleRows=7, scroll=0, metaScale=2.90, historyRadius=18,
+    history={}, maxHistory=100, visibleRows=7, scroll=0, metaScale=1.60, historyRadius=18,
     historyScale=1.05, historyRow=28, historyFrame=68,
     ownedKeys={}, opened=false, openedAt=0, hideUntil=0,
 }
