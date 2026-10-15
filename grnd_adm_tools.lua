@@ -1,7 +1,10 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.236"
+GRND_SCRIPT_VERSION = "1.19.237"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.237 — Мгновенное обновление слежки:
+  1) пропажа цели замечается мгновенно (убрана задержка 3 с и 0.75 с);
+  2) при обновлении слежки показывается тост «Обновляю рекон»;
 v1.19.236 — Камера полностью статична:
   1) убрано остаточное авто-изменение наклона (smart pitch) при простое;
   2) каждый кадр сбрасывается таймер бездействия камеры — игра больше не
@@ -16275,7 +16278,7 @@ do
             RC.tdGoneSince = nil
         elseif RC.show then
             RC.reconMissingAt = RC.reconMissingAt or os.clock()
-            if os.clock() - RC.reconMissingAt > 0.75 then
+            if os.clock() - RC.reconMissingAt > 0 then
                 local manualExit = (_G.GRND_SPEC and _G.GRND_SPEC.manualExit)
                     or (_G.GRND_SPEC_AUTOREF and _G.GRND_SPEC_AUTOREF.manualExit)
                 local tid = tonumber(RC.id) or (_G.GRND_SPEC and tonumber(_G.GRND_SPEC.id))
@@ -18548,7 +18551,7 @@ local function grndIsTargetPresent(id)
     if ped and ped ~= PLAYER_PED then return true, ped end
     if grndSpecVehicle(S, id, nil) then return true, nil end
     if S and S.camTgtId == id and S.camLastTgt
-        and os.clock() - (S.camLastTgt.t or 0) < 1.5 then return true, nil end
+        and os.clock() - (S.camLastTgt.t or 0) < 0.2 then return true, nil end
     return false, nil
 end
 function grndSpecAutoRefreshTick()
@@ -18606,7 +18609,7 @@ function grndSpecAutoRefreshTick()
         return
     end
     local lostDuration = now - S.lostSince
-    if lostDuration >= 3.0 then
+    if lostDuration >= 0 then
         local cooldown = ((S.refreshCount or 0) >= 4) and 12.0 or 6.0
         if (now - (S.lastRefreshAt or 0)) >= cooldown then
             S.refreshCount = (S.refreshCount or 0) + 1
@@ -18635,7 +18638,7 @@ function grndSpecAutoRefreshTick()
             local nk = (_G.GRND_SPEC and _G.GRND_SPEC.nick ~= "" and _G.GRND_SPEC.nick) or S.lastTargetNick
             if nk and nk ~= "" then who = who .. " (" .. nk .. ")" end
             if notify and notify.add then
-                notify.add("Слежка: цель " .. who .. " потеряна, обновляю (" .. cmd .. ")...", "warn", 2)
+                notify.add("Обновляю рекон", "warn", 2)
             end
             print("{FFAA00}[GRND]{FFFFFF} авто-обновление слежки: " .. cmd .. " (попытка " .. S.refreshCount .. ")")
         end
