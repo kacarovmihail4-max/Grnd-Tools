@@ -1,7 +1,10 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.250"
+GRND_SCRIPT_VERSION = "1.19.251"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.251 — Skip ZZ в читах:
+  1) новый чит «Skip ZZ» (вкладка «Читы»): скрывает серверное окно
+     «Зеленая зона» (анти-ДМ зона на сервере); состояние сохраняется;
 v1.19.250 — Журнал без автопилота наказаний:
   1) категория «Автопилот наказаний» убрана из журнала логов — автопилот
      больше ничего туда не пишет; его статус виден в окне автопилота;
@@ -5847,6 +5850,8 @@ local GRND_INVIS = {
     lastToggle = 0,
 }
 _G.GRND_INVIS = GRND_INVIS
+-- Skip ZZ: скрывает серверный диалог «Зеленая зона» (анти-ДМ зона Arizona RP)
+GRND_SKIPZZ = { on = false }
 local GRND_ABRK = {
     on = false,
     key = 0xA1,
@@ -7947,6 +7952,7 @@ function grndCamCfgSave()
     f:write("abrSpeed=" .. tostring(math.floor(GRND_ABRK.speed or 15)) .. "\n")
     f:write("afkOn=" .. ((GRND_AFK and GRND_AFK.on) and "1" or "0") .. "\n")
     f:write("airOn=" .. ((GRND_AIR and GRND_AIR.on) and "1" or "0") .. "\n")
+    f:write("skipZZOn=" .. ((GRND_SKIPZZ and GRND_SKIPZZ.on) and "1" or "0") .. "\n")
     f:write("ringKeyOn=" .. ((GRND_RING_KEY and GRND_RING_KEY.on == false) and "0" or "1") .. "\n")
     f:write("arepOn=" .. (GRND_AREP.enabled and "1" or "0") .. "\n")
     f:write("arepKey=" .. tostring(GRND_AREP.key or 0) .. "\n")
@@ -8064,6 +8070,8 @@ local function camCfgLoad()
                 if GRND_AFK then GRND_AFK.on = (v == "1") end
             elseif k == "airOn" then
                 if GRND_AIR then GRND_AIR.on = (v == "1") end
+            elseif k == "skipZZOn" then
+                if GRND_SKIPZZ then GRND_SKIPZZ.on = (v == "1") end
             elseif k == "ringKeyOn" then
                 if GRND_RING_KEY then GRND_RING_KEY.on = (v ~= "0") end
             elseif k == "arepOn" then
@@ -13594,6 +13602,11 @@ do
         if stIsManual() then return false end
         if stSpecActive() then return stOursAwaiting() or stOurPage(full) end
         return stOursAwaiting() or stOurPage(full)
+    end
+    function grndSkipZZTitle(title)
+        local t = grndLowerUtf(grndToUtf(tostring(title or "")))
+        t = t:gsub("^%s+", ""):gsub("%s+$", "")
+        return t == "зеленая зона" or t == "зелёная зона"
     end
     _G.grndStatsOnDialog = function(id, style, title, b1, b2, text)
         local full = ("%s\n%s"):format(tostring(title or ""), tostring(text or ""))
@@ -38297,6 +38310,14 @@ function grndMainBody()
                                 GRND_AIR.on = not airOn
                                 pcall(grndCamCfgSave)
                             end })
+                        local szOn = (GRND_SKIPZZ and GRND_SKIPZZ.on) and true or false
+                        local y6 = y5 + 48 + 10
+                        cheatCard(y6, 48, { title = "Skip ZZ", tag = "skipzz", on = szOn,
+                            desc = "Скрывает окно «Зеленая зона» (анти-ДМ зона на сервере)",
+                            onToggle = function()
+                                GRND_SKIPZZ.on = not szOn
+                                pcall(grndCamCfgSave)
+                            end })
                         grndSetUiSync("cheats", im)
                         local okCP, errCP = pcall(grndSetDrawCheatPopups, cheatCtx)
                         if not okCP then
@@ -42698,6 +42719,9 @@ function grndMainBody()
             end
             function sampev.onShowDialog(dialogId, style, title, button1, button2, text)
                 if not grndSessionReady() then return end
+                if GRND_SKIPZZ and GRND_SKIPZZ.on and grndSkipZZTitle(title) then
+                    return false
+                end
                 local okSt, hideSt = pcall(grndStatsOnDialog, dialogId, style, title, button1, button2, text)
                 if okSt and hideSt then return false end
                 if not okSt and type(_G.grndStatsShouldHide) == "function" then

@@ -202,6 +202,35 @@ ok("typing.noServerDialog", typingChunk:find("sampIsDialogActive", 1, true) == n
 -- 2.8 В интерфейсе скрипта не осталось мёртвого кода про диалоги.
 ok("dead.noNativeDialogInput", src:find("nativeDialogInput", 1, true) == nil)
 
+-- =====================================================================
+--  Часть 2. Skip ZZ: скрытие серверного диалога «Зеленая зона»
+-- =====================================================================
+do
+    local zzChunk = "return function()\n"
+        .. "local function grndToUtf(s) return s end\n"  -- титулы в стенде уже в UTF-8
+        .. cut("local function grndU8Put(cp)", "local function grndCp1251ToUtf8(s)")
+        .. cut("function grndLowerUtf(s)", "function grndWeaponFold(s)")
+        .. cut("function grndSkipZZTitle(title)", "_G.grndStatsOnDialog = function(")
+        .. "\nreturn grndSkipZZTitle end"
+    local zz = assert(loadstring(zzChunk, "@skipzz"))()()
+    ok("zz.title.zelenaya", zz("Зеленая зона") == true)
+    ok("zz.title.yo", zz("Зелёная зона") == true)
+    ok("zz.title.caps", zz("ЗЕЛЕНАЯ ЗОНА") == true)
+    ok("zz.title.spaces", zz("  Зеленая зона ") == true)
+    ok("zz.title.other", zz("Статистика игрока") == false)
+    ok("zz.title.nil", zz(nil) == false)
+    -- в конфиге читов есть ключ и загрузка, и сохранение
+    ok("zz.cfg.save", src:find('f:write("skipZZOn="', 1, true) ~= nil)
+    ok("zz.cfg.load", src:find('k == "skipZZOn"', 1, true) ~= nil)
+    -- в обработчике диалогов скрытие стоит до любых других разборов окна
+    local hookAt = src:find("function sampev.onShowDialog(", 1, true)
+    local zzAt = src:find("GRND_SKIPZZ and GRND_SKIPZZ.on and grndSkipZZTitle(title)", 1, true)
+    ok("zz.hook.present", hookAt ~= nil and zzAt ~= nil and zzAt > hookAt)
+    local statsAt = src:find("pcall(grndStatsOnDialog, dialogId", 1, true)
+    ok("zz.hook.before.stats", zzAt ~= nil and statsAt ~= nil and zzAt < statsAt)
+    ok("zz.card", src:find('tag = "skipzz"', 1, true) ~= nil)
+end
+
 print(string.format("--- серверное окно и окна скрипта: %d/%d ok ---", total - fails, total))
 if fails > 0 then os.exit(1) end
 os.exit(0)
