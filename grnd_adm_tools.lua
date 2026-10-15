@@ -1,7 +1,10 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.256"
+GRND_SCRIPT_VERSION = "1.19.257"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.257 — автоматический GM ничего не пишет в чат:
+  1) при заходе клиентский GM включается без отправки /gm в чат;
+  2) ручное включение кнопкой GM по-прежнему отправляет /gm (нужно серверу);
 v1.19.256 — GM не выключается после перезахода и обновления:
   1) включённый GM активируется при заходе и после обновления скрипта
      (раньше ждал окна входа, которого после обновления не бывает);
@@ -43533,14 +43536,10 @@ function grndMainBody()
                     grndGMClientSet(true)
                     changed = true
                 end
-                if GRND_GM.autoServer and not GRND_GM.srv then
-                    if _G.GRND_GM_SRV == true then
-                        -- на сервере GM остался включён с прошлого захода: не трогаем его /gm-ом
-                        GRND_GM.srv, GRND_GM.srvKnown = true, false
-                    else
-                        grndGMSrvSet(true)
-                    end
-                    changed = true
+                -- серверный GM при заходе в чат не отправляем: /gm не шлём.
+                -- Если на сервере GM остался включён с прошлого захода, просто помним это.
+                if GRND_GM.autoServer and not GRND_GM.srv and _G.GRND_GM_SRV == true then
+                    GRND_GM.srv, GRND_GM.srvKnown = true, false
                 end
                 if changed then grndGMToast(true) end
             end

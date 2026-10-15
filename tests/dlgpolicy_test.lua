@@ -275,8 +275,11 @@ end
 ok("gm.auto.noAuthGate", src:find("elseif AUTH.showedAuthOk and not GRND_GM.autoFired", 1, true) == nil)
 ok("gm.auto.sessionGate", src:find("elseif not GRND_GM.autoFired and grndSessionReady() then", 1, true) ~= nil)
 -- серверный GM, который уже включён с прошлого захода, не переключается /gm-ом
-ok("gm.srv.noBlindToggle", src:find("if _G.GRND_GM_SRV == true then", 1, true) ~= nil)
+ok("gm.srv.noBlindToggle", src:find("and _G.GRND_GM_SRV == true then", 1, true) ~= nil)
 ok("gm.srv.saved", src:find('f:write("gmSrv="', 1, true) ~= nil and src:find('k == "gmSrv"', 1, true) ~= nil)
+
+-- автоматика при заходе не пишет в чат: grndGMSrvSet(true) (он шлёт /gm) в ней не вызывается
+ok("gm.auto.noChat", src:find("grndGMSrvSet(true)", 1, true) == nil)
 
 print(string.format("--- серверное окно и окна скрипта: %d/%d ok ---", total - fails, total))
 if fails > 0 then os.exit(1) end
