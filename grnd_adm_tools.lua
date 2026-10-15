@@ -1,7 +1,13 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.233"
+GRND_SCRIPT_VERSION = "1.19.234"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.234 — Камера слежки сверху:
+  1) вид слежки изменён: камера теперь смотрит на игрока сверху (top-down),
+     а не упирается в спину; дефолтный угол наклона поднят до ~83°;
+  2) диапазон ручной регулировки наклона расширен до ~89°;
+  3) все профили (пешком/авто/вертолёт/самолёт/лодка/мото) теперь тоже
+     держат вид сверху при простое;
 v1.19.233 — Файл без комментариев, окно изменений из кода:
   1) исходник очищен от комментариев (2.83 → 1.95 МБ): эквивалентность кода
      доказана побайтовым сравнением байткода LuaJIT, стенды 903/903;
@@ -7908,7 +7914,7 @@ function grndCamCfgSave()
             f:write("specCamDist=" .. string.format("%.1f",
                 math.max(2.0, math.min(30.0, tonumber(SN.camStartDist) or 7.0))) .. "\n")
             f:write("specCamPitch=" .. string.format("%.2f",
-                math.max(-0.15, math.min(1.35, tonumber(SN.camStartPitch) or 0.5))) .. "\n")
+                math.max(-0.15, math.min(1.55, tonumber(SN.camStartPitch) or 1.45))) .. "\n")
             f:write("specCamAngle=" .. string.format("%.2f",
                 math.max(-6.283185, math.min(6.283185, tonumber(SN.camStartAngle) or 0.0))) .. "\n")
         end
@@ -7945,7 +7951,7 @@ local function camCfgLoad()
                 if SN then SN.camStartDist = math.max(2.0, math.min(30.0, num)) end
             elseif k == "specCamPitch" and num then
                 local SN = _G.grndSpecNative
-                if SN then SN.camStartPitch = math.max(-0.15, math.min(1.35, num)) end
+                if SN then SN.camStartPitch = math.max(-0.15, math.min(1.55, num)) end
             elseif k == "specCamAngle" and num then
                 local SN = _G.grndSpecNative
                 if SN then SN.camStartAngle = math.max(-6.283185, math.min(6.283185, num)) end
@@ -17203,7 +17209,7 @@ grndSpecNative = {
     lp = nil, pp = nil, pools = nil, di = nil,
     calOff = nil, calCands = {},
     camOn = false, camPed = nil,
-    camStartDist = 7.0, camStartPitch = 0.50, camStartAngle = 0.0,
+    camStartDist = 7.0, camStartPitch = 1.45, camStartAngle = 0.0,
     initT = nil, scanT = 0, scanCacheOn = false, scanCacheId = nil,
     clock = nil,
     initLogged = false, failLogged = false,
@@ -17780,7 +17786,7 @@ local GRND_SPEC_BIKES = { [448]=true, [461]=true, [462]=true, [463]=true,
     [523]=true, [581]=true, [586]=true }
 function grndSpecSmartState(S, inVehicle, vehicle, ped)
     local st = { state = "foot", extra = 0, speedF = 0.12, speedCap = 2.5,
-                 aimH = 1.0, vRate = 14, pitch = 0.50 }
+                 aimH = 1.0, vRate = 14, pitch = 1.45 }
     local speed = tonumber(S.camSpeedEst) or 0
     if inVehicle and vehicle then
         if S.camProfileVehicle ~= vehicle then
@@ -17798,23 +17804,23 @@ function grndSpecSmartState(S, inVehicle, vehicle, ped)
         local model = S.camVehicleModel
         if model and GRND_SPEC_HELIS[model] then
             st.state, st.extra, st.aimH, st.vRate, st.pitch =
-                "heli", 8.0, 1.3, 8, 0.30
+                "heli", 8.0, 1.3, 8, 1.40
             st.speedF, st.speedCap = 0.45, 16
         elseif model and GRND_SPEC_PLANES[model] then
             st.state, st.extra, st.aimH, st.vRate, st.pitch =
-                "plane", 12.0, 1.4, 6, 0.24
+                "plane", 12.0, 1.4, 6, 1.40
             st.speedF, st.speedCap = 0.55, 22
         elseif model and GRND_SPEC_BOATS[model] then
             st.state, st.extra, st.aimH, st.vRate, st.pitch =
-                "boat", 5.0, 0.9, 7, 0.38
+                "boat", 5.0, 0.9, 7, 1.40
             st.speedF, st.speedCap = 0.35, 12
         elseif model and GRND_SPEC_BIKES[model] then
             st.state, st.extra, st.aimH, st.vRate, st.pitch =
-                "bike", -1.0, 0.9, 12, 0.42
+                "bike", -1.0, 0.9, 12, 1.40
             st.speedF, st.speedCap = 0.25, 8
         else
             st.state, st.extra, st.aimH, st.vRate, st.pitch =
-                "car", 0.5, 0.65, 12, 0.42
+                "car", 0.5, 0.65, 12, 1.40
             st.speedF, st.speedCap = 0.30, 10
         end
     else
@@ -18163,7 +18169,7 @@ function grndCamFollowApply(S, now)
     tx, ty, tz = sm.x, sm.y, sm.z
     local a = S.camAngle or 0
     local d = math.max(2, (S.camDistCur or S.camDist or 10.0) + (S.camExtra or 0))
-    local p = S.camPitch or 0.35
+    local p = S.camPitch or 1.45
     local cp = math.cos(p)
     local px = tx + math.sin(a) * cp * d
     local py = ty - math.cos(a) * cp * d
@@ -18298,8 +18304,8 @@ function grndSpecCamControl(S, now)
         if S.camTgtId ~= tid then
             local d0 = math.max(2.0, math.min(30.0, tonumber(S.camStartDist) or 7.0))
             S.camDist, S.camDistCur = d0, d0
-            S.camPitch = math.max(-0.15, math.min(1.35,
-                tonumber(S.camStartPitch) or 0.5))
+            S.camPitch = math.max(-0.15, math.min(1.55,
+                tonumber(S.camStartPitch) or 1.45))
             S.camAngle = tonumber(S.camStartAngle) or 0.0
             S.lastMX, S.lastMY = nil, nil
             S.mouseReady,S.mouseTick=nil,nil
@@ -18342,7 +18348,7 @@ function grndSpecCamControl(S, now)
                 S.camLastInput=now
                 S.camAngle=(S.camAngle or 0)-dx*0.006
                 local curP=S.camPitch or math.atan2((S.camHeight or 2.5)-0.6,S.camDist or 10)
-                S.camPitch=math.max(-0.15,math.min(1.35,curP-dy*0.003))
+                S.camPitch=math.max(-0.15,math.min(1.55,curP-dy*0.003))
             end
             if type(isKeyDown) == "function"
                 and not uiBlocked then
@@ -18356,7 +18362,7 @@ function grndSpecCamControl(S, now)
                     S.camLastInput = now end
                 if held(0x27) then S.camAngle = (S.camAngle or 0) + 1.8 * dt
                     S.camLastInput = now end
-                if held(0x26) then S.camPitch = math.min(1.35, (S.camPitch or 0.42) + 1.2 * dt)
+                if held(0x26) then S.camPitch = math.min(1.55, (S.camPitch or 0.42) + 1.2 * dt)
                     S.camLastInput = now end
                 if held(0x28) then S.camPitch = math.max(-0.15, (S.camPitch or 0.42) - 1.2 * dt)
                     S.camLastInput = now end
@@ -18379,7 +18385,7 @@ function grndSpecCamControl(S, now)
                 if idleT > 3.0 then
                     local smart = S.camSmart
                     if smart and smart.pitch then
-                        local cur = S.camPitch or 0.5
+                        local cur = S.camPitch or 1.45
                         local k = math.min(1, 0.5 * (S.camDt or 1 / 60))
                         S.camPitch = cur + (smart.pitch - cur) * k
                     end
@@ -38003,7 +38009,7 @@ function grndMainBody()
                 local tab = MENU_TABS[tabIdx] or MENU_TABS[1]
                 local CX, px, py = SB, SB + 26, 26
                 dl:AddRectFilled(at(CX, 16), at(CX + 1, H - 16), c32(TH.line))
-                local _, th2 = uiText(px, py, tab.name, c4(TH.textHi), 1.35)
+                local _, th2 = uiText(px, py, tab.name, c4(TH.textHi), 1.55)
                 local subTitle = "Рабочие инструменты администратора"
                 if tab.id == "settings" then
                     subTitle = (menu.settingsTab == "admin") and "настройки администратора" or "основные параметры скрипта"
@@ -39681,7 +39687,7 @@ function grndMainBody()
                 local t = os.clock()
                 local a0 = (t * 4.2) % (2 * math.pi)
                 local segs = 14
-                local sweep = math.pi * 1.35
+                local sweep = math.pi * 1.55
                 if dl.AddCircle then pcall(dl.AddCircle, dl, at(cx, cy), r, col32(255, 255, 255, 22), 24, 2.4) end
                 local px, py
                 for i = 0, segs do
