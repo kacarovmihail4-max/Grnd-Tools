@@ -207,6 +207,7 @@ ok("dead.noNativeDialogInput", src:find("nativeDialogInput", 1, true) == nil)
 -- =====================================================================
 do
     local zzChunk = "return function()\n"
+        .. "GRND_SKIPZZ = { on = true }\n"
         .. "local function grndToUtf(s) return s end\n"  -- титулы в стенде уже в UTF-8
         .. cut("local function grndU8Put(cp)", "local function grndCp1251ToUtf8(s)")
         .. cut("function grndLowerUtf(s)", "function grndWeaponFold(s)")
@@ -221,7 +222,33 @@ do
     ok("zz.title.nil", zz(nil, nil) == false)
     -- заголовок другой, но текст серверного окна узнаётся (цветовые коды не мешают)
     ok("zz.text.byBody", zz("", "\n\nВ этом месте запрещено {48EF95}драться/стрелять.{ffffff}\n") == true)
+    ok("zz.text.onScreen", zz("", "Вы находитесь в зелёной зоне!\nВ данном месте наносить какие-либо удары запрещено!") == true)
+    ok("zz.text.onScreen2", zz("", "Вы находитесь в зеленой зоне") == true)
     ok("zz.text.other", zz("", "Вы купили машину") == false)
+
+    -- текстдравы: окно из скриншота (заголовок, текст, фон и кнопка без текста)
+    local tdClock = 200
+    local realClockTd = os.clock
+    os.clock = function() return tdClock end
+    local _, tdFn, forget = assert(loadstring(zzChunk:gsub("return grndSkipZZMatch end",
+        "return grndSkipZZMatch, grndSkipZZTextDraw, grndSkipZZForget end"), "@skipzz2"))()()
+    tdClock = 200
+    ok("td.title.hidden", tdFn(12, "Зеленая зона") == true)
+    ok("td.body.hidden", tdFn(13, "Вы находитесь в зелёной зоне!") == true)
+    ok("td.bg.neighbour", tdFn(9, nil) == true)              -- фон, id рядом, в ту же секунду
+    ok("td.button.neighbour", tdFn(16, "Принять") == true)  -- кнопка рядом с текстом окна
+    ok("td.far.visible", tdFn(80, "Магазин") == false)      -- чужой текст, далёкий id
+    ok("td.far.nil", tdFn(80, nil) == false)
+    tdClock = 205                                            -- прошло больше секунды
+    ok("td.expired", tdFn(40, nil) == false)
+    -- скрытый текстдрав забыт: id, который переиспользовали, не скрывается по старой памяти
+    forget(12)
+    tdClock = 205
+    ok("td.forget.reuse", tdFn(12, "Магазин") == false)
+    -- выключенный чит ничего не трогает
+    GRND_SKIPZZ = { on = false }
+    ok("td.off", tdFn(13, "Вы находитесь в зелёной зоне!") == false)
+    os.clock = realClockTd
     -- в конфиге читов есть ключ и загрузка, и сохранение
     ok("zz.cfg.save", src:find('f:write("skipZZOn="', 1, true) ~= nil)
     ok("zz.cfg.load", src:find('k == "skipZZOn"', 1, true) ~= nil)
@@ -234,6 +261,11 @@ do
     local statsAt = src:find("pcall(grndStatsOnDialog, dialogId", 1, true)
     ok("zz.hook.before.stats", zzAt ~= nil and statsAt ~= nil and zzAt < statsAt)
     ok("zz.card", src:find('tag = "skipzz"', 1, true) ~= nil)
+    local tdHookAt = src:find("local function rcTdEvent(id, data, extra)", 1, true)
+    local tdZzAt = src:find("pcall(grndSkipZZTextDraw, id", 1, true)
+    local tdGateAt = src:find("local function rcTdEvent(id, data, extra)", 1, true)
+    ok("zz.td.hook", tdHookAt ~= nil and tdZzAt ~= nil and tdZzAt > tdHookAt)
+    ok("zz.td.forget", src:find("pcall(grndSkipZZForget, id)", 1, true) ~= nil)
 end
 
 print(string.format("--- серверное окно и окна скрипта: %d/%d ok ---", total - fails, total))

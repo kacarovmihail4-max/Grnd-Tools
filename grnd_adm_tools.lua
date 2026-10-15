@@ -1,7 +1,12 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.252"
+GRND_SCRIPT_VERSION = "1.19.253"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.253 — Skip ZZ прячет окно, нарисованное текстдравами:
+  1) окно «Зеленая зона» на сервере — это текстдравы (чёрный фон, текст,
+     кнопка «Принять»), а не диалог: скрипт теперь прячет их по тексту и
+     по соседним элементам;
+  2) распознаёт текст «Вы находитесь в зелёной зоне» и «В данном месте … запрещено»;
 v1.19.252 — Skip ZZ срабатывает надёжно:
   1) окно «Зеленая зона» прячется и по заголовку, и по тексту сервера
      («В этом месте запрещено … драться/стрелять»);
@@ -13616,8 +13621,42 @@ do
         if t == "зеленая зона" or t == "зелёная зона" then return true end
         local b = grndLowerUtf(grndToUtf(tostring(text or "")))
         b = b:gsub("{%x%x%x%x%x%x}", "")
-        return b:find("в этом месте запрещено", 1, true) ~= nil
-            and b:find("стрелять", 1, true) ~= nil
+        if b:find("в этом месте запрещено", 1, true) and b:find("стрелять", 1, true) then
+            return true
+        end
+        if b:find("в данном месте", 1, true) and b:find("запрещено", 1, true) then
+            return true
+        end
+        return b:find("вы находитесь в зел", 1, true) ~= nil
+    end
+    -- Текстдравы: окно рисуется текстдравами (чёрный фон, текст, кнопка «Принять»).
+    -- Текст есть только у части элементов, поэтому помним id совпавших текстдравов
+    -- и прячем соседние id, пришедшие в ту же секунду.
+    GRND_SKIPZZ.tdIds = GRND_SKIPZZ.tdIds or {}
+    GRND_SKIPZZ.tdLastId, GRND_SKIPZZ.tdLastAt = nil, 0
+    function grndSkipZZTextDraw(id, text)
+        if not (GRND_SKIPZZ and GRND_SKIPZZ.on) then return false end
+        local ids = GRND_SKIPZZ.tdIds
+        local hasText = type(text) == "string" and text ~= ""
+        if hasText and grndSkipZZMatch(text, text) then
+            ids[id] = true
+            GRND_SKIPZZ.tdLastId, GRND_SKIPZZ.tdLastAt = id, os.clock()
+            return true
+        end
+        if ids[id] then
+            if hasText then ids[id] = nil; return false end
+            return true
+        end
+        local lastId = GRND_SKIPZZ.tdLastId
+        if lastId and (os.clock() - GRND_SKIPZZ.tdLastAt) <= 1.0
+            and math.abs(id - lastId) <= 10 then
+            ids[id] = true
+            return true
+        end
+        return false
+    end
+    function grndSkipZZForget(id)
+        if GRND_SKIPZZ and GRND_SKIPZZ.tdIds then GRND_SKIPZZ.tdIds[id] = nil end
     end
     _G.grndStatsOnDialog = function(id, style, title, b1, b2, text)
         local full = ("%s\n%s"):format(tostring(title or ""), tostring(text or ""))
@@ -42821,6 +42860,11 @@ function grndMainBody()
                 pcall(grndRcOnCommand, cmd)
             end
             local function rcTdEvent(id, data, extra)
+                if GRND_SKIPZZ and GRND_SKIPZZ.on then
+                    local okZ, hideZ = pcall(grndSkipZZTextDraw, id,
+                        type(data) == "string" and data or (type(extra) == "string" and extra) or nil)
+                    if okZ and hideZ then return false end
+                end
                 if not grndSessionReady() then return end
                 local text = ""
                 if type(data) == "string" then
@@ -42850,6 +42894,7 @@ function grndMainBody()
                 return rcTdEvent(id, text)
             end
             function sampev.onHideTextDraw(id)
+                pcall(grndSkipZZForget, id)
                 pcall(grndRcOnTextDrawHide, id)
             end
             function sampev.onTextDrawHide(id)
