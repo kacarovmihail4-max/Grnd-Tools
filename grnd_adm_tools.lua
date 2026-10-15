@@ -1,7 +1,11 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.241"
+GRND_SCRIPT_VERSION = "1.19.242"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.242 — Серверное окно и рекон:
+  1) dlgActive больше не считается «печатью» — функционал GRND работает
+     при открытом серверном окне, Tab не перехватывается;
+  2) при входе в слежку, если цель не обнаружена, рекон не появляется;
 v1.19.241 — Убран тост при выходе клавишей:
   1) больше нет уведомления «Слежка: трекинг сброшен (выход клавишей)»
      и при ручном сбросе;
@@ -8860,7 +8864,6 @@ local function grndCamTick()
 end
 function grndIsTyping()
     if GRND_KEYS.typing then return true end
-    if GRND_KEYS.dlgActive then return true end
     if GRND_KEYS.imguiText then return true end
     if sampIsChatInputActive then
         local ok, res = pcall(sampIsChatInputActive)
@@ -17185,6 +17188,18 @@ local function grndSpecTrackCommand(cmd)
                 GRND_SPEC.cmdName = "/" .. name
                 GRND_SPEC.manualExit = false
                 GRND_SPEC.confirmT = os.clock()
+                if _G.GRND_RC then
+                    local present = false
+                    if type(grndIsTargetPresent) == "function" then
+                        local okP, pr = pcall(grndIsTargetPresent, id)
+                        if okP then present = pr and true or false end
+                    end
+                    if not present then
+                        _G.GRND_RC.show = false
+                        _G.GRND_RC.reconHidden = true
+                        _G.GRND_RC.reconTdActive = false
+                    end
+                end
                 if type(sampGetPlayerNickname) == "function" then
                     local ok, n = pcall(sampGetPlayerNickname, id)
                     if ok and type(n) == "string" and n ~= "" then
