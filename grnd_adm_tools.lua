@@ -1,7 +1,11 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.242"
+GRND_SCRIPT_VERSION = "1.19.243"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.243 — Окна и слежка:
+  1) серверное окно больше не блокирует функционал GRND (убрана проверка
+     sampIsDialogActive из grndIsTyping);
+  2) если цель не обнаружена, камера не переключается на слежку;
 v1.19.242 — Серверное окно и рекон:
   1) dlgActive больше не считается «печатью» — функционал GRND работает
      при открытом серверном окне, Tab не перехватывается;
@@ -8869,10 +8873,6 @@ function grndIsTyping()
         local ok, res = pcall(sampIsChatInputActive)
         if ok and res then return true end
     end
-    if sampIsDialogActive then
-        local ok, res = pcall(sampIsDialogActive)
-        if ok and res then return true end
-    end
     return false
 end
 function grndCamWindowsRaw()
@@ -17183,6 +17183,19 @@ local function grndSpecTrackCommand(cmd)
                 notify.add("Слежка не начата: игрока #" .. id
                     .. " нет на сервере", "error", 5)
             else
+                local present = true
+                if type(grndIsTargetPresent) == "function" then
+                    local okP, pr = pcall(grndIsTargetPresent, id)
+                    if okP then present = pr and true or false end
+                end
+                if not present then
+                    if _G.GRND_RC then
+                        _G.GRND_RC.show = false
+                        _G.GRND_RC.reconHidden = true
+                        _G.GRND_RC.reconTdActive = false
+                    end
+                    return
+                end
                 GRND_SPEC.active = true
                 GRND_SPEC.id = id
                 GRND_SPEC.cmdName = "/" .. name
