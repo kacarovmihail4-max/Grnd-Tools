@@ -1,7 +1,9 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.245"
+GRND_SCRIPT_VERSION = "1.19.246"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.246 — Отладка (v2):
+  1) debug-логи в grndCamWindowsRaw и grndKeysTick;
 v1.19.245 — Отладка:
   1) добавлены debug-сообщения в консоль MoonLoader для диагностики
      окон и слежки;
@@ -8892,7 +8894,10 @@ function grndIsTyping()
     return false
 end
 function grndCamWindowsRaw()
-    if type(grndIsTyping) == "function" and grndIsTyping() then return true end
+    if type(grndIsTyping) == "function" and grndIsTyping() then
+        print("[GRND DEBUG] grndCamWindowsRaw: grndIsTyping=true")
+        return true
+    end
     if type(isPauseMenuActive) == "function" then
         local ok, a = pcall(isPauseMenuActive)
         if ok and a then return true end
@@ -16939,6 +16944,12 @@ local function grndKeysTick()
     GRND_KEYS.spawnedNow = spawnedNow
     GRND_KEYS.authBusy = busy
     GRND_KEYS.dlgActive = false
+    if type(sampIsDialogActive) == "function" then
+        local ok, res = pcall(sampIsDialogActive)
+        if ok and res then
+            print("[GRND DEBUG] grndKeysTick: dialogActive=true, dlgActive forced false")
+        end
+    end
     local natTyping = false
     if type(sampIsChatInputActive) == "function" then
         local okT, rT = pcall(sampIsChatInputActive)
