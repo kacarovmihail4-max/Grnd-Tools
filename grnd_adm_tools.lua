@@ -1,7 +1,10 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.244"
+GRND_SCRIPT_VERSION = "1.19.245"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.245 — Отладка:
+  1) добавлены debug-сообщения в консоль MoonLoader для диагностики
+     окон и слежки;
 v1.19.244 — Окна и слежка (v2):
   1) убраны все блокировки по dlgActive и nativeDialogOpen — функционал
      GRND работает при открытом серверном окне;
@@ -8865,11 +8868,26 @@ local function grndCamTick()
     C.wasActive=true
 end
 function grndIsTyping()
-    if GRND_KEYS.typing then return true end
-    if GRND_KEYS.imguiText then return true end
+    if GRND_KEYS.typing then
+        print("[GRND DEBUG] grndIsTyping: typing=true")
+        return true
+    end
+    if GRND_KEYS.imguiText then
+        print("[GRND DEBUG] grndIsTyping: imguiText=true")
+        return true
+    end
     if sampIsChatInputActive then
         local ok, res = pcall(sampIsChatInputActive)
-        if ok and res then return true end
+        if ok and res then
+            print("[GRND DEBUG] grndIsTyping: chatInputActive=true")
+            return true
+        end
+    end
+    if type(sampIsDialogActive) == "function" then
+        local ok, res = pcall(sampIsDialogActive)
+        if ok and res then
+            print("[GRND DEBUG] grndIsTyping: dialogActive=true (ignored)")
+        end
     end
     return false
 end
@@ -17180,12 +17198,14 @@ local function grndSpecTrackCommand(cmd)
             if not specConnected(id) then
                 notify.add("Слежка не начата: игрока #" .. id
                     .. " нет на сервере", "error", 5)
+                print("[GRND DEBUG] specTrack: player not connected")
             else
                 local present = true
                 if type(grndIsTargetPresent) == "function" then
                     local okP, pr = pcall(grndIsTargetPresent, id)
                     if okP then present = pr and true or false end
                 end
+                print("[GRND DEBUG] specTrack: id=" .. tostring(id) .. " present=" .. tostring(present))
                 if not present then
                     if _G.GRND_RC then
                         _G.GRND_RC.show = false
