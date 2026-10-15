@@ -1,7 +1,12 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.249"
+GRND_SCRIPT_VERSION = "1.19.250"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.250 — Журнал без автопилота наказаний:
+  1) категория «Автопилот наказаний» убрана из журнала логов — автопилот
+     больше ничего туда не пишет; его статус виден в окне автопилота;
+  2) ошибка автопилота больше не печатается в консоль, она показывается
+     в окне автопилота;
 v1.19.249 — Серверное окно больше не блокирует окна скрипта:
   1) отладочные печати убраны — в лог консоли больше не сыплется состояние
      каждый кадр (осталась команда /grnd keys и файл-лог /camdiag);
@@ -593,8 +598,7 @@ GRND_LOG = {queue={},seen={},flags={},dates={},page=1,category='chat',history={}
 do
     local L=GRND_LOG
     L.types={{'chat','Общий чат'},{'action_admins','Действия администрации'},
-        {'form_admin','Формы администраторов'},{'report','Репорты и ответы'},{'kill_list','Kill List'},
-        {'punish_auto','Автопилот наказаний'}}
+        {'form_admin','Формы администраторов'},{'report','Репорты и ответы'},{'kill_list','Kill List'}}
     L.allowed={};for _,v in ipairs(L.types) do L.allowed[v[1]]=true end
     function L.utf(s) return grndUtf8Text and grndUtf8Text(s) or tostring(s or '') end
     function L.clean(s) return (L.utf(s):gsub('{%x%x%x%x%x%x%x%x}',''):gsub('{%x%x%x%x%x%x}',''):gsub('[\r\n%z]',' ')) end
@@ -29887,11 +29891,6 @@ do
     end
     function PA.log(msg)
         PA.lastLog = tostring(msg or "")
-        if PA.logOn == false then return end
-        local L = _G.GRND_LOG
-        if type(L) == "table" and type(L.append) == "function" then
-            pcall(L.append, "punish_auto", tostring(msg or ""))
-        end
     end
     local function paSend(cmd)
         cmd = tostring(cmd or "")
@@ -31160,7 +31159,6 @@ do
         local ok, res = pcall(PA.onChat, text)
         if ok then return res end
         PA.err = tostring(res)
-        print("{FF6666}[GRND]{FFFFFF} автопилот наказаний: " .. tostring(res))
         return false
     end
     _G.grndPunAutoTick = function()

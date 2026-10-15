@@ -373,7 +373,7 @@ PA.onChat("Nik_Name[7]: это дм!")
 eq("fire.count", #queued, 1)                 -- «Команды после» больше нет
 eq("fire.cmd", queued[1], "/mute 7 60 2.1 ОП")   -- ID подставлен сам
 eq("fired.counter", PA.fired, 1)
-ok("logged", tostring(logged[#logged]):find("выдано", 1, true) ~= nil)
+ok("logged", tostring(PA.lastLog):find("выдано", 1, true) ~= nil)
 ok("toast", toasts[#toasts] ~= nil)
 
 -- v1.19.211: ЗАДЕРЖЕК НЕТ. Раньше здесь стоял кулдаун и повтор молчал до
@@ -593,7 +593,7 @@ do
     ok("shot.name.ext", tostring(shots[#shots].file):find("%.png") == nil)
     eq("shot.saved", PA.shotFail, nil)
     ok("shot.saved.path", tostring(PA.shotLast):match("^" .. dirA .. "/grnd_.+Nik_Name%.png$") ~= nil)
-    ok("shot.saved.log", tostring(logged[#logged]):find("сохранён", 1, true) ~= nil)
+    ok("shot.saved.log", tostring(PA.lastLog):find("сохранён", 1, true) ~= nil)
 
     -- ---- 2. старая версия плагина дописала «.png» к имени ----
     -- скрипт сам приводит файл к нормальному имени и всё равно подтверждает
@@ -628,9 +628,9 @@ do
     PA.tick()
     eq("shot.fail.flag", PA.shotFail, true)
     ok("shot.fail.path", tostring(PA.shotLast):find(PA.shotDir, 1, true) ~= nil)
-    ok("shot.fail.log", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
-    ok("shot.fail.version", tostring(logged[#logged]):find("(v1.19.", 1, true) ~= nil)
-    ok("shot.fail.oneline", tostring(logged[#logged]):find("\n", 1, true) == nil)
+    ok("shot.fail.log", tostring(PA.lastLog):find("не сохранён", 1, true) ~= nil)
+    ok("shot.fail.version", tostring(PA.lastLog):find("(v1.19.", 1, true) ~= nil)
+    ok("shot.fail.oneline", tostring(PA.lastLog):find("\n", 1, true) == nil)
 
     -- ---- 4. своя папка уходит в плагин как есть ----
     shotStub.makeFile = true
@@ -715,7 +715,7 @@ do
     PA.tick()
     eq("self.saved", PA.shotFail, nil)
     eq("self.saved.path", PA.shotLast, grabbed[1])
-    ok("self.saved.log", tostring(logged[#logged]):find("сохранён", 1, true) ~= nil)
+    ok("self.saved.log", tostring(PA.lastLog):find("сохранён", 1, true) ~= nil)
     -- v1.19.211: тост короткий и ровно про файл — подробности в журнале
     eq("self.saved.toast", tostring(toasts[#toasts]), "Скриншот сохранен")
     eq("self.saved.toast.kind", toastKinds[#toastKinds], "ok")
@@ -741,7 +741,7 @@ do
     PA.shotWait.altTried = true          -- запасной путь уже пробовали
     PA.tick()
     eq("self.liar.flag", PA.shotFail, true)
-    ok("self.liar.log", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
+    ok("self.liar.log", tostring(PA.lastLog):find("не сохранён", 1, true) ~= nil)
     eq("self.liar.toast", tostring(toasts[#toasts]), "Скриншот не сохранён")
     eq("self.liar.toast.kind", toastKinds[#toastKinds], "warn")
     -- ошибку внутри кадра тик больше НЕ глушит молча (раньше из-за nil в
@@ -767,7 +767,7 @@ do
     eq("self.fb.saved", PA.shotFail, nil)
     eq("self.fb.toast", tostring(toasts[#toasts]), "Скриншот сохранен")
     -- причина отказа своего кадра — в журнале скрипта, а не в тосте
-    ok("self.fb.reason", tostring(logged[#logged]):find("не вышел", 1, true) ~= nil)
+    ok("self.fb.reason", tostring(PA.lastLog):find("не вышел", 1, true) ~= nil)
     ok("self.fb.path", tostring(PA.shotLast):find(PA.shotDir, 1, true) ~= nil)
     shotStub.makeFile = false
 
@@ -785,7 +785,7 @@ do
     PA.tick()                                    -- срок вышел: честный провал
     eq("self.both.fail", PA.shotFail, true)
     eq("self.both.toast", tostring(toasts[#toasts]), "Скриншот не сохранён")
-    ok("self.both.log", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
+    ok("self.both.log", tostring(PA.lastLog):find("не сохранён", 1, true) ~= nil)
     ok("self.both.path", tostring(PA.shotLast):find(PA.shotDir, 1, true) ~= nil)
     eq("log.quiet.after.fail", #shotLog, 0)
 
@@ -810,7 +810,7 @@ do
     PA.tick()                                    -- плагин уже положил файл
     eq("self.t.saved", PA.shotFail, nil)
     eq("self.t.toast", tostring(toasts[#toasts]), "Скриншот сохранен")
-    ok("self.t.note", tostring(logged[#logged]):find("не ответил", 1, true) ~= nil)
+    ok("self.t.note", tostring(PA.lastLog):find("не ответил", 1, true) ~= nil)
     shotStub.makeFile = false
 
     -- ФАЙЛ ЕСТЬ, А ИМЯ ДРУГОЕ. Ровно жалоба заказчика: кадр на диске, а в чат
@@ -832,7 +832,7 @@ do
         PA.tick()
         eq("find.alien.saved", PA.shotFail, nil)
         eq("find.alien.path", PA.shotLast, alien)
-        ok("find.alien.log", tostring(logged[#logged]):find("сохранён", 1, true) ~= nil)
+        ok("find.alien.log", tostring(PA.lastLog):find("сохранён", 1, true) ~= nil)
         eq("find.alien.toast", tostring(toasts[#toasts]), "Скриншот сохранен")
         os.execute("rm -rf " .. dirJ)
     end
@@ -1431,10 +1431,10 @@ do
     ok("shot2.why", tostring(P2.shotWhy):find("lib.screenshot", 1, true) ~= nil)
     ok("shot2.why.oneline", tostring(P2.shotWhy):find("\n", 1, true) == nil)
     ok("shot2.why.short", #tostring(P2.shotWhy) <= 121)
-    ok("shot2.report.oneline", tostring(logged[#logged]):find("\n", 1, true) == nil)
+    ok("shot2.report.oneline", tostring(P2.lastLog):find("\n", 1, true) == nil)
     eq("shot2.fail", P2.shotFail, true)
     ok("shot2.reason", tostring(P2.shotLast):find("нет Screenshot.asi", 1, true) ~= nil)
-    ok("shot2.no.claim", tostring(logged[#logged]):find("не сохранён", 1, true) ~= nil)
+    ok("shot2.no.claim", tostring(P2.lastLog):find("не сохранён", 1, true) ~= nil)
     eq("log.quiet.no.plugin", #shotLog, 0)   -- и без плагина в лог ничего не идёт
 
     -- 2. F8 нажали, но проверить негде — тоже без «сохранено»
@@ -1549,6 +1549,10 @@ do
     -- готовность кадра проверяет и хук, и устройство, и d3dx9
     ok("hook.ready.self", count("PA.shotSelfWhy = \"не найдено устройство D3D9") == 1)
 end
+
+-- автопилот не пишет в журнал логов (категория «Автопилот наказаний» убрана):
+-- статус идёт только в PA.lastLog (окно автопилота)
+ok("log.punauto.none", #logged == 0)
 
 print(string.format("--- модуль автопилота: %d/%d ok ---", total - fails, total))
 os.exit(fails == 0 and 0 or 1)
