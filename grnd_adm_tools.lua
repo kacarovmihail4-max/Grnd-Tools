@@ -1,7 +1,13 @@
+-- проверка «вызываемости» функций обёртки ImGui: это может быть function или cdata
+function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
+function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.266"
+GRND_SCRIPT_VERSION = "1.19.267"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.267 — шрифт подписей чата действительно увеличивается:
+  1) функции PushFont / SetWindowFontScale обёртки ImGui имеют тип cdata, а проверка
+     требовала function, поэтому крупный шрифт и масштаб никогда не применялись;
 v1.19.266 — диагностика шрифта подписей чата:
   1) в отчёте /grndkl dump (раздел ШРИФТ И ТЕКСТ) видно, какой кегль нужен,
      какой взят из лестницы и применился ли нативный шрифт;
@@ -6621,7 +6627,7 @@ do
                     end
                     fontCache[scale]=cached
                 end
-                local native=cached.font and type(im.PushFont)=='function' and type(im.PopFont)=='function'
+                local native=cached.font and isFnV(im.PushFont) and isFnV(im.PopFont)
                     and pcall(im.PushFont,cached.font)
                 GRND_FONT.lastCall={want=basePx*scale,pick=cached.pixels,ratio=cached.ratio or 1,native=native and true or false}
                 local success,a,b=pcall(fn,native and (cached.ratio or 1) or scale,...)
@@ -6633,7 +6639,7 @@ do
                 local width,height,native,pixels=fontCall(function(k,str)
                     local fallbackWidth=ctx.measure(str,k)
                     local scaled=false
-                    if k~=1 and type(im.SetWindowFontScale)=='function' then
+                    if k~=1 and isFnV(im.SetWindowFontScale) then
                         scaled=pcall(im.SetWindowFontScale,k)
                     end
                     local ok,a,b=pcall(function()return im.CalcTextSize(str)end)
@@ -15016,7 +15022,7 @@ GRND_KL_ATLAS_PNG  = GRND_KL_ATLAS_PNG or table.concat({
                 w("подписи чата ещё не рисовались (вызовов шрифта не было)")
             end
             local imx = _G.GRND_IM or _G.grndImgui
-            w("PushFont в обёртке: " .. type(imx and imx.PushFont) .. ", SetWindowFontScale: "
+            w("PushFont в обёртке: " .. typeFnV(imx and imx.PushFont) .. ", SetWindowFontScale: "
                 .. type(imx and imx.SetWindowFontScale))
         end
         w("загруженный шрифт: " .. tostring(CH2.fontLoadedPath or "НЕ загружен — системный шрифт обёртки"))
@@ -22279,7 +22285,7 @@ function grndCharDrawInner(ctx)
                 val < 0 and col32(accent[1], accent[2], accent[3], 32)
                     or col32(255, 255, 255, 10), 7)
             local scale = 0.95
-            if type(im.SetWindowFontScale) == "function" and tw > 0 then
+            if isFnV(im.SetWindowFontScale) and tw > 0 then
                 scale = math.min(scale, (vbW - 8) / tw)
             elseif tw * scale > vbW - 8 then
                 text = "Серв."
@@ -24656,12 +24662,12 @@ end
 local function uiTextFallback(im)
     return function(x, y, str, col, scale)
         im.SetCursorPos(im.ImVec2(x, y))
-        if scale and scale ~= 1 and type(im.SetWindowFontScale) == "function" then
+        if scale and scale ~= 1 and isFnV(im.SetWindowFontScale) then
             pcall(im.SetWindowFontScale, scale)
         end
         if im.TextUnformatted then im.TextUnformatted(tostring(str))
         else im.Text(tostring(str)) end
-        if scale and scale ~= 1 and type(im.SetWindowFontScale) == "function" then
+        if scale and scale ~= 1 and isFnV(im.SetWindowFontScale) then
             pcall(im.SetWindowFontScale, 1)
         end
     end
@@ -35903,7 +35909,7 @@ function grndMainBody()
             scale = scale or 1
             local pushed = grndPushCol(im.Col and im.Col.Text, col)
             local scaled = false
-            if scale ~= 1 and type(im.SetWindowFontScale) == "function" then
+            if scale ~= 1 and isFnV(im.SetWindowFontScale) then
                 scaled = pcall(im.SetWindowFontScale, scale)
             end
             im.SetCursorPos(im.ImVec2(x, y))
@@ -35934,7 +35940,7 @@ function grndMainBody()
         end
         local function drawnWb(s, scale)
             scale = scale or 1
-            if type(im.SetWindowFontScale) == "function" then
+            if isFnV(im.SetWindowFontScale) then
                 if scale ~= 1 then
                     pcall(im.SetWindowFontScale, scale)
                     local okM, aM = pcall(im.CalcTextSize, tostring(s))
@@ -36927,7 +36933,7 @@ function grndMainBody()
                 if okf then fobj, fsz = rf, tonumber(rs) end
             end
             local fontPushed, fontViaLadder, fsc = false, false, 1
-            if fobj and type(im.PushFont) == "function" then
+            if fobj and isFnV(im.PushFont) then
                 fontViaLadder = pcall(im.PushFont, fobj) and true or false
             end
             if fontViaLadder then
@@ -37324,7 +37330,7 @@ function grndMainBody()
                 if okf then fobj, fsz = rf, tonumber(rs) end
             end
             local fontPushed, fontViaLadder, fsc = false, false, 1
-            if fobj and type(im.PushFont) == "function" then
+            if fobj and isFnV(im.PushFont) then
                 fontViaLadder = pcall(im.PushFont, fobj) and true or false
             end
             if fontViaLadder then
@@ -37813,7 +37819,7 @@ function grndMainBody()
                 H = math.max(240, math.min(H, math.max(240, resY - 60)))
                 local function drawnW(s, scale)
                     scale = scale or 1
-                    if type(im.SetWindowFontScale) == "function" then
+                    if isFnV(im.SetWindowFontScale) then
                         if scale ~= 1 then
                             pcall(im.SetWindowFontScale, scale)
                             local okM, aM = pcall(im.CalcTextSize, tostring(s))
@@ -38591,7 +38597,7 @@ function grndMainBody()
                         do
                             local function drawnW0(s, scale)
                                 scale = scale or 1
-                                if type(im.SetWindowFontScale) == "function" then
+                                if isFnV(im.SetWindowFontScale) then
                                     if scale ~= 1 then
                                         pcall(im.SetWindowFontScale, scale)
                                         local okM, aM = pcall(im.CalcTextSize, tostring(s))
@@ -39400,7 +39406,7 @@ function grndMainBody()
             L(-6.5, 7.0, 4.5, 7.0, 1.8)
         end
         GRND_REP.measureW = function(s, scale)
-            local canScale = (type(im.SetWindowFontScale) == "function")
+            local canScale = (isFnV(im.SetWindowFontScale))
             local use = (canScale and scale) or 1
             if type(im.CalcTextSize) == "function" then
                 if canScale and use ~= 1 then pcall(im.SetWindowFontScale, use) end
@@ -40619,8 +40625,8 @@ function grndMainBody()
             end
             local s0 = nil
             local function grew(v) return (v and s0 and v > s0 * 1.4) and true or false end
-            local canPush = (type(im.PushFont) == "function")
-                and (type(im.PopFont) == "function")
+            local canPush = (isFnV(im.PushFont))
+                and (isFnV(im.PopFont))
             local fonts = {}
             if GRND_FONT and GRND_FONT.fontObj then fonts[#fonts + 1] = GRND_FONT.fontObj end
             if im.__grndUiFont then fonts[#fonts + 1] = im.__grndUiFont end
@@ -40650,7 +40656,7 @@ function grndMainBody()
                     end
                     note("pushsize нет")
                 end
-                if type(im.SetWindowFontScale) == "function" then
+                if isFnV(im.SetWindowFontScale) then
                     local oks = pcall(im.SetWindowFontScale, K)
                     if oks then
                         local v = cur()
@@ -40834,7 +40840,7 @@ function grndMainBody()
             local lineH = rhH(1)
             local fontPushed = false
             if txtMode == "push" and fontPick
-                and type(im.PushFont) == "function" and type(im.PopFont) == "function" then
+                and isFnV(im.PushFont) and isFnV(im.PopFont) then
                 fontPushed = pcall(im.PushFont, fontPick) and true or false
             end
             local ioObj, ioOld = nil, nil
@@ -40921,7 +40927,7 @@ function grndMainBody()
                 end
                 local pushedC = grndPushCol(im.Col and im.Col.Text, col)
                 local scaledF = false
-                if k ~= 1 and type(im.SetWindowFontScale) == "function" then
+                if k ~= 1 and isFnV(im.SetWindowFontScale) then
                     scaledF = pcall(im.SetWindowFontScale, k)
                 end
                 im.SetCursorPos(im.ImVec2(x, y))
@@ -41528,7 +41534,7 @@ function grndMainBody()
                 end
                 local function drawnW(s, scale)
                     scale = scale or 1
-                    if type(im.SetWindowFontScale) == "function" then
+                    if isFnV(im.SetWindowFontScale) then
                         if scale ~= 1 then
                             pcall(im.SetWindowFontScale, scale)
                             local ok, a = pcall(im.CalcTextSize, tostring(s))
@@ -43280,8 +43286,8 @@ function grndMainBody()
                     "кегль базы: " .. tostring(basePx)
                         .. " · «лестница»: " .. tostring(ladCnt) .. " размеров"
                         .. " · im: " .. tostring(IMGUI_WRAP or "?"),
-                    "SetWindowFontScale: " .. (type(im.SetWindowFontScale) == "function" and "есть" or "НЕТ")
-                        .. " · PushFont: " .. (type(im.PushFont) == "function" and "есть" or "НЕТ")
+                    "SetWindowFontScale: " .. (isFnV(im.SetWindowFontScale) and "есть" or "НЕТ")
+                        .. " · PushFont: " .. (isFnV(im.PushFont) and "есть" or "НЕТ")
                         .. " · GetIO: " .. (type(im.GetIO) == "function" and "есть" or "НЕТ")
                         .. " · io.FontGlobalScale: " .. ioGS,
                 }

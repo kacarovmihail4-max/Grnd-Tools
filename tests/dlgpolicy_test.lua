@@ -312,6 +312,15 @@ ok("font.ratio.carry", src:find("cached.ratio=ratio", 1, true) ~= nil and src:fi
 -- раскладка подписей чата измеряется тем же шрифтом, что и отрисовка
 ok("font.align.measure", src:find("C.layout(measureFont,metaFontHeight)", 1, true) ~= nil and src:find("local function measureFont(str,scale)", 1, true) ~= nil)
 
+-- обёртка ImGui отдаёт PushFont/SetWindowFontScale как cdata: проверка type()=="function" запрещена
+do
+    local bad = 0
+    for _, name in ipairs({"SetWindowFontScale", "PushFont", "PopFont"}) do
+        if src:find('type(im.' .. name .. ') == "function"', 1, true) or src:find("type(im." .. name .. ")=='function'", 1, true) then bad = bad + 1 end
+    end
+    ok("font.cdata.check", bad == 0)
+end
+
 print(string.format("--- серверное окно и окна скрипта: %d/%d ok ---", total - fails, total))
 if fails > 0 then os.exit(1) end
 os.exit(0)
