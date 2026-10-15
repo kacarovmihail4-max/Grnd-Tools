@@ -1,7 +1,12 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.251"
+GRND_SCRIPT_VERSION = "1.19.252"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.252 — Skip ZZ срабатывает надёжно:
+  1) окно «Зеленая зона» прячется и по заголовку, и по тексту сервера
+     («В этом месте запрещено … драться/стрелять»);
+  2) проверка идёт до остальной обработки диалогов и не зависит от состояния
+     входа в игру;
 v1.19.251 — Skip ZZ в читах:
   1) новый чит «Skip ZZ» (вкладка «Читы»): скрывает серверное окно
      «Зеленая зона» (анти-ДМ зона на сервере); состояние сохраняется;
@@ -13603,10 +13608,16 @@ do
         if stSpecActive() then return stOursAwaiting() or stOurPage(full) end
         return stOursAwaiting() or stOurPage(full)
     end
-    function grndSkipZZTitle(title)
+    -- Окно анти-ДМ зоны: заголовок «Зеленая зона» или текст сервера
+    -- «В этом месте запрещено драться/стрелять» (на случай другого заголовка)
+    function grndSkipZZMatch(title, text)
         local t = grndLowerUtf(grndToUtf(tostring(title or "")))
         t = t:gsub("^%s+", ""):gsub("%s+$", "")
-        return t == "зеленая зона" or t == "зелёная зона"
+        if t == "зеленая зона" or t == "зелёная зона" then return true end
+        local b = grndLowerUtf(grndToUtf(tostring(text or "")))
+        b = b:gsub("{%x%x%x%x%x%x}", "")
+        return b:find("в этом месте запрещено", 1, true) ~= nil
+            and b:find("стрелять", 1, true) ~= nil
     end
     _G.grndStatsOnDialog = function(id, style, title, b1, b2, text)
         local full = ("%s\n%s"):format(tostring(title or ""), tostring(text or ""))
@@ -42718,10 +42729,11 @@ function grndMainBody()
                 if data then whSyncFeed(whSyncSlotPassenger, playerId, data) end
             end
             function sampev.onShowDialog(dialogId, style, title, button1, button2, text)
-                if not grndSessionReady() then return end
-                if GRND_SKIPZZ and GRND_SKIPZZ.on and grndSkipZZTitle(title) then
-                    return false
+                if GRND_SKIPZZ and GRND_SKIPZZ.on then
+                    local okZ, hideZ = pcall(grndSkipZZMatch, title, text)
+                    if okZ and hideZ then return false end
                 end
+                if not grndSessionReady() then return end
                 local okSt, hideSt = pcall(grndStatsOnDialog, dialogId, style, title, button1, button2, text)
                 if okSt and hideSt then return false end
                 if not okSt and type(_G.grndStatsShouldHide) == "function" then
