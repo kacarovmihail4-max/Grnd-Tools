@@ -1,7 +1,12 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.235"
+GRND_SCRIPT_VERSION = "1.19.236"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.236 — Камера полностью статична:
+  1) убрано остаточное авто-изменение наклона (smart pitch) при простое;
+  2) каждый кадр сбрасывается таймер бездействия камеры — игра больше не
+     применяет «idle camera» (медленное вращение вокруг игрока);
+  3) зум увеличен ещё: максимум 100 м, скорость ×3, шаг колеса ×2;
 v1.19.235 — Зум и авто-вращение камеры:
   1) зум работает быстрее (скорость изменения дистанции удвоена) и дальше
      (максимальная дистанция увеличена с 30 до 60 м, шаг колеса ×2);
@@ -7917,7 +7922,7 @@ function grndCamCfgSave()
         local SN = _G.grndSpecNative
         if SN then
             f:write("specCamDist=" .. string.format("%.1f",
-                math.max(2.0, math.min(60.0, tonumber(SN.camStartDist) or 7.0))) .. "\n")
+                math.max(2.0, math.min(100.0, tonumber(SN.camStartDist) or 7.0))) .. "\n")
             f:write("specCamPitch=" .. string.format("%.2f",
                 math.max(-0.15, math.min(1.55, tonumber(SN.camStartPitch) or 1.45))) .. "\n")
             f:write("specCamAngle=" .. string.format("%.2f",
@@ -7953,7 +7958,7 @@ local function camCfgLoad()
             elseif k == "camFishEye" then GRND_CAM.fovOn = (v == "1")
             elseif k == "specCamDist" and num then
                 local SN = _G.grndSpecNative
-                if SN then SN.camStartDist = math.max(2.0, math.min(60.0, num)) end
+                if SN then SN.camStartDist = math.max(2.0, math.min(100.0, num)) end
             elseif k == "specCamPitch" and num then
                 local SN = _G.grndSpecNative
                 if SN then SN.camStartPitch = math.max(-0.15, math.min(1.55, num)) end
@@ -10837,7 +10842,7 @@ function onWindowMessage(msg, wparam, lparam)
             local notch = (dRaw > 0 and 1) or (dRaw < 0 and -1) or 0
             if notch ~= 0 then
                 local S = grndSpecNative
-                S.camDist = math.max(2.0, math.min(60.0,
+                S.camDist = math.max(2.0, math.min(100.0,
                     (S.camDist or 10.0) - notch * 2.0))
                 S.camLastInput = os.clock()
                 S.wheelN = (S.wheelN or 0) + 1
@@ -18307,7 +18312,7 @@ function grndSpecCamControl(S, now)
             S.calibrate(tid)
         end
         if S.camTgtId ~= tid then
-            local d0 = math.max(2.0, math.min(60.0, tonumber(S.camStartDist) or 7.0))
+            local d0 = math.max(2.0, math.min(100.0, tonumber(S.camStartDist) or 7.0))
             S.camDist, S.camDistCur = d0, d0
             S.camPitch = math.max(-0.15, math.min(1.55,
                 tonumber(S.camStartPitch) or 1.45))
@@ -18371,9 +18376,9 @@ function grndSpecCamControl(S, now)
                     S.camLastInput = now end
                 if held(0x28) then S.camPitch = math.max(-0.15, (S.camPitch or 0.42) - 1.2 * dt)
                     S.camLastInput = now end
-                if held(0xBB) or held(0x6B) then S.camDist = math.min(60, (S.camDist or 10) + 16 * dt)
+                if held(0xBB) or held(0x6B) then S.camDist = math.min(100, (S.camDist or 10) + 24 * dt)
                     S.camLastInput = now end
-                if held(0xBD) or held(0x6D) then S.camDist = math.max(2, (S.camDist or 10) - 16 * dt)
+                if held(0xBD) or held(0x6D) then S.camDist = math.max(2, (S.camDist or 10) - 24 * dt)
                     S.camLastInput = now end
             end
             if targetPaused then
@@ -18387,20 +18392,14 @@ function grndSpecCamControl(S, now)
                 S.camLastInput = now
             else
                 local idleT = now - (S.camLastInput or 0)
-                if idleT > 3.0 then
-                    local smart = S.camSmart
-                    if smart and smart.pitch then
-                        local cur = S.camPitch or 1.45
-                        local k = math.min(1, 0.5 * (S.camDt or 1 / 60))
-                        S.camPitch = cur + (smart.pitch - cur) * k
-                    end
-                end
+                -- авто-изменение наклона отключено: камера статична
                 -- авто-поворот камеры отключён: угол остаётся как задал пользователь
             end
             S.camActiveSince = S.camActiveSince or now
             local dT = S.camDist or 10.0
             S.camDistCur = (S.camDistCur or dT)
                 + (dT - (S.camDistCur or dT)) * (1 - math.exp(-12 * S.camDt))
+            S.camLastInput = now
             grndCamFollowApply(S, now)
         else
             local manualExit = (_G.GRND_SPEC and _G.GRND_SPEC.manualExit)
@@ -38392,7 +38391,7 @@ function grndMainBody()
                                             vstr, c4(TH.accent), 0.9)
                                     end
                                     camRow(camY + 42, "Дистанция при входе",
-                                        tonumber(SN.camStartDist) or 7.0, 2.0, 60.0, 0.5,
+                                        tonumber(SN.camStartDist) or 7.0, 2.0, 100.0, 0.5,
                                         "rc_cam_dist", "%.1f м",
                                         function(v)
                                             SN.camStartDist = v
