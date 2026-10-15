@@ -1,7 +1,11 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.258"
+GRND_SCRIPT_VERSION = "1.19.259"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.259 — крупнее подписи чата и новый чит:
+  1) подписи оверлея чата («Обычный», «Админский», «Семейный», «TAB для смены
+     чата | Раскладка», подсказка ввода) стали крупнее;
+  2) чит «Бесконечный бег» (вкладка «Читы»): персонаж не устаёт при беге;
 v1.19.258 — GM при заходе без сообщений в чат:
   1) при автоматическом включении GM тост «GM включён» не выводится
      (тосты дублируются в чат);
@@ -5882,6 +5886,8 @@ local GRND_INVIS = {
 _G.GRND_INVIS = GRND_INVIS
 -- Skip ZZ: скрывает серверный диалог «Зеленая зона» (анти-ДМ зона Arizona RP)
 GRND_SKIPZZ = { on = false }
+-- Бесконечный бег: натив setPlayerNeverGetsTired (MoonLoader)
+GRND_RUN = { on = false, applied = false, at = 0 }
 local GRND_ABRK = {
     on = false,
     key = 0xA1,
@@ -5963,7 +5969,7 @@ local GRND_CHAT = {
 _G.GRND_CHAT = GRND_CHAT
 GRND_INPUT = {
     enabled=true, showHistory=true, channel="normal", admin=false, family=false,
-    history={}, maxHistory=100, visibleRows=7, scroll=0, metaScale=2.00, historyRadius=18,
+    history={}, maxHistory=100, visibleRows=7, scroll=0, metaScale=2.40, historyRadius=18,
     historyScale=1.05, historyRow=28, historyFrame=68,
     ownedKeys={}, opened=false, openedAt=0, hideUntil=0,
 }
@@ -6661,7 +6667,7 @@ do
                 rect({x=r.x+1,y=r.y+6,w=2,h=math.max(2,r.h-12)},color(accent[1],accent[2],accent[3],210),1)
                 if C.readText()=='' then
                     local hint=info.hint..'  |  Введите сообщение...'
-                    centeredText(r.x+15,r.y,r.h,fit(hint,r.w-28,measure,1),{160,164,174,155},1)
+                    centeredText(r.x+15,r.y,r.h,fit(hint,r.w-28,measure,1.4),{160,164,174,155},1.4)
                 end
             end
             local hit={panel=L.panel,meta=L.meta,rows={}}
@@ -7961,6 +7967,24 @@ local function camCfgPath()
     return "grnd_settings.cfg"
 end
 GRND_RING_KEY = GRND_RING_KEY or { on = true }
+-- Бесконечный бег: держим натив включённым (раз в секунду, на случай респавна),
+-- а при выключении снимаем его один раз
+function grndRunFrame()
+    local R = GRND_RUN
+    if not R or type(setPlayerNeverGetsTired) ~= "function" or PLAYER_HANDLE == nil then return end
+    if R.on then
+        local now = os.clock()
+        if now - (R.at or 0) >= 1 then
+            R.at = now
+            pcall(setPlayerNeverGetsTired, PLAYER_HANDLE, true)
+        end
+        R.applied = true
+    elseif R.applied then
+        R.applied = false
+        R.at = 0
+        pcall(setPlayerNeverGetsTired, PLAYER_HANDLE, false)
+    end
+end
 function grndCamCfgSave()
     local ok, f = pcall(GRND_CONFIG.open, camCfgPath(), "w")
     if not ok or not f then return false end
@@ -7983,6 +8007,7 @@ function grndCamCfgSave()
     f:write("afkOn=" .. ((GRND_AFK and GRND_AFK.on) and "1" or "0") .. "\n")
     f:write("airOn=" .. ((GRND_AIR and GRND_AIR.on) and "1" or "0") .. "\n")
     f:write("skipZZOn=" .. ((GRND_SKIPZZ and GRND_SKIPZZ.on) and "1" or "0") .. "\n")
+    f:write("runOn=" .. ((GRND_RUN and GRND_RUN.on) and "1" or "0") .. "\n")
     f:write("ringKeyOn=" .. ((GRND_RING_KEY and GRND_RING_KEY.on == false) and "0" or "1") .. "\n")
     f:write("arepOn=" .. (GRND_AREP.enabled and "1" or "0") .. "\n")
     f:write("arepKey=" .. tostring(GRND_AREP.key or 0) .. "\n")
@@ -8103,6 +8128,8 @@ local function camCfgLoad()
                 if GRND_AIR then GRND_AIR.on = (v == "1") end
             elseif k == "skipZZOn" then
                 if GRND_SKIPZZ then GRND_SKIPZZ.on = (v == "1") end
+            elseif k == "runOn" then
+                if GRND_RUN then GRND_RUN.on = (v == "1") end
             elseif k == "ringKeyOn" then
                 if GRND_RING_KEY then GRND_RING_KEY.on = (v ~= "0") end
             elseif k == "arepOn" then
@@ -38376,6 +38403,14 @@ function grndMainBody()
                                 GRND_SKIPZZ.on = not szOn
                                 pcall(grndCamCfgSave)
                             end })
+                        local runOn = (GRND_RUN and GRND_RUN.on) and true or false
+                        local y7 = y6 + 48 + 10
+                        cheatCard(y7, 48, { title = "Бесконечный бег", tag = "run", on = runOn,
+                            desc = "Персонаж не устаёт: бег и спринт без ограничения",
+                            onToggle = function()
+                                GRND_RUN.on = not runOn
+                                pcall(grndCamCfgSave)
+                            end })
                         grndSetUiSync("cheats", im)
                         local okCP, errCP = pcall(grndSetDrawCheatPopups, cheatCtx)
                         if not okCP then
@@ -43524,6 +43559,7 @@ function grndMainBody()
             end
             grndGMFrame()
             pcall(grndInvisFrame)
+            pcall(grndRunFrame)
             if GRND_AIR.frame then pcall(GRND_AIR.frame) end
             local gmSpawned = false
             if type(grndIsSpawned) == "function" then
