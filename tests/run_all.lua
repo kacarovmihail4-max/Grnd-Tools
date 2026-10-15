@@ -6,7 +6,8 @@
 -- (вкладки/выдача/предохранители/страница), журнал чата, уровни админов
 -- в чекере «Админы в сети», раздел «Выдача в радиусе» (панель МП: скан,
 -- радиус, уровень, выдача, настройки, страница, строка обновлений),
--- автообновление (манифест → .new → проверка → подмена → окно изменений).
+-- автообновление (манифест → .new → проверка → подмена → окно изменений),
+-- политику окон (серверное окно не блокирует окна скрипта).
 local self = (arg and arg[0]) or "tests/run_all.lua"
 local dir = self:match("^(.*)[/\\][^/\\]*$") or "."
 local lua = (arg and arg[-1]) or "luajit"
@@ -40,7 +41,8 @@ local function runStand(name)
 end
 
 for _, name in ipairs({ "punauto_logic_test", "punauto_module_test",
-    "chatlog_test", "ao_level_test", "radtools_test", "upd_test" }) do
+    "chatlog_test", "ao_level_test", "radtools_test", "upd_test",
+    "dlgpolicy_test" }) do
     local okRun, out = runStand(name)
     io.write(out)
     if okRun then

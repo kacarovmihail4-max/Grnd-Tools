@@ -1,7 +1,19 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.248"
+GRND_SCRIPT_VERSION = "1.19.249"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.249 — Серверное окно больше не блокирует окна скрипта:
+  1) отладочные печати убраны — в лог консоли больше не сыплется состояние
+     каждый кадр (осталась команда /grnd keys и файл-лог /camdiag);
+  2) серверное окно (диалог SA-MP) больше не гасит ни клавиши скрипта, ни его
+     окна: блокирует только собственное окно авторизации — и только пока
+     игрок не в игре;
+  3) окно авторизации больше не прячет интерфейс навсегда: если сервер не
+     подтвердил вход, интерфейс возвращается через 6 с;
+  4) таблица (Tab), формы (Y/N), окно новостей и окно статистики работают
+     поверх серверного окна;
+  5) поля ввода по-прежнему принадлежат серверу: панель ввода чата и свой чат
+     скрипт при открытом серверном окне не открывает;
 v1.19.248 — Отладка (v4):
   1) debug-лог для sampIsChatInputActive;
 v1.19.247 — Отладка (v3):
@@ -1232,15 +1244,19 @@ function logRenderErr(where, err)
     pcall(grndTrace, "ERROR", "render: " .. key)
     pcall(notify.say, "рендер-ошибка " .. tostring(where) .. " (см. консоль)", "error")
 end
-function grndAuthDialogActive()
-    if sampIsDialogActive then
-        local ok, res = pcall(sampIsDialogActive)
-        if ok and res then return true end
-    end
-    return false
+-- Серверное окно (диалог SA-MP) — окно, которое открыл сервер.
+-- Правило скрипта: серверное окно НЕ отключает ни клавиши скрипта, ни его
+-- окна — скрипт рисует свои окна поверх серверного. Отключать работу скрипта
+-- может только собственное окно авторизации (см. grndAuthDialogOpen).
+function grndServerDialogOpen()
+    if type(sampIsDialogActive) ~= "function" then return false end
+    local ok, res = pcall(sampIsDialogActive)
+    return (ok and res) and true or false
 end
 GRND_GATE = GRND_GATE or { blockedFrames = 0, suppressed = 0, why = "", unblockAt = 0 }
 GRND_GATE.authSeen = false
+-- сколько ждать подтверждения входа, прежде чем отпустить интерфейс
+GRND_GATE.authGrace = tonumber(GRND_GATE.authGrace) or 6
 local GRND_AUTH_TITLE_MARKERS = {
     "авторизац", "регистрац", "authorization", "authentication",
     "sign in", "login", "вход в игру", "вход на сервер", "вход в систему",
@@ -1293,6 +1309,12 @@ end
 function grndAuthDialogOpen()
     local authState = _G.GRND_AUTH_STATE
     if authState and authState.showedAuthOk then return false end
+    -- После входа в игру любое серверное окно — обычное окно, а не авторизация:
+    -- такие окна не должны отключать окна скрипта.
+    if type(sampIsLocalPlayerSpawned) == "function" then
+        local okS, sp = pcall(sampIsLocalPlayerSpawned)
+        if okS and sp then return false end
+    end
     local caption, text = grndDialogPartsNow()
     if caption == "" and text == "" then return false end
     local title, body = grndUiLower(caption), grndUiLower(text)
@@ -1315,6 +1337,20 @@ function grndAuthDialogOpen()
         or body:find("логин", 1, true) or body:find("login", 1, true)
     return hasPassword and hasPrompt and true or false
 end
+-- Защёлка «ждём подтверждения входа»: окно авторизации уже видели, но сервер
+-- не подтвердил вход. Ждём GRND_GATE.authGrace секунд; если подтверждения
+-- так и нет — защёлку снимаем, иначе окна скрипта не появятся никогда.
+function grndAuthWaitExpired()
+    local authState = _G.GRND_AUTH_STATE
+    if authState and authState.showedAuthOk then
+        GRND_GATE.authSeen = false
+        GRND_GATE.unblockAt = 0
+        return true
+    end
+    if not GRND_GATE.authSeen then return true end
+    if GRND_GATE.unblockAt == 0 then GRND_GATE.unblockAt = os.clock() end
+    return (os.clock() - GRND_GATE.unblockAt) >= (GRND_GATE.authGrace or 6)
+end
 function grndUiBlocked()
     local spawned
     if type(sampIsLocalPlayerSpawned) == "function" then
@@ -1332,13 +1368,14 @@ function grndUiBlocked()
         GRND_GATE.unblockAt = 0
         return true
     end
-    local authState = _G.GRND_AUTH_STATE
-    if GRND_GATE.authSeen and not (authState and authState.showedAuthOk) then
+    if GRND_GATE.authSeen and not grndAuthWaitExpired() then
         GRND_GATE.why = "ожидание подтверждения авторизации"
-        GRND_GATE.unblockAt = 0
         return true
     end
-    if authState and authState.showedAuthOk then GRND_GATE.authSeen = false end
+    if GRND_GATE.authSeen then
+        GRND_GATE.authSeen = false
+        GRND_GATE.unblockAt = 0
+    end
     GRND_GATE.why = ""
     if GRND_GATE.unblockAt == 0 then GRND_GATE.unblockAt = os.clock() end
     return false
@@ -1359,8 +1396,7 @@ function grndIsSpawnedSafe()
 end
 function grndSessionReady()
     if grndAuthDialogOpen() then return false end
-    local authState = _G.GRND_AUTH_STATE
-    if GRND_GATE.authSeen and not (authState and authState.showedAuthOk) then return false end
+    if GRND_GATE.authSeen and not grndAuthWaitExpired() then return false end
     if grndIsSpawnedSafe() then return true end
     if type(sampIsPlayerSpectating) == "function" then
         local ok, value = pcall(sampIsPlayerSpectating)
@@ -5934,6 +5970,9 @@ do
     end
     function C.active()
         if not C.enabled or (GRND_CAM and GRND_CAM.windowFocused==false) then return false end
+        -- Панель ввода чата — единственное окно скрипта, которое уступает
+        -- серверному окну: это поле ввода, и одновременно два поля ввода
+        -- (серверное и скрипта) работать не могут.
         if call(sampIsChatInputActive)~=true or call(sampIsDialogActive)==true then return false end
         if call(isPauseMenuActive)==true then return false end
         if type(grndSessionReady)=='function' and call(grndSessionReady)~=true then return false end
@@ -8351,7 +8390,9 @@ function grndAirBreakTick()
         GRND_ABRK.prevKey = false
         return
     end
-    local nativeDialogOpen = false
+    -- Пока открыто серверное окно, полёт не включается и камера стоит:
+    -- это было задумано, но переменная всегда была false.
+    local nativeDialogOpen = grndServerDialogOpen()
     local typing = (type(grndIsTyping) == "function") and grndIsTyping() or false
     typing = typing or nativeDialogOpen
     if not (PLAYER_PED and type(doesCharExist) == "function"
@@ -8875,69 +8916,51 @@ local function grndCamTick()
 end
 function grndIsTyping()
     if GRND_KEYS.typing then
-        print("[GRND DEBUG] grndIsTyping: typing=true")
         return true
     end
     if GRND_KEYS.imguiText then
-        print("[GRND DEBUG] grndIsTyping: imguiText=true")
         return true
     end
     if sampIsChatInputActive then
         local ok, res = pcall(sampIsChatInputActive)
         if ok and res then
-            print("[GRND DEBUG] grndIsTyping: chatInputActive=true")
             return true
-        end
-    end
-    if type(sampIsDialogActive) == "function" then
-        local ok, res = pcall(sampIsDialogActive)
-        if ok and res then
-            print("[GRND DEBUG] grndIsTyping: dialogActive=true (ignored)")
         end
     end
     return false
 end
 function grndCamWindowsRaw()
     if type(grndIsTyping) == "function" and grndIsTyping() then
-        print("[GRND DEBUG] grndCamWindowsRaw: grndIsTyping=true")
         return true
     end
     if type(isPauseMenuActive) == "function" then
         local ok, a = pcall(isPauseMenuActive)
         if ok and a then
-            print("[GRND DEBUG] grndCamWindowsRaw: pauseMenu=true")
             return true
         end
     end
     if type(sampIsScoreboardOpen) == "function" then
         local ok, a = pcall(sampIsScoreboardOpen)
         if ok and a then
-            print("[GRND DEBUG] grndCamWindowsRaw: scoreboard=true")
             return true
         end
     end
     if GRND_REF and GRND_REF.menu and GRND_REF.menu.open then
-        print("[GRND DEBUG] grndCamWindowsRaw: menu=true")
         return true
     end
     if GRND_REF and GRND_REF.clw and GRND_REF.clw.aiming then
-        print("[GRND DEBUG] grndCamWindowsRaw: clw.aiming=true")
         return true
     end
     if GRND_TAB and GRND_TAB.open then
-        print("[GRND DEBUG] grndCamWindowsRaw: tab=true")
         return true
     end
     if _G.GRND_REP and _G.GRND_REP.open then
-        print("[GRND DEBUG] grndCamWindowsRaw: rep=true")
         return true
     end
     if _G.GRND_RC and _G.GRND_RC.show and _G.GRND_RC.cursor then
-        print("[GRND DEBUG] grndCamWindowsRaw: rc.cursor=true")
         return true
     end
     if _G.GRND_RC and _G.GRND_RC.prompt then
-        print("[GRND DEBUG] grndCamWindowsRaw: rc.prompt=true")
         return true
     end
     if _G.GRND_FORMS and _G.GRND_FORMS.active then return true end
@@ -10667,7 +10690,7 @@ function grndF1BlockReason()
     if not (GRND_REF and GRND_REF.menu ~= nil) or type(grndTogglePlainCursor) ~= "function" then
         return "скрипт ещё запускается, подождите секунду"
     end
-    if GRND_KEYS and GRND_KEYS.blocked then return "открыто окно входа или диалог сервера" end
+    if GRND_KEYS and GRND_KEYS.blocked then return "открыто окно авторизации скрипта" end
     if GRND_RC and GRND_RC.show then return "открыт рекон: курсором управляет карточка" end
     local okT, typing = pcall(grndIsTyping)
     if okT and typing then return "идёт ввод в чат или в окне" end
@@ -10794,7 +10817,7 @@ function onWindowMessage(msg, wparam, lparam)
             pcall(logRenderErr,'native_input',handled)
             if GRND_INPUT.enabled
                 and ((isDown and wp==0x0D) or (msgN==0x0102 and wp==0x0D))
-                and grndNativeChatInputActive() and not grndAuthDialogActive() then
+                and grndNativeChatInputActive() and not grndServerDialogOpen() then
                 grndConsumeMsg(false);return
             end
         end
@@ -10843,17 +10866,8 @@ function onWindowMessage(msg, wparam, lparam)
         grndConsumeMsg(false)
         return
     end
-    local nativeDialogInput = false
-    if isMouseInput or isKeyInput then
-        if type(sampIsDialogActive) == "function" then
-            local okDialog, activeDialog = pcall(sampIsDialogActive)
-            nativeDialogInput = okDialog and activeDialog and true or false
-        end
-        if not nativeDialogInput and GRND_KEYS then
-            nativeDialogInput = (GRND_KEYS.dlgActive or GRND_KEYS.authBusy) and true or false
-        end
-    end
-    -- серверное окно больше не блокирует весь ввод GRND
+    -- Серверное окно не блокирует ввод GRND: окна скрипта работают поверх
+    -- серверного окна, и мышь/клавиши скрипта остаются его.
     if isMouseInput or isKeyInput then
         local uiGate=GRND_UI_MOUSE.uiGuard or grndUiMouseUpdate()
         local pressMsg=grndMsgIsPress(msgN)
@@ -11096,9 +11110,12 @@ function onWindowMessage(msg, wparam, lparam)
         return
     end
     if GRND_CHAT and GRND_CHAT.key and not grndIsTyping() then
+        -- Пока открыто серверное окно, скрипт свой чат не открывает:
+        -- поле ввода одно — серверное.
         local uiBusy = (GRND_REF.menu and GRND_REF.menu.open)
             or (GRND_TAB and GRND_TAB.open)
             or (GRND_REP and GRND_REP.open)
+            or grndServerDialogOpen()
         if GRND_CHAT.key == 0x54 then
             if wp == 0x54 and isDown and not uiBusy then
                 GRND_CHAT.wantOpen = os.clock()
@@ -11269,14 +11286,8 @@ function onWindowMessage(msg, wparam, lparam)
         return
     end
     if wp == 0x09 then
-        local sdOpen = false
-        if type(sampIsDialogActive) == "function" then
-            local okD, vD = pcall(sampIsDialogActive)
-            if okD and vD then sdOpen = true end
-        end
-        if sdOpen then
-            return
-        end
+        -- Серверное окно таблицу скрипта не закрывает: окно скрипта должно
+        -- открываться и работать поверх серверного окна.
         if tapOnce(0x09) then
             GRND_TAB.hook = true
             GRND_TAB.held = false
@@ -12652,10 +12663,6 @@ function grndFormsKeyTick()
     if type(sampIsChatInputActive) == "function" then
         local okC, isC = pcall(sampIsChatInputActive)
         if okC and isC then return end
-    end
-    if type(sampIsDialogActive) == "function" then
-        local okD, isD = pcall(sampIsDialogActive)
-        if okD and isD then return end
     end
     if yEdge then grndFormsResolve("accept") else grndFormsResolve("reject") end
 end
@@ -16759,7 +16766,8 @@ function grndTraceState()
     local T = GRND_TRACE
     if not T.on then return end
     local K = GRND_KEYS
-    grndTraceOnce("busy", "СИСТЕМНЫЙ диалог открыт", K.authBusy)
+    grndTraceOnce("busy", "окно авторизации открыто", K.authBusy)
+    grndTraceOnce("sdlg", "серверное окно открыто", K.dlgActive)
     grndTraceOnce("blocked", "перехват клавиш снят", K.blocked)
     grndTraceOnce("spawn", "флаг спавна", K.spawnedNow)
     grndTraceOnce("typing", "родной ввод чата", K.typing)
@@ -16775,7 +16783,9 @@ function grndTraceDiag()
         out[#out + 1] = "ни ОДНОГО кадра ImGui не отрисовано"
     end
     if K.authBusy then
-        out[#out + 1] = "открыт СИСТЕМНЫЙ диалог сервера"
+        out[#out + 1] = "открыто окно авторизации скрипта"
+    elseif K.dlgActive then
+        out[#out + 1] = "открыт серверный диалог — он работу скрипта не блокирует"
     end
     if K.typing then
         out[#out + 1] = "игрок печатает в родном чате — хоткеи уступают"
@@ -16805,7 +16815,8 @@ function grndTraceDump(why)
     L[#L + 1] = ""
     L[#L + 1] = "--- СОСТОЯНИЕ ---"
     local K = GRND_KEYS
-    L[#L + 1] = "authBusy=" .. tostring(K.authBusy) .. " spawnedNow=" .. tostring(K.spawnedNow)
+    L[#L + 1] = "authBusy=" .. tostring(K.authBusy) .. " serverDlg=" .. tostring(K.dlgActive)
+        .. " spawnedNow=" .. tostring(K.spawnedNow)
     L[#L + 1] = "typing(родной чат)=" .. tostring(K.typing) .. " blocked=" .. tostring(K.blocked)
     L[#L + 1] = "uiBusy=" .. tostring(K.uiBusy) .. " imguiText=" .. tostring(K.imguiText)
     L[#L + 1] = "чат: штатный ввод SA-MP + панель Tab /a; история текущей сессии"
@@ -16968,23 +16979,15 @@ local function grndRegisterToolCmds()
 end
 local function grndKeysTick()
     local spawnedNow = grndIsSpawnedSafe()
-    local busy = grndAuthDialogActive()
+    local serverDlg = grndServerDialogOpen()
+    local authWin = grndAuthDialogOpen()
     GRND_KEYS.spawnedNow = spawnedNow
-    GRND_KEYS.authBusy = busy
-    GRND_KEYS.dlgActive = false
-    if type(sampIsDialogActive) == "function" then
-        local ok, res = pcall(sampIsDialogActive)
-        if ok and res then
-            print("[GRND DEBUG] grndKeysTick: dialogActive=true, dlgActive forced false")
-        end
-    end
+    GRND_KEYS.authBusy = authWin
+    GRND_KEYS.dlgActive = serverDlg
     local natTyping = false
     if type(sampIsChatInputActive) == "function" then
         local okT, rT = pcall(sampIsChatInputActive)
-        print("[GRND DEBUG] sampIsChatInputActive=" .. tostring(rT) .. " ok=" .. tostring(okT))
         if okT and rT then natTyping = true end
-    else
-        print("[GRND DEBUG] sampIsChatInputActive not a function")
     end
     GRND_KEYS.typing = natTyping
     if natTyping then
@@ -16994,7 +16997,9 @@ local function grndKeysTick()
         GRND_KEYS.typingSince = nil
         GRND_KEYS.typingFresh = false
     end
-    GRND_KEYS.blocked = busy
+    -- Серверное окно клавиши скрипта не блокирует: блокирует только
+    -- собственное окно авторизации — там ввод принадлежит серверу.
+    GRND_KEYS.blocked = authWin
     pcall(grndTraceState)
     grndRegisterToolCmds()
     if GRND_FONT.cfgDirty and (os.clock() - (GRND_FONT.cfgSavedAt or 0)) > 1.5 then
@@ -17240,14 +17245,12 @@ local function grndSpecTrackCommand(cmd)
             if not specConnected(id) then
                 notify.add("Слежка не начата: игрока #" .. id
                     .. " нет на сервере", "error", 5)
-                print("[GRND DEBUG] specTrack: player not connected")
             else
                 local present = true
                 if type(grndIsTargetPresent) == "function" then
                     local okP, pr = pcall(grndIsTargetPresent, id)
                     if okP then present = pr and true or false end
                 end
-                print("[GRND DEBUG] specTrack: id=" .. tostring(id) .. " present=" .. tostring(present))
                 if not present then
                     if _G.GRND_RC then
                         _G.GRND_RC.show = false
@@ -39990,10 +39993,6 @@ function grndMainBody()
                 local okC, isC = pcall(sampIsChatInputActive)
                 if okC and isC then typing = true end
             end
-            if not typing and type(sampIsDialogActive) == "function" then
-                local okD, isD = pcall(sampIsDialogActive)
-                if okD and isD then typing = true end
-            end
             if not typing and type(wasKeyTapped) == "function" then
                 if wasKeyTapped(0x59) then
                     wantAccept = true
@@ -40102,10 +40101,6 @@ function grndMainBody()
             elseif type(grndUiBlocked) == "function" then
                 local okBlocked, blocked = pcall(grndUiBlocked)
                 if not okBlocked or blocked then return false end
-            end
-            if type(sampIsDialogActive) == "function" then
-                local okDialog, activeDialog = pcall(sampIsDialogActive)
-                if okDialog and activeDialog then return false end
             end
             local RC = GRND_RC
             local P = RC and RC.statsPop
@@ -43093,7 +43088,9 @@ function grndMainBody()
                     .. tostring(GRND_REF.menu ~= nil)
                     .. "  печать: " .. (GRND_KEYS.typingFresh and "идёт"
                     or (GRND_KEYS.typingSince and "залипла" or "нет"))
-                    .. "  диалог: " .. (GRND_KEYS.authBusy and "ОТКРЫТ" or "нет")
+                    .. "  диалог: " .. (GRND_KEYS.authBusy and "ОТКРЫТ (авторизация)"
+                    or (GRND_KEYS.dlgActive and "открыт (серверный, работу не блокирует)"
+                    or "нет"))
                     .. "  спавн: " .. (GRND_KEYS.spawnedNow and "да" or "нет"),
                 "интерфейс: " .. ((type(_G.grndUiBlocked) == "function" and _G.grndUiBlocked())
                     and ("СПРЯТАН (" .. tostring(_G.GRND_GATE.why) .. ")")

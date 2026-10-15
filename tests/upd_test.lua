@@ -483,7 +483,9 @@ check(embNotes[1].lines[2] == "1) первая строка.", "changelog: вс�
 check(embNotes[1].lines[3] == "2) вторая строка.", "changelog: встроенная строка 2")
 check(#U.changelogOf(embBody, NEW) == 0, "changelog: встроенный блок — своя версия отфильтрована")
 local realNotes = U.changelogOf(src:sub(1, 16384), "1.19.232")
-check(realNotes[1] ~= nil and realNotes[1].ver == "1.19.248",
+-- версию берём из самого скрипта, чтобы стенд не ломался на каждом выпуске
+local realVer = src:match('GRND_SCRIPT_VERSION%s*=%s*"([^"]+)"')
+check(realNotes[1] ~= nil and realVer ~= nil and realNotes[1].ver == realVer,
     "changelog: реальная шапка файла парсится")
 
 -- ---------- 3. источники спавна ----------
