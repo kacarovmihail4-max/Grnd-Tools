@@ -1,7 +1,12 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.243"
+GRND_SCRIPT_VERSION = "1.19.244"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.244 — Окна и слежка (v2):
+  1) убраны все блокировки по dlgActive и nativeDialogOpen — функционал
+     GRND работает при открытом серверном окне;
+  2) при входе в слежку проверяется реальное присутствие цели (без кэша);
+     если цель не обнаружена, камера не переключается;
 v1.19.243 — Окна и слежка:
   1) серверное окно больше не блокирует функционал GRND (убрана проверка
      sampIsDialogActive из grndIsTyping);
@@ -8338,13 +8343,6 @@ function grndAirBreakTick()
         return
     end
     local nativeDialogOpen = false
-    if type(sampIsDialogActive) == "function" then
-        local okDialog, activeDialog = pcall(sampIsDialogActive)
-        nativeDialogOpen = okDialog and activeDialog and true or false
-    end
-    if not nativeDialogOpen and GRND_KEYS then
-        nativeDialogOpen = (GRND_KEYS.dlgActive and true) or false
-    end
     local typing = (type(grndIsTyping) == "function") and grndIsTyping() or false
     typing = typing or nativeDialogOpen
     if not (PLAYER_PED and type(doesCharExist) == "function"
@@ -15757,7 +15755,7 @@ do
             if ok and r then return true end
         end
         if GRND_KEYS then
-            if GRND_KEYS.blocked or GRND_KEYS.dlgActive then return true end
+            if GRND_KEYS.blocked then return true end
         end
         return false
     end
@@ -16922,7 +16920,7 @@ local function grndKeysTick()
     local busy = grndAuthDialogActive()
     GRND_KEYS.spawnedNow = spawnedNow
     GRND_KEYS.authBusy = busy
-    GRND_KEYS.dlgActive = grndDialogActive()
+    GRND_KEYS.dlgActive = false
     local natTyping = false
     if type(sampIsChatInputActive) == "function" then
         local okT, rT = pcall(sampIsChatInputActive)
@@ -18595,8 +18593,6 @@ local function grndIsTargetPresent(id)
     end
     if ped and ped ~= PLAYER_PED then return true, ped end
     if grndSpecVehicle(S, id, nil) then return true, nil end
-    if S and S.camTgtId == id and S.camLastTgt
-        and os.clock() - (S.camLastTgt.t or 0) < 0.2 then return true, nil end
     return false, nil
 end
 function grndSpecAutoRefreshTick()
