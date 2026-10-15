@@ -1,7 +1,10 @@
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.261"
+GRND_SCRIPT_VERSION = "1.19.262"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.262 — ещё крупнее подписи чата:
+  1) «Обычный / Админский / Семейный», строка «TAB для смены чата | Раскладка»
+     и подсказка «Введите сообщение» увеличены;
 v1.19.261 — сбив анимации после падения срабатывает сразу:
   1) проверка каждый кадр, без паузы;
   2) обрываются и анимации падения, а не только вставания;
@@ -5979,7 +5982,7 @@ local GRND_CHAT = {
 _G.GRND_CHAT = GRND_CHAT
 GRND_INPUT = {
     enabled=true, showHistory=true, channel="normal", admin=false, family=false,
-    history={}, maxHistory=100, visibleRows=7, scroll=0, metaScale=2.40, historyRadius=18,
+    history={}, maxHistory=100, visibleRows=7, scroll=0, metaScale=2.90, historyRadius=18,
     historyScale=1.05, historyRow=28, historyFrame=68,
     ownedKeys={}, opened=false, openedAt=0, hideUntil=0,
 }
@@ -6677,7 +6680,7 @@ do
                 rect({x=r.x+1,y=r.y+6,w=2,h=math.max(2,r.h-12)},color(accent[1],accent[2],accent[3],210),1)
                 if C.readText()=='' then
                     local hint=info.hint..'  |  Введите сообщение...'
-                    centeredText(r.x+15,r.y,r.h,fit(hint,r.w-28,measure,1.4),{160,164,174,155},1.4)
+                    centeredText(r.x+15,r.y,r.h,fit(hint,r.w-28,measure,1.8),{160,164,174,155},1.8)
                 end
             end
             local hit={panel=L.panel,meta=L.meta,rows={}}

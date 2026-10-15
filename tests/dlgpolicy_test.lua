@@ -290,8 +290,8 @@ ok("run.card", src:find('tag = "run"', 1, true) ~= nil)
 ok("run.cfg", src:find('f:write("runOn="', 1, true) ~= nil and src:find('k == "runOn"', 1, true) ~= nil)
 ok("run.frame", src:find("pcall(grndRunFrame)", 1, true) ~= nil)
 -- шрифт подписей чата увеличен
-ok("font.meta", src:find("metaScale=2.40", 1, true) ~= nil)
-ok("font.hint", src:find("fit(hint,r.w-28,measure,1.4)", 1, true) ~= nil)
+ok("font.meta", src:find("metaScale=2.90", 1, true) ~= nil)
+ok("font.hint", src:find("fit(hint,r.w-28,measure,1.8)", 1, true) ~= nil)
 
 -- Бесконечный кислород и сбив анимации после падения: натив MoonLoader, карточка, конфиг
 ok("oxy.native", src:find("pcall(setCharDrownsInWater, PLAYER_PED, false)", 1, true) ~= nil)
