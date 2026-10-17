@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.292"
+GRND_SCRIPT_VERSION = "1.19.293"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.293 — окна админ-формы и гос. новостей переносятся мышью за любое место карточки, не только за шапку;
 v1.19.292 — окно «Форма на Гос. Новости» как у админ-формы: та же позиция и перетаскивание, Y/N по нажатию клавиши;
 v1.19.291 — в меню «Репорт» подраздел «Настройки» в стиле общих настроек: переключатели «Репорты на экране» и «Ловля репорта», шестерёнки открывают окна настроек (размер, клавиша ловли);
 v1.19.290 — в меню «Репорт» новый подраздел «Оверлеи»: переключатели «Репорты на экране» и «Ловля репорта», назначение клавиши ловли;
@@ -40333,7 +40334,7 @@ function grndMainBody()
             local U = _G.GRND_FORM_UI or {}
             local R = grndFormUiRects(fx, fy)
             if type(R) == "table" then
-                fx, fy = grndFormUiDrag(form, fx, fy, FW, FH, resX, resY, R.head, R.close)
+                fx, fy = grndFormUiDrag(form, fx, fy, FW, FH, resX, resY, { x = fx, y = fy, w = FW, h = FH }, nil)
             end
             if type(_G.grndFormsKeyTick) == "function" then pcall(_G.grndFormsKeyTick) end
             grndFormUiClick(fx, fy)
@@ -40414,7 +40415,7 @@ function grndMainBody()
             local fx, fy = grndFormUiPos(resX, resY, FW, FH)
             local R = grndFormUiRects(fx, fy)
             if type(R) == "table" then
-                fx, fy = grndFormUiDrag(G, fx, fy, FW, FH, resX, resY, R.head, R.close)
+                fx, fy = grndFormUiDrag(G, fx, fy, FW, FH, resX, resY, { x = fx, y = fy, w = FW, h = FH }, nil)
             end
             im.SetNextWindowPos(im.ImVec2(fx, fy), COND_ALWAYS)
             im.SetNextWindowSize(im.ImVec2(FW, FH), COND_ALWAYS)
