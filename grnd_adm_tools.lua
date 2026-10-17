@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.347"
+GRND_SCRIPT_VERSION = "1.19.348"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -17299,6 +17299,21 @@ local function grndSpecPedHandle(id)
     end
     return nil
 end
+-- Игрок в машине: возвращает хендл машины, иначе nil
+function grndSpecPlayerCar(ped)
+    if type(isCharInAnyCar) ~= "function" or type(storeCarCharIsInNoSave) ~= "function" then return nil end
+    local okI, inCar = pcall(isCharInAnyCar, ped)
+    if not okI or not inCar then return nil end
+    local okC, car = pcall(storeCarCharIsInNoSave, ped)
+    if okC and type(car) == "number" and car ~= 0 then return car end
+    return nil
+end
+function grndSpecCarVid(car)
+    if type(sampGetVehicleIdByCarHandle) ~= "function" then return nil end
+    local ok, vid = pcall(sampGetVehicleIdByCarHandle, car)
+    if ok and type(vid) == "number" and vid >= 0 then return vid end
+    return nil
+end
 function grndSpecRoadTp(withCars)
     if not grndSpecInSpec() then
         notify.add("ТП на дорогу: слежка не активна", "warn", 3)
@@ -17328,51 +17343,76 @@ function grndSpecRoadTp(withCars)
         local dx, dy, dz = x - px, y - py, z - pz
         return dx * dx + dy * dy + dz * dz <= R2
     end
-    -- Список целей: наблюдаемый игрок всегда; с withCars — все игроки и т/с в радиусе 20 м
-    local players = { { id = pid, x = px, y = py, z = pz } }
+    -- Пешие игроки телепортируются сами; игрок в машине — переносится только машина
+    local players = {}
     local cars = {}
+    local carSeen = {}
+    local function addCar(car, needNear)
+        local okV, cx, cy, cz = pcall(getCarCoordinates, car)
+        if not okV or type(cx) ~= "number" then return end
+        if needNear and not near(cx, cy, cz) then return end
+        local vid = grndSpecCarVid(car)
+        if vid == nil or carSeen[vid] then return end
+        carSeen[vid] = true
+        cars[#cars + 1] = { vid = vid, x = cx, y = cy, z = cz }
+    end
+    local observedCar = grndSpecPlayerCar(ped)
+    if observedCar then
+        addCar(observedCar, false)
+    else
+        players[#players + 1] = { id = pid, x = px, y = py, z = pz }
+    end
     if withCars then
         for id = 0, 1003 do
             if id ~= pid then
                 local h = grndSpecPedHandle(id)
                 if h then
-                    local okQ, qx, qy, qz = pcall(getCharCoordinates, h)
-                    if okQ and type(qx) == "number" and near(qx, qy, qz) then
-                        players[#players + 1] = { id = id, x = qx, y = qy, z = qz }
+                    local car = grndSpecPlayerCar(h)
+                    if car then
+                        addCar(car, true)
+                    else
+                        local okQ, qx, qy, qz = pcall(getCharCoordinates, h)
+                        if okQ and type(qx) == "number" and near(qx, qy, qz) then
+                            players[#players + 1] = { id = id, x = qx, y = qy, z = qz }
+                        end
                     end
                 end
             end
         end
         if type(getCarCoordinates) == "function" then
             for vid = 0, 2000 do
-                local h = grndSpecSampVehHandle(vid)
-                if h then
-                    local okV, cx, cy, cz = pcall(getCarCoordinates, h)
-                    if okV and type(cx) == "number" and near(cx, cy, cz) then
-                        cars[#cars + 1] = { vid = vid, x = cx, y = cy, z = cz }
+                if not carSeen[vid] then
+                    local h = grndSpecSampVehHandle(vid)
+                    if h then
+                        local okV, cx, cy, cz = pcall(getCarCoordinates, h)
+                        if okV and type(cx) == "number" and near(cx, cy, cz) then
+                            carSeen[vid] = true
+                            cars[#cars + 1] = { vid = vid, x = cx, y = cy, z = cz }
+                        end
                     end
                 end
             end
         end
     end
     -- Дорога для наблюдаемого игрока обязательна
-    local pnx, pny, pnz = grndSpecCarNodeNear(px, py, pz)
+    local pnx = grndSpecCarNodeNear(px, py, pz)
     if not pnx then
         notify.add("Скрипт не нашел ближайшую дорогу", "warn", 3)
         return false
     end
-    local msg = withCars and ("ТП на дорогу: игроков %d, т/с %d"):format(#players, #cars)
-        or ("ТП игрока на дорогу: #%d"):format(pid)
+    local msg
+    if observedCar then
+        msg = withCars and ("ТП на дорогу: т/с %d (игрок #%d в машине)"):format(#cars, pid)
+            or ("ТП машины игрока #%d на дорогу"):format(pid)
+    else
+        msg = withCars and ("ТП на дорогу: игроков %d, т/с %d"):format(#players, #cars)
+            or ("ТП игрока на дорогу: #%d"):format(pid)
+    end
     notify.add(msg, "ok", 3)
     if lua_thread == nil or type(lua_thread.create) ~= "function" then return false end
     lua_thread.create(function()
         for _, pl in ipairs(players) do
-            local nx, ny, nz
-            if pl.id == pid then
-                nx, ny, nz = pnx, pny, pnz
-            else
-                nx, ny, nz = grndSpecCarNodeNear(pl.x, pl.y, pl.z)
-            end
+            local nx, ny, nz = grndSpecCarNodeNear(pl.x, pl.y, pl.z)
             if nx then
                 pcall(sampSendChat, string.format(GRND_SPEC_PLAYER_CMD, pl.id, nx, ny, nz + 1.0))
                 wait(300)
