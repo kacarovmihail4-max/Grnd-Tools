@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.336"
+GRND_SCRIPT_VERSION = "1.19.337"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41570,9 +41570,11 @@ function grndMainBody()
                             bdl:AddLine(bat(px, cy - 8), bat(px + 8, cy - 5), ic, 1.5)
                             bdl:AddLine(bat(px + 8, cy - 5), bat(px, cy - 2), ic, 1.5)
                             -- полукольцо постоянной толщины: закрашенные квады из двух треугольников
-                            -- жирная точка под древком
+                            -- объёмная точка под древком: тень, тело, блик
                             if bdl.AddCircleFilled then
-                                bdl:AddCircleFilled(bat(px, cy + 5), 2.2 * S, ic, 16)
+                                bdl:AddCircleFilled(bat(px + 0.5, cy + 5.6), 2.3 * S, col32(0, 0, 0, 90), 20)
+                                bdl:AddCircleFilled(bat(px, cy + 5), 2.2 * S, ic, 20)
+                                bdl:AddCircleFilled(bat(px - 0.7, cy + 4.2), 0.8 * S, col32(255, 255, 255, 230), 12)
                             end
                         end
                         if clicked then
