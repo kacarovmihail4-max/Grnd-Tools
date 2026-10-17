@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.331"
+GRND_SCRIPT_VERSION = "1.19.332"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41569,13 +41569,22 @@ function grndMainBody()
                             bdl:AddLine(bat(px, cy - 8), bat(px, cy + 7), ic, 1.5)
                             bdl:AddLine(bat(px, cy - 8), bat(px + 8, cy - 5), ic, 1.5)
                             bdl:AddLine(bat(px + 8, cy - 5), bat(px, cy - 2), ic, 1.5)
-                            local ARC_R, ARC_CY = 4.5, cy + 2.5
-                            local prevX, prevY = px - ARC_R, ARC_CY
-                            for k = 1, 48 do
-                                local ang = math.pi * k / 48
-                                local nx2, ny2 = px - ARC_R * math.cos(ang), ARC_CY + ARC_R * math.sin(ang)
-                                bdl:AddLine(bat(prevX, prevY), bat(nx2, ny2), ic, 1.5)
-                                prevX, prevY = nx2, ny2
+                            -- полукольцо постоянной толщины: закрашенные квады из двух треугольников
+                            local ARC_R, ARC_CY, ARC_T, ARC_N = 4.5, cy + 2.5, 0.75, 36
+                            local function arcPt(r, ang)
+                                return px - r * math.cos(ang), ARC_CY + r * math.sin(ang)
+                            end
+                            if bdl.AddTriangleFilled then
+                                for k = 0, ARC_N - 1 do
+                                    local a1 = math.pi * k / ARC_N
+                                    local a2 = math.pi * (k + 1) / ARC_N
+                                    local o1x, o1y = arcPt(ARC_R + ARC_T, a1)
+                                    local o2x, o2y = arcPt(ARC_R + ARC_T, a2)
+                                    local i1x, i1y = arcPt(ARC_R - ARC_T, a1)
+                                    local i2x, i2y = arcPt(ARC_R - ARC_T, a2)
+                                    bdl:AddTriangleFilled(bat(o1x, o1y), bat(o2x, o2y), bat(i2x, i2y), ic)
+                                    bdl:AddTriangleFilled(bat(o1x, o1y), bat(i2x, i2y), bat(i1x, i1y), ic)
+                                end
                             end
                         end
                         if clicked then
