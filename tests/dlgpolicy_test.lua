@@ -78,6 +78,7 @@ local chunk = "return function()\n"
     .. cut("function grndLowerUtf(s)", "function grndWeaponFold(s)")
     .. cut("function grndServerDialogOpen()", "GRND_GATE = GRND_GATE or {")
     .. cut("local GRND_AUTH_TITLE_MARKERS = {", "function grndUiWantsToShow()")
+    .. cut("function grndIsSpawnedSafe()", "GRND_PUN = _G.GRND_PUN or {}")
     .. "\nreturn { server = grndServerDialogOpen, auth = grndAuthDialogOpen,"
     .. " blocked = grndUiBlocked, expired = grndAuthWaitExpired, gate = GRND_GATE }\n"
     .. "end"

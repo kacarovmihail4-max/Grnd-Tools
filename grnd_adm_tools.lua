@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.293"
+GRND_SCRIPT_VERSION = "1.19.294"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.294 — при входе в игру чекеры, обновления и оверлеи не появляются, пока персонаж не заспавнится;
 v1.19.293 — окна админ-формы и гос. новостей переносятся мышью за любое место карточки, не только за шапку;
 v1.19.292 — окно «Форма на Гос. Новости» как у админ-формы: та же позиция и перетаскивание, Y/N по нажатию клавиши;
 v1.19.291 — в меню «Репорт» подраздел «Настройки» в стиле общих настроек: переключатели «Репорты на экране» и «Ловля репорта», шестерёнки открывают окна настроек (размер, клавиша ловли);
@@ -1507,6 +1508,20 @@ function grndUiBlocked()
     if GRND_GATE.authSeen then
         GRND_GATE.authSeen = false
         GRND_GATE.unblockAt = 0
+    end
+    -- окна скрипта (чекеры, обновления, оверлеи) показываем только после спавна
+    -- (или во время слежки): до входа в игру ничего не появляется
+    if spawned ~= true then
+        local spec = false
+        if type(sampIsPlayerSpectating) == "function" then
+            local okS, v = pcall(sampIsPlayerSpectating)
+            spec = okS and v and true or false
+        end
+        if not spec then
+            GRND_GATE.why = "не в игре"
+            GRND_GATE.unblockAt = 0
+            return true
+        end
     end
     GRND_GATE.why = ""
     if GRND_GATE.unblockAt == 0 then GRND_GATE.unblockAt = os.clock() end
