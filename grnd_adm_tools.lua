@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.343"
+GRND_SCRIPT_VERSION = "1.19.344"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41541,7 +41541,7 @@ function grndMainBody()
                     local bdl = im.GetWindowDrawList()
                     local function bat(x2, y2) return im.ImVec2(bpos.x + x2 * S, bpos.y + y2 * S) end
                     grndSpecRR(bdl, bat(0, 0), bat(PW, PH), col32(12, 10, 18, 240), 14 * S)
-                    local ic = col32(245, 245, 250, 245)
+                    local ic = col32(196, 200, 212, 235)
                     local bx = PAD
                     for i, kb in ipairs(kinds) do
                         local key, bw, hint = kb[1], kb[2], kb[3]
@@ -41608,8 +41608,10 @@ function grndMainBody()
                             -- U-образная подставка под древком, концы загнуты вверх (как на эталоне)
                             -- скруглённая U: цепочка круглых точек толщиной 1.5, концы и стыки круглые
                             local U_R, U_CY, U_N = 3.2, cy + 4.2, 60
+                            -- концы загнуты вверх и внутрь (дуга заходит за 180° на 0.6 рад с каждой стороны)
+                            local U_OVER = 0.6
                             for k = 0, U_N do
-                                local ang = math.pi * k / U_N
+                                local ang = -U_OVER + (math.pi + 2 * U_OVER) * k / U_N
                                 bdl:AddCircleFilled(bat(px + U_R * math.cos(ang), U_CY + U_R * math.sin(ang)), 0.75 * S, ic, 10)
                             end
                         end
