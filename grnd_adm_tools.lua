@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.320"
+GRND_SCRIPT_VERSION = "1.19.321"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -17170,7 +17170,7 @@ function grndSpecInSpec()
 end
 do
 local SPEC_ROAD_RADIUS = 20.0
-local SPEC_ROAD_FNAMES = { "getNearCarNodeInfo", "getNthClosestCarNodeInfo" }
+local SPEC_ROAD_FNAMES = { "getClosestCarNode", "getNearCarNodeInfo", "getNthClosestCarNodeInfo" }
 local SPEC_VEH_HANDLE_NAMES = {
     "sampGetCarHandleBySampVehicleId", "getCarHandleBySampVehicleId",
     "sampGetVehicleHandleBySampVehicleId",
@@ -41457,10 +41457,10 @@ function grndMainBody()
                             bdl:AddLine(bat(cx + 0.5, cy - 4.5), bat(cx + 3, cy - 2), ic, 1.5)
                             bdl:AddLine(bat(cx + 3, cy - 2), bat(cx + 0.5, cy + 0.5), ic, 1.5)
                         elseif key == "flag" then
-                            bdl:AddLine(bat(cx - 4, cy - 8), bat(cx - 4, cy + 1), ic, 1.5)
+                            bdl:AddLine(bat(cx - 4, cy - 8), bat(cx - 4, cy + 0.8), ic, 1.5)
                             bdl:AddLine(bat(cx - 4, cy - 8), bat(cx + 4, cy - 5), ic, 1.5)
                             bdl:AddLine(bat(cx + 4, cy - 5), bat(cx - 4, cy - 2), ic, 1.5)
-                            bdl:AddCircle(bat(cx - 4, cy + 4), 3 * S, ic, 16, 1.4)
+                            bdl:AddCircle(bat(cx - 4, cy + 4), 3.2 * S, ic, 32, 1.5)
                         end
                         if clicked then
                             if key == "back" then grndSpecSwitch(-1)
