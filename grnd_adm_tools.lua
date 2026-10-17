@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.290"
+GRND_SCRIPT_VERSION = "1.19.291"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.291 — в меню «Репорт» подраздел «Настройки» в стиле общих настроек: переключатели «Репорты на экране» и «Ловля репорта», шестерёнки открывают окна настроек (размер, клавиша ловли);
 v1.19.290 — в меню «Репорт» новый подраздел «Оверлеи»: переключатели «Репорты на экране» и «Ловля репорта», назначение клавиши ловли;
 v1.19.289 — при открытом серверном окне с полем ввода буквы, цифры, Enter и Backspace идут в это поле, а не в горячие клавиши скрипта (T, M, R, E и др.); Esc, F-клавиши и Tab работают как раньше;
 v1.19.288 — в слежке при открытом серверном окне колесо, стрелки и +/- не перехватываются скриптом (прокрутка и ввод в окне);
@@ -22995,6 +22996,110 @@ function grndSetUiPopupBody(c, key, spec, W, H, HDR)
         grndSetUiClose()
     end
 end
+-- Раздел «Репорт» → «Настройки»: оверлеи репортов (стиль общих настроек)
+function grndRepSaveCfg()
+    if type(grndCamCfgSave) == "function" then pcall(grndCamCfgSave) end
+    if type(ensureRender) == "function" then pcall(ensureRender, true) end
+end
+function grndSetBodyRepHud(pc)
+    local RH = GRND_REPHUD
+    local TH = pc.TH
+    local RX = pc.w - 20
+    local hi = grndSetCol(pc, TH.textHi)
+    local muted = grndSetCol(pc, TH.textMuted)
+    local accent = grndSetCol(pc, TH.accent)
+    grndSetText(pc, 16, 14, "Размер", hi, 1.0)
+    local ns, chS = grndSetSlider(pc, 16, 40, RX - 16, RH.scale or 1.0, 0.7, 1.6, 0.05, "rephud_scale")
+    if chS then
+        RH.scale = RH.clampScale(ns)
+        grndRepSaveCfg()
+    end
+    local pct = tostring(math.floor(RH.clampScale(RH.scale) * 100 + 0.5)) .. "%"
+    grndSetText(pc, RX - pc.tsize(pct), 14, pct, accent, 1.0)
+    grndSetText(pc, 16, 64, "70%", muted, 0.8)
+    local maxS = "160%"
+    grndSetText(pc, RX - pc.tsize(maxS) * 0.8, 64, maxS, muted, 0.8)
+    grndSetDivider(pc, 16, 88, RX - 16)
+    grndSetText(pc, 16, 100, "Показывать окно", hi, 1.0)
+    grndSetText(pc, 16, 120, "список обращений поверх экрана", muted, 0.82)
+    if pc.toggle(RX - 46, 98, RH.enabled == true, "rephud_on") then
+        RH.enabled = not (RH.enabled == true)
+        grndRepSaveCfg()
+    end
+    return 150
+end
+function grndSetBodyRepCatch(pc)
+    local CT = GRND_CATCH
+    local TH = pc.TH
+    local RX = pc.w - 20
+    local hi = grndSetCol(pc, TH.textHi)
+    local muted = grndSetCol(pc, TH.textMuted)
+    local accent = grndSetCol(pc, TH.accent)
+    grndSetText(pc, 16, 14, "Автоловля", hi, 1.0)
+    grndSetText(pc, 16, 34, "окно ловли обращений", muted, 0.82)
+    if pc.toggle(RX - 46, 12, CT.enabled == true, "catch_on") then
+        CT.enabled = not (CT.enabled == true)
+        grndRepSaveCfg()
+    end
+    grndSetDivider(pc, 16, 60, RX - 16)
+    grndSetText(pc, 16, 74, "Клавиша ловли", hi, 1.0)
+    local bx, by, bw, bh = 16, 98, RX - 16, 30
+    pc.im.SetCursorPos(pc.im.ImVec2(bx, by))
+    if pc.im.InvisibleButton("##grnd_rep_catch_key", pc.im.ImVec2(bw, bh)) then
+        CT.binding = true
+        if type(notify) == "table" and notify.add then
+            pcall(notify.add, "Нажмите клавишу · Esc — отмена · Backspace — сбросить", "info", 3)
+        end
+    end
+    local hov = (pc.im.IsItemHovered and pc.im.IsItemHovered()) and true or false
+    pc.roundRect(pc.dl, pc.at(bx, by), pc.at(bx + bw, by + bh),
+        hov and pc.col32(255, 255, 255, 22) or pc.col32(255, 255, 255, 12), 8)
+    local label
+    if CT.binding then label = "нажмите клавишу…"
+    elseif CT.key then label = grndKeyName(CT.key) or tostring(CT.key)
+    else label = "не назначена" end
+    grndSetText(pc, bx + 12, by + 8, label, CT.binding and accent or hi, 0.95)
+    grndSetText(pc, 16, 140, "Esc — отмена · Backspace — сбросить клавишу", muted, 0.78)
+    return 170
+end
+function grndRepSettingsDraw(ctx)
+    if type(ctx) ~= "table" then return false end
+    local im = ctx.im
+    if not (im and ctx.uiText and ctx.roundRect and ctx.col32 and ctx.rgba and ctx.at) then
+        return false
+    end
+    local x, y, w, h = ctx.x, ctx.y, ctx.w, ctx.h
+    if not (x and y and w and h) or w < 260 or h < 120 then return false end
+    local TH = grndUiTheme()
+    local c = { im = im, dl = ctx.dl, at = ctx.at, uiText = ctx.uiText, tsize = ctx.tsize,
+        roundRect = ctx.roundRect, col32 = ctx.col32, rgba = ctx.rgba, TH = TH,
+        w = w, h = h, dt = ctx.dt }
+    local RH, CT = GRND_REPHUD, GRND_CATCH
+    local S = GRND_SETUI
+    grndSetUiSync("rep", im)
+    S.gearHover = false
+    local rows = {
+        { id = "rephud", title = "Репорты на экране", on = RH.enabled == true, gear = "rephud" },
+        { id = "catch", title = "Ловля репорта", on = CT.enabled == true, gear = "catch" },
+    }
+    local _, events = grndSetListDraw(c, x, y, w, rows)
+    for _, e in ipairs(events) do
+        if e.kind == "toggle" and e.id == "rephud" then
+            RH.enabled = not (RH.enabled == true)
+            grndRepSaveCfg()
+        elseif e.kind == "toggle" and e.id == "catch" then
+            CT.enabled = not (CT.enabled == true)
+            grndRepSaveCfg()
+        elseif e.kind == "gear" then
+            grndSetUiGear(e.key, "rep", e.x, e.y)
+        end
+    end
+    grndSetUiPopup(c, "rephud", { title = "Репорты на экране", sub = "размер окна и вкл/выкл",
+        width = 340, h0 = 150, body = grndSetBodyRepHud })
+    grndSetUiPopup(c, "catch", { title = "Ловля репорта", sub = "клавиша и окно автоловли",
+        width = 340, h0 = 170, body = grndSetBodyRepCatch })
+    return true
+end
 function grndSetDrawMainPopups(c)
     grndSetUiPopup(c, "cam", { title = "Дистанция камеры", sub = "отдаление камеры и рыбий глаз",
         width = 340, h0 = 200, body = grndSetBodyCam })
@@ -29651,65 +29756,6 @@ do
         end
         return true
     end
-    _G.grndRepOverlayDraw = function(ctx)
-        if type(ctx) ~= "table" then return false end
-        local im = ctx.im
-        if not (im and ctx.uiText and ctx.roundRect and ctx.col32 and ctx.c32 and ctx.at) then
-            return false
-        end
-        local TH = theme()
-        local x, y, w, h = ctx.x, ctx.y, ctx.w, ctx.h
-        if not (x and y and w and h) or w < 260 or h < 150 then return false end
-        local hi  = ctx.col32(TH.textHi[1], TH.textHi[2], TH.textHi[3], 255)
-        local dim = ctx.col32(TH.textDim[1], TH.textDim[2], TH.textDim[3], 255)
-        local RH, CT = _G.GRND_REPHUD, _G.GRND_CATCH
-        local function save()
-            if type(_G.grndCamCfgSave) == "function" then pcall(_G.grndCamCfgSave) end
-            if type(_G.ensureRender) == "function" then pcall(_G.ensureRender, true) end
-        end
-        ctx.uiText(x, y + 1, "Оверлеи репортов", hi, 1.0)
-        local function toggleRow(i, title, sub, on, id, onClick)
-            local ry = y + 34 + (i - 1) * 62
-            ctx.uiText(x, ry, title, hi, 1.0)
-            ctx.uiText(x, ry + 22, sub, dim, 0.86)
-            if autoSwitch(ctx, x + w - 56, ry + 4, on, id) then onClick() end
-        end
-        toggleRow(1, "Репорты на экране",
-            "список обращений поверх экрана", RH and RH.enabled, "##grnd_ov_hud",
-            function()
-                if RH then RH.enabled = not RH.enabled end
-                save()
-            end)
-        toggleRow(2, "Ловля репорта",
-            "окно автоловли обращений; клавиша ниже", CT and CT.enabled, "##grnd_ov_catch",
-            function()
-                if CT then CT.enabled = not CT.enabled end
-                save()
-            end)
-        local ky = y + 34 + 2 * 62
-        ctx.uiText(x, ky, "Клавиша ловли", hi, 1.0)
-        local bx, by, bw, bh = x, ky + 24, w, 30
-        im.SetCursorPos(im.ImVec2(bx, by))
-        if im.InvisibleButton("##grnd_ov_key", im.ImVec2(bw, bh)) and CT then
-            CT.binding = true
-            if type(notify) == "table" and notify.add then
-                pcall(notify.add, "Нажмите клавишу · Esc — отмена · Backspace — сбросить", "info", 3)
-            end
-        end
-        local hov = (im.IsItemHovered and im.IsItemHovered()) or false
-        ctx.roundRect(ctx.dl, ctx.at(bx, by), ctx.at(bx + bw, by + bh),
-            hov and ctx.c32(TH.itemHover) or ctx.col32(255, 255, 255, 10), 8)
-        local label
-        if CT and CT.binding then
-            label = "нажмите клавишу…"
-        elseif CT and CT.key then
-            label = grndKeyName(CT.key) or tostring(CT.key)
-        else
-            label = "не назначена"
-        end
-        ctx.uiText(bx + 12, by + 7, label, hi, 0.95)
-        return true
-    end
     _G.grndRepCountOf = QR.repCountOf
     _G.grndQrAnswerCmd = QR.answerCmd
     _G.grndQrAutoOnReport = function(nick, pid, msg)
@@ -34073,7 +34119,7 @@ function grndRepTabBody(ctx)
         { id = "answers", name = "Ответы на репорт", fn = "grndQrSettingsDraw" },
         { id = "punish",  name = "Наказания",        fn = "grndQrPunishDraw" },
         { id = "auto",    name = "Автопилот",        fn = "grndQrAutoDraw" },
-        { id = "overlay", name = "Оверлеи",          fn = "grndRepOverlayDraw" },
+        { id = "settings", name = "Настройки",       fn = "grndRepSettingsDraw" },
     }
     menu.reportTab = menu.reportTab or "answers"
     local cur = menu.reportTab
@@ -36445,7 +36491,7 @@ function grndMainBody()
             local saved=GRND_CONFIG.ensure().layout.menu or {}
             menu.tab=math.max(1,math.min(#MENU_TABS,math.floor(tonumber(saved.tab) or 1)))
             menu.settingsTab=saved.settingsTab=="admin" and "admin" or "main"
-            menu.reportTab=(saved.reportTab=="punish" or saved.reportTab=="auto" or saved.reportTab=="overlay") and saved.reportTab or "answers"
+            menu.reportTab=(saved.reportTab=="punish" or saved.reportTab=="auto" or saved.reportTab=="settings") and saved.reportTab or "answers"
             menu.punPage=(saved.punPage=="auto") and "auto" or "give"
             menu.adminPanel=(saved.adminPanel=="ring" or saved.adminPanel=="tracer") and saved.adminPanel or "general"
         end
