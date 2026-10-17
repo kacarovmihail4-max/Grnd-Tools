@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.271"
+GRND_SCRIPT_VERSION = "1.19.272"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.272 — карточки форм берут цвет выбранной темы (вместо фиксированного зелёного);
 v1.19.271 — карточки админ-форм и гос. волны плотнее (фон менее прозрачный);
 v1.19.270 — окна админ-форм и гос. волны как на сервере:
   1) полупрозрачная карточка без кнопок и без крестика: «Форма от Админа NICK»,
@@ -40050,13 +40051,15 @@ function grndMainBody()
             if ioObj then pcall(function() ioObj.FontGlobalScale = ioOld end) end
             return false
         end
-        function grndSrvCardDraw(FW, FH, prefix, nick, cmdText, remaining)
+        function grndSrvCardDraw(FW, FH, prefix, nick, cmdText, remaining, accent)
             local pos = im.GetWindowPos()
             local dl = im.GetWindowDrawList()
             local function at(x, y) return im.ImVec2(pos.x + x, pos.y + y) end
             roundRect(dl, at(0, 0), at(FW, FH), col32(0, 0, 0, 200), 8)
             local WHITE = col32(245, 248, 255, 255)
-            local GREEN = col32(63, 209, 145, 255)
+            local ac = type(accent) == "table" and accent or { 63, 209, 145 }
+            local GREEN = col32(ac[1], ac[2], ac[3], 255)
+            local BAR = col32(math.floor(ac[1] * 0.4), math.floor(ac[2] * 0.4), math.floor(ac[3] * 0.4), 205)
             local RED = col32(235, 70, 70, 255)
             local GRAY = col32(170, 176, 188, 230)
             if nick and nick ~= "" then
@@ -40065,7 +40068,7 @@ function grndMainBody()
             else
                 uiText(12, 7, prefix, WHITE, 0.92)
             end
-            roundRect(dl, at(10, 30), at(FW - 10, 52), col32(24, 110, 62, 205), 5)
+            roundRect(dl, at(10, 30), at(FW - 10, 52), BAR, 5)
             local ct = tostring(cmdText or "")
             local clipped = false
             while #ct > 0 and drawnWb(ct, 0.90) > FW - 36 do
@@ -40131,7 +40134,7 @@ function grndMainBody()
                 drawn = true
                 if im.BringWindowToDisplayFront then pcall(im.BringWindowToDisplayFront, im.GetCurrentWindow()) end
                 grndSrvCardDraw(FW, FH, "Форма от Админа ", grndUtf8Text(form.adminNick),
-                    grndUtf8Text(form.cmd), remaining)
+                    grndUtf8Text(form.cmd), remaining, TH.accent)
                 if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
             end
             grndPopCol(colorN)
@@ -40192,7 +40195,7 @@ function grndMainBody()
             if grndBegin("##grnd_gnews_popup", flagsG) then
                 drawn = true
                 if im.BringWindowToDisplayFront then pcall(im.BringWindowToDisplayFront, im.GetCurrentWindow()) end
-                grndSrvCardDraw(FW, FH, "Форма на Гос. Новости", nil, "Заявка на гос. новости", remaining)
+                grndSrvCardDraw(FW, FH, "Форма на Гос. Новости", nil, "Заявка на гос. новости", remaining, TH.accent)
                 if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
             end
             grndPopCol(colorN)
