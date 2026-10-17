@@ -2,10 +2,11 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.282"
+GRND_SCRIPT_VERSION = "1.19.283"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
-v1.19.282 — пауза между формами 1 с; решённая форма (тот же админ и команда) не появляется повторно 120 с;
+v1.19.283 — решённая форма (тот же админ и команда) не открывается повторно в течение 1 с, как и пауза;
+v1.19.282 — пауза между формами 1 с;
 v1.19.281 — очередь между формами: после Y/N следующая форма (и повтор от бота) ждёт 1,5 с;
   клавиши во время паузы не действуют;
 v1.19.280 — ошибки «Данный игрок не в транспорте!» и «Игрок должен находится в транспорте» уходят в админ-чат; добавлена команда /untie (без проверки синтаксиса);
@@ -35437,7 +35438,7 @@ function grndMainBody()
         if type(forms.queue) ~= "table" then forms.queue = {} end
         local key = grndFormKey(newForm)
         local doneAt = type(forms.done) == "table" and forms.done[key] or nil
-        if doneAt and (now - doneAt) < 120 then return end
+        if doneAt and (now - doneAt) < 1.0 then return end
         if forms.active and grndFormKey(forms.active) == key then return end
         for _, q in ipairs(forms.queue) do
             if grndFormKey(q) == key then return end
