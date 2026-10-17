@@ -2,9 +2,17 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.268"
+GRND_SCRIPT_VERSION = "1.19.270"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.270 — окна админ-форм и гос. волны как на сервере:
+  1) полупрозрачная карточка без кнопок и без крестика: «Форма от Админа NICK»,
+     строка команды, «Принять форму: Y | Для отказа: N», таймер автозакрытия;
+  2) слово «Нашёл» убрано; Y / N по-прежнему принимают и отклоняют форму;
+v1.19.269 — ответы на админ-формы:
+  1) «Форма от NICK принята.» и «Форма от NICK отклонена!» (причина — следующим сообщением);
+  2) окно ожидания ответа сервера 2.5 → 4 с: раньше «принята» могла уйти раньше отказа,
+     и потом приходила «отклонена» (два противоречивых сообщения);
 v1.19.268 — подписи режимов чата уменьшены:
   1) «Обычный / Админский / Семейный» и строка «TAB для смены чата | Раскладка»
      приведены к разумному размеру (подсказка ввода не менялась);
@@ -11785,8 +11793,8 @@ end
 _G.GRND_FORM_CH = _G.GRND_FORM_CH or "a"
 _G.GRND_FORM_EX_TAG = _G.GRND_FORM_EX_TAG or "Пример правильной команды >> "
 function grndFormAcceptMsg(nick)
-    return "/" .. tostring(_G.GRND_FORM_CH or "a") .. " Форма от администратора >> "
-        .. grndUtf8Text(nick) .. " >> была успешно принята!"
+    return "/" .. tostring(_G.GRND_FORM_CH or "a") .. " Форма от "
+        .. grndUtf8Text(nick) .. " принята."
 end
 function grndFormAcceptSend(nick)
     local msg = grndFormAcceptMsg(nick)
@@ -11811,8 +11819,7 @@ function grndFormFitText(text, prefix)
     return head .. cut .. "..."
 end
 function grndFormBadMsg(nick)
-    return grndFormPrefix() .. "Форма от администратора >> "
-        .. grndUtf8Text(nick) .. " >> была отклонена."
+    return grndFormPrefix() .. "Форма от " .. grndUtf8Text(nick) .. " отклонена!"
 end
 function grndFormBadSend(nick)
     local msg = grndFormBadMsg(nick)
@@ -12159,7 +12166,7 @@ function grndFormUnbanDiscord(form)
         :gsub("%s*%[%d+%]%s*$", ""):gsub("[%c/|]", "")
         :gsub("^%s+", ""):gsub("%s+$", "")
     if nick == "" then nick = "ID " .. tostring(tonumber(form.adminId) or 0) end
-    local firstOk = grndChatSend("/a Форма от администратора " .. nick .. " была отклонена!")
+    local firstOk = grndChatSend("/a Форма от " .. nick .. " отклонена!")
     local secondOk = grndChatSend("/a Пропиши форму в Discord")
     pcall(grndTrace, "forms", "форма /unban перенаправлена в Discord: " .. nick)
     return firstOk and secondOk
@@ -12216,7 +12223,7 @@ function grndFormApply(form)
     end
     return cmd, "ok"
 end
-_G.GRND_FORM_WAIT_SEC = tonumber(_G.GRND_FORM_WAIT_SEC) or 2.5
+_G.GRND_FORM_WAIT_SEC = tonumber(_G.GRND_FORM_WAIT_SEC) or 4.0
 _G.GRND_FORM_SETTLE_SEC = tonumber(_G.GRND_FORM_SETTLE_SEC) or 0
 _G.GRND_FORM_MSG_LIMIT = tonumber(_G.GRND_FORM_MSG_LIMIT) or 140
 _G.GRND_FORMWAIT = _G.GRND_FORMWAIT or {
@@ -12484,7 +12491,7 @@ function grndFormWatchStart(form, cmd, cmdName)
     if type(W) ~= "table" then return false end
     if not grndFormWaitCfgOn() then return false end
     if W.active then pcall(grndFormWatchFinish, "timeout") end
-    local sec = tonumber(_G.GRND_FORM_WAIT_SEC) or 2.5
+    local sec = tonumber(_G.GRND_FORM_WAIT_SEC) or 4.0
     if sec < 0.5 then sec = 0.5 end
     if sec > 10 then sec = 10 end
     W.active   = true
@@ -12690,8 +12697,8 @@ function grndFormUiDrag(form, px, py, fw, fh, resX, resY, headRect, skipRect)
 end
 GRND_FORM_POPUP_TIMEOUT_SEC = 5.0
 GRND_FORM_UI_LAYOUT = {
-    w = 400, h = 124,
-    headH = 30,
+    w = 400, h = 96,
+    headH = 26,
     closeX = 374, closeY = 5, closeW = 20, closeH = 20,
     btnX = 12, btnY = 70, btnH = 34, btnGap = 8,
 }
@@ -12724,9 +12731,6 @@ function grndFormUiClick(px, py)
     end
     local R = grndFormUiRects(px, py)
     if type(R) ~= "table" or type(_G.grndMouseInside) ~= "function" then return nil end
-    if _G.grndMouseInside(R.close) then return "reject" end
-    if _G.grndMouseInside(R.accept) then return "accept" end
-    if _G.grndMouseInside(R.reject) then return "reject" end
     return nil
 end
 function grndFormsUiHold(sec)
@@ -40045,6 +40049,41 @@ function grndMainBody()
             if ioObj then pcall(function() ioObj.FontGlobalScale = ioOld end) end
             return false
         end
+        function grndSrvCardDraw(FW, FH, prefix, nick, cmdText, remaining)
+            local pos = im.GetWindowPos()
+            local dl = im.GetWindowDrawList()
+            local function at(x, y) return im.ImVec2(pos.x + x, pos.y + y) end
+            roundRect(dl, at(0, 0), at(FW, FH), col32(0, 0, 0, 120), 8)
+            local WHITE = col32(245, 248, 255, 255)
+            local GREEN = col32(63, 209, 145, 255)
+            local RED = col32(235, 70, 70, 255)
+            local GRAY = col32(170, 176, 188, 230)
+            if nick and nick ~= "" then
+                uiText(12, 7, prefix, WHITE, 0.92)
+                uiText(12 + drawnWb(prefix, 0.92), 7, nick, GREEN, 0.92)
+            else
+                uiText(12, 7, prefix, WHITE, 0.92)
+            end
+            roundRect(dl, at(10, 30), at(FW - 10, 52), col32(24, 110, 62, 205), 5)
+            local ct = tostring(cmdText or "")
+            local clipped = false
+            while #ct > 0 and drawnWb(ct, 0.90) > FW - 36 do
+                local before = #ct
+                ct = grndFormUtf8Cut(ct, before - 1)
+                if #ct >= before then break end
+                clipped = true
+            end
+            if clipped then ct = (ct:gsub("%s+$", "")) .. "…" end
+            uiText(16, 34, ct, WHITE, 0.90)
+            local parts = { { "Принять форму: ", WHITE }, { "Y", GREEN }, { " | Для отказа: ", WHITE }, { "N", RED } }
+            local lx = 12
+            for _, part in ipairs(parts) do
+                uiText(lx, 58, part[1], part[2], 0.90)
+                lx = lx + drawnWb(part[1], 0.90)
+            end
+            uiText(12, 77, "Окно автоматически пропадет через " .. tostring(math.ceil(remaining or 0)) .. " секунд",
+                GRAY, 0.78)
+        end
         function drawFormPopup()
             if not _G.GRND_FORMS or not _G.GRND_FORMS.active then return false end
             local form = _G.GRND_FORMS.active
@@ -40062,28 +40101,26 @@ function grndMainBody()
             local wantAccept = false
             local wantReject = false
             local resX, resY = getScreenResolution()
-            local L = _G.GRND_FORM_UI_LAYOUT or { w = 400, h = 124 }
-            local FW, FH = L.w or 400, L.h or 124
+            local L = _G.GRND_FORM_UI_LAYOUT or { w = 400, h = 96 }
+            local FW, FH = L.w or 400, L.h or 96
             local fx, fy = grndFormUiPos(resX, resY, FW, FH)
             local U = _G.GRND_FORM_UI or {}
             local R = grndFormUiRects(fx, fy)
             if type(R) == "table" then
-                fx, fy = grndFormUiDrag(form, fx, fy, FW, FH, resX, resY,
-                    R.head, R.close)
+                fx, fy = grndFormUiDrag(form, fx, fy, FW, FH, resX, resY, R.head, R.close)
             end
             if type(_G.grndFormsKeyTick) == "function" then pcall(_G.grndFormsKeyTick) end
-            local preAct = grndFormUiClick(fx, fy)
-            if preAct and type(_G.grndFormsResolve) == "function" then
-                pcall(_G.grndFormsResolve, preAct)
-            end
+            grndFormUiClick(fx, fy)
             if (not _G.GRND_FORMS) or (_G.GRND_FORMS.active ~= form) then
                 return false
             end
+            local wantAccept = false
+            local wantReject = false
             im.SetNextWindowPos(im.ImVec2(fx, fy), COND_ALWAYS)
             im.SetNextWindowSize(im.ImVec2(FW, FH), COND_ALWAYS)
             if im.SetNextWindowFocus then pcall(im.SetNextWindowFocus) end
             local styleN, colorN = 0, 0
-            if grndPushStyleF(im.StyleVar and im.StyleVar.WindowRounding, 12) then styleN = styleN + 1 end
+            if grndPushStyleF(im.StyleVar and im.StyleVar.WindowRounding, 8) then styleN = styleN + 1 end
             if grndPushStyleV2(im.StyleVar and im.StyleVar.WindowPadding, 0, 0) then styleN = styleN + 1 end
             if grndPushCol(im.Col and im.Col.WindowBg, rgba(0, 0, 0, 0)) then colorN = colorN + 1 end
             if grndPushCol(im.Col and im.Col.Border, rgba(0, 0, 0, 0)) then colorN = colorN + 1 end
@@ -40092,94 +40129,8 @@ function grndMainBody()
             if grndBegin("##grnd_form_popup", flagsF) then
                 drawn = true
                 if im.BringWindowToDisplayFront then pcall(im.BringWindowToDisplayFront, im.GetCurrentWindow()) end
-                local pos = im.GetWindowPos()
-                local dl = im.GetWindowDrawList()
-                local function at(x, y) return im.ImVec2(pos.x + x, pos.y + y) end
-                roundRect(dl, at(4, 4), at(FW + 4, FH + 4), col32(0, 0, 0, 82), 10)
-                roundRect(dl, at(0, 0), at(FW, FH), col32(11, 16, 24, 248), 10)
-                if dl.AddRect then pcall(dl.AddRect, dl, at(0.5, 0.5), at(FW - 0.5, FH - 0.5), col32(255, 255, 255, 28), 10, 0, 1.0) end
-                local headerText = "Форма от: " .. grndUtf8Text(form.adminNick)
-                    .. " [" .. tostring(form.adminId) .. "]"
-                local clippedHeader = false
-                while #headerText > 0 and drawnWb(headerText, 0.90) > FW - 78 do
-                    local before = #headerText
-                    headerText = grndFormUtf8Cut(headerText, before - 1)
-                    if #headerText >= before then break end
-                    clippedHeader = true
-                end
-                if clippedHeader then headerText = headerText:gsub("%s+$", "") .. "…" end
-                uiText(14, 9, headerText, c4(TH.textHi), 0.90)
-                do
-                    local grip = U.dragging and c4(TH.accent) or col32(255, 255, 255, 70)
-                    for r = 0, 1 do
-                        for cIdx = 0, 2 do
-                            local gx = FW - 52 + cIdx * 5
-                            local gy = 14 + r * 5
-                            roundRect(dl, at(gx, gy), at(gx + 2, gy + 2), grip, 1)
-                        end
-                    end
-                end
-                local closeX = tonumber(L.closeX) or (FW - 26)
-                local closeY = tonumber(L.closeY) or 5
-                local closeW = tonumber(L.closeW) or 20
-                local closeH = tonumber(L.closeH) or 20
-                im.SetCursorPos(im.ImVec2(closeX, closeY))
-                local closeClicked = im.InvisibleButton("##form_x_btn", im.ImVec2(closeW, closeH))
-                local closeHov = (im.IsItemHovered and im.IsItemHovered()) or false
-                if closeClicked then wantReject = true end
-                uiText(closeX + 6, closeY + 2, "×", closeHov and c4(TH.textHi) or c4(TH.textMuted), 0.92)
-                local cmdY, cmdH = 32, 30
-                roundRect(dl, at(12, cmdY), at(FW - 12, cmdY + cmdH), col32(20, 28, 40, 240), 7)
-                if dl.AddRect then pcall(dl.AddRect, dl, at(12.5, cmdY + 0.5), at(FW - 12.5, cmdY + cmdH - 0.5), col32(TH.accent[1], TH.accent[2], TH.accent[3], 90), 7, 0, 1.0) end
-                local cmdText = grndUtf8Text(form.cmd)
-                local clippedCmd = false
-                while #cmdText > 0 and drawnWb(cmdText, 0.94) > FW - 44 do
-                    local before = #cmdText
-                    cmdText = grndFormUtf8Cut(cmdText, before - 1)
-                    if #cmdText >= before then break end
-                    clippedCmd = true
-                end
-                if clippedCmd then cmdText = cmdText:gsub("%s+$", "") .. "…" end
-                uiText(20, cmdY + 7, cmdText, col32(50, 220, 255, 255), 0.94)
-                local btnX = tonumber(L.btnX) or 12
-                local btnY = tonumber(L.btnY) or 70
-                local btnH = tonumber(L.btnH) or 34
-                local btnGap = tonumber(L.btnGap) or 8
-                local btnW = math.floor((FW - 2 * btnX - btnGap) / 2)
-                local b1X = btnX
-                im.SetCursorPos(im.ImVec2(b1X, btnY))
-                local btn1Clicked = im.InvisibleButton("##form_accept_btn", im.ImVec2(btnW, btnH))
-                local b1Hov = (im.IsItemHovered and im.IsItemHovered()) or false
-                local b1Act = (im.IsItemActive and im.IsItemActive()) or false
-                if btn1Clicked then wantAccept = true end
-                roundRect(dl, at(b1X, btnY), at(b1X + btnW, btnY + btnH),
-                    (b1Act or b1Hov) and col32(36, 160, 85, 245) or col32(26, 125, 68, 215), 7)
-                if dl.AddRect then pcall(dl.AddRect, dl, at(b1X + 0.5, btnY + 0.5), at(b1X + btnW - 0.5, btnY + btnH - 0.5), col32(50, 220, 115, 180), 7, 0, 1.0) end
-                local t1 = "[ Y ] Принять форму"
-                local tw1 = drawnWb(t1, 0.88)
-                uiText(b1X + (btnW - tw1) / 2, btnY + 10, t1, c4(TH.textHi), 0.88)
-                local b2X = b1X + btnW + btnGap
-                im.SetCursorPos(im.ImVec2(b2X, btnY))
-                local btn2Clicked = im.InvisibleButton("##form_reject_btn", im.ImVec2(btnW, btnH))
-                local b2Hov = (im.IsItemHovered and im.IsItemHovered()) or false
-                local b2Act = (im.IsItemActive and im.IsItemActive()) or false
-                if btn2Clicked then wantReject = true end
-                roundRect(dl, at(b2X, btnY), at(b2X + btnW, btnY + btnH),
-                    (b2Act or b2Hov) and col32(185, 50, 50, 245) or col32(145, 38, 38, 200), 7)
-                if dl.AddRect then pcall(dl.AddRect, dl, at(b2X + 0.5, btnY + 0.5), at(b2X + btnW - 0.5, btnY + btnH - 0.5), col32(235, 70, 70, 180), 7, 0, 1.0) end
-                local t2 = "[ N ] Отклонить"
-                local tw2 = drawnWb(t2, 0.88)
-                uiText(b2X + (btnW - tw2) / 2, btnY + 10, t2, c4(TH.textHi), 0.88)
-                uiText(14, FH - 16, "Автозакрытие: " .. tostring(math.ceil(remaining)) .. " сек",
-                    c4(TH.textMuted), 0.72)
-                local timerX, timerW = FW - 70, 56
-                roundRect(dl, at(timerX, FH - 5), at(timerX + timerW, FH - 3), col32(255, 255, 255, 30), 1)
-                local ratio = math.max(0, math.min(1, remaining / timeout))
-                if ratio > 0 then
-                    gradRect(dl, at(timerX, FH - 5), at(timerX + timerW * ratio, FH - 3),
-                        col32(TH.accent[1], TH.accent[2], TH.accent[3], 245),
-                        col32(TH.accent2[1], TH.accent2[2], TH.accent2[3], 245), 1)
-                end
+                grndSrvCardDraw(FW, FH, "Форма от Админа ", grndUtf8Text(form.adminNick),
+                    grndUtf8Text(form.cmd), remaining)
                 if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
             end
             grndPopCol(colorN)
@@ -40225,14 +40176,13 @@ function grndMainBody()
                 end
             end
             local resX, resY = getScreenResolution()
-            local FW, FH = 400, 124
-            local fx = math.floor((resX - FW) / 2)
-            local fy = math.floor(resY * 0.18)
+            local FW, FH = 400, 96
+            local fx, fy = math.floor((resX - FW) / 2), math.floor(resY * 0.18)
             im.SetNextWindowPos(im.ImVec2(fx, fy), COND_ALWAYS)
             im.SetNextWindowSize(im.ImVec2(FW, FH), COND_ALWAYS)
             if im.SetNextWindowFocus then pcall(im.SetNextWindowFocus) end
             local styleN, colorN = 0, 0
-            if grndPushStyleF(im.StyleVar and im.StyleVar.WindowRounding, 12) then styleN = styleN + 1 end
+            if grndPushStyleF(im.StyleVar and im.StyleVar.WindowRounding, 8) then styleN = styleN + 1 end
             if grndPushStyleV2(im.StyleVar and im.StyleVar.WindowPadding, 0, 0) then styleN = styleN + 1 end
             if grndPushCol(im.Col and im.Col.WindowBg, rgba(0, 0, 0, 0)) then colorN = colorN + 1 end
             if grndPushCol(im.Col and im.Col.Border, rgba(0, 0, 0, 0)) then colorN = colorN + 1 end
@@ -40241,72 +40191,7 @@ function grndMainBody()
             if grndBegin("##grnd_gnews_popup", flagsG) then
                 drawn = true
                 if im.BringWindowToDisplayFront then pcall(im.BringWindowToDisplayFront, im.GetCurrentWindow()) end
-                local pos = im.GetWindowPos()
-                local dl = im.GetWindowDrawList()
-                local function at(x, y) return im.ImVec2(pos.x + x, pos.y + y) end
-                roundRect(dl, at(4, 4), at(FW + 4, FH + 4), col32(0, 0, 0, 82), 10)
-                roundRect(dl, at(0, 0), at(FW, FH), col32(11, 16, 24, 248), 10)
-                if dl.AddRect then
-                    pcall(dl.AddRect, dl, at(0.5, 0.5), at(FW - 0.5, FH - 0.5),
-                        col32(255, 255, 255, 28), 10, 0, 1.0)
-                end
-                uiText(14, 9, "Принять гос.волну?", c4(TH.textHi), 0.94)
-                local closeX, closeY = FW - 26, 5
-                im.SetCursorPos(im.ImVec2(closeX, closeY))
-                local gxClicked = im.InvisibleButton("##gnews_x_btn", im.ImVec2(20, 20))
-                local gxHov = (im.IsItemHovered and im.IsItemHovered()) or false
-                if gxClicked then wantReject = true end
-                uiText(closeX + 6, closeY + 2, "×", gxHov and c4(TH.textHi) or c4(TH.textMuted), 0.92)
-                local cmdY, cmdH = 32, 30
-                roundRect(dl, at(12, cmdY), at(FW - 12, cmdY + cmdH), col32(20, 28, 40, 240), 7)
-                if dl.AddRect then
-                    pcall(dl.AddRect, dl, at(12.5, cmdY + 0.5), at(FW - 12.5, cmdY + cmdH - 0.5),
-                        col32(TH.accent[1], TH.accent[2], TH.accent[3], 90), 7, 0, 1.0)
-                end
-                uiText(20, cmdY + 7, "Заявка на государственные новости  ·  /acceptgnews",
-                    col32(50, 220, 255, 255), 0.88)
-                local btnX, btnY, btnH, btnGap = 12, 70, 34, 8
-                local btnW = math.floor((FW - 2 * btnX - btnGap) / 2)
-                local b1X = btnX
-                im.SetCursorPos(im.ImVec2(b1X, btnY))
-                local gb1 = im.InvisibleButton("##gnews_accept_btn", im.ImVec2(btnW, btnH))
-                local g1Hov = (im.IsItemHovered and im.IsItemHovered()) or false
-                local g1Act = (im.IsItemActive and im.IsItemActive()) or false
-                if gb1 then wantAccept = true end
-                roundRect(dl, at(b1X, btnY), at(b1X + btnW, btnY + btnH),
-                    (g1Act or g1Hov) and col32(36, 160, 85, 245) or col32(26, 125, 68, 215), 7)
-                if dl.AddRect then
-                    pcall(dl.AddRect, dl, at(b1X + 0.5, btnY + 0.5),
-                        at(b1X + btnW - 0.5, btnY + btnH - 0.5), col32(50, 220, 115, 180), 7, 0, 1.0)
-                end
-                local gt1 = "[ Y ] Принять"
-                local gtw1 = drawnWb(gt1, 0.88)
-                uiText(b1X + (btnW - gtw1) / 2, btnY + 10, gt1, c4(TH.textHi), 0.88)
-                local b2X = b1X + btnW + btnGap
-                im.SetCursorPos(im.ImVec2(b2X, btnY))
-                local gb2 = im.InvisibleButton("##gnews_reject_btn", im.ImVec2(btnW, btnH))
-                local g2Hov = (im.IsItemHovered and im.IsItemHovered()) or false
-                local g2Act = (im.IsItemActive and im.IsItemActive()) or false
-                if gb2 then wantReject = true end
-                roundRect(dl, at(b2X, btnY), at(b2X + btnW, btnY + btnH),
-                    (g2Act or g2Hov) and col32(185, 50, 50, 245) or col32(145, 38, 38, 200), 7)
-                if dl.AddRect then
-                    pcall(dl.AddRect, dl, at(b2X + 0.5, btnY + 0.5),
-                        at(b2X + btnW - 0.5, btnY + btnH - 0.5), col32(235, 70, 70, 180), 7, 0, 1.0)
-                end
-                local gt2 = "[ N ] Отклонить"
-                local gtw2 = drawnWb(gt2, 0.88)
-                uiText(b2X + (btnW - gtw2) / 2, btnY + 10, gt2, c4(TH.textHi), 0.88)
-                uiText(14, FH - 16, "Автозакрытие: " .. tostring(math.ceil(remaining)) .. " сек",
-                    c4(TH.textMuted), 0.72)
-                local timerX, timerW = FW - 70, 56
-                roundRect(dl, at(timerX, FH - 5), at(timerX + timerW, FH - 3), col32(255, 255, 255, 30), 1)
-                local ratio = math.max(0, math.min(1, remaining / timeout))
-                if ratio > 0 then
-                    gradRect(dl, at(timerX, FH - 5), at(timerX + timerW * ratio, FH - 3),
-                        col32(TH.accent[1], TH.accent[2], TH.accent[3], 245),
-                        col32(TH.accent2[1], TH.accent2[2], TH.accent2[3], 245), 1)
-                end
+                grndSrvCardDraw(FW, FH, "Форма на Гос. Новости", nil, "Заявка на гос. новости", remaining)
                 if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
             end
             grndPopCol(colorN)

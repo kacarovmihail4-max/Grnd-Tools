@@ -321,6 +321,12 @@ do
     ok("font.cdata.check", bad == 0)
 end
 
+-- сообщения по админ-формам: «Форма от NICK принята.» / «Форма от NICK отклонена!», без «администратора» и «успешно»
+ok("forms.msg.accept", src:find('" принята."', 1, true) ~= nil and src:find("успешно принята", 1, true) == nil)
+ok("forms.msg.reject", src:find('" отклонена!"', 1, true) ~= nil and src:find("была отклонена", 1, true) == nil)
+ok("forms.wait.4s", src:find("GRND_FORM_WAIT_SEC) or 4.0", 1, true) ~= nil)
+ok("forms.card.noButtons", src:find("grndSrvCardDraw(FW, FH", 1, true) ~= nil and src:find("Нашёл форму", 1, true) == nil)
+
 print(string.format("--- серверное окно и окна скрипта: %d/%d ok ---", total - fails, total))
 if fails > 0 then os.exit(1) end
 os.exit(0)
