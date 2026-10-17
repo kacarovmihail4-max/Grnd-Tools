@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.302"
+GRND_SCRIPT_VERSION = "1.19.303"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -37972,9 +37972,9 @@ function grndMainBody()
                     x=BPAD,y=H-styleHeight,w=SB-BPAD*2,h=styleHeight})
                 if not GRND_UIKIT.pickerOpen then
                     local supText = "Support - Discord: m1sha009"
-                    local sc = math.min(0.85, (SB-32)/math.max(1,tsize(supText)))
+                    local sc = math.min(0.85, (W-SB-32)/math.max(1,tsize(supText)))
                     local mw = drawnWb(supText, sc)
-                    uiText(math.max(12,(SB-mw)/2),H-19,supText,c4(TH.textDim),sc)
+                    uiText(SB+math.max(12,(W-SB-mw)/2),H-19,supText,c4(TH.textDim),sc)
                 end
                 local tab = MENU_TABS[tabIdx] or MENU_TABS[1]
                 local CX, px, py = SB, SB + 26, 26
