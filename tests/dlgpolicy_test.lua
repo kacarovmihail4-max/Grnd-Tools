@@ -110,6 +110,9 @@ local function reset(over)
     D.gate.unblockAt = 0
     D.gate.why = ""
     if over then for k, v in pairs(over) do state[k] = v end end
+    -- сигнал спавна (sampev.onSendSpawn) приходит вместе со спавном персонажа
+    GRND_SPAWN = { seen = (state.spawned == true) }
+    if over and over.seen ~= nil then GRND_SPAWN.seen = over.seen end
 end
 
 -- 1) обычное серверное окно (магазин) при игроке в игре:
@@ -137,6 +140,14 @@ reset({ dialog = true, caption = "Вход", text = "Введите пароль
 eq("authAfterSpawn.notAuth", D.auth(), false)
 eq("authAfterSpawn.uiShown", D.blocked(), false)
 
+-- 4b) экран выбора персонажа: sampIsLocalPlayerSpawned даёт true,
+--     но onSendSpawn ещё не было — интерфейс скрыт (это не «спавн»).
+reset({ dialog = false, spawned = true, seen = false })
+eq("selectScreen.uiHidden", D.blocked(), true)
+eq("selectScreen.why", D.gate.why, "не в игре")
+GRND_SPAWN.seen = true
+eq("selectScreen.afterSpawnSignal", D.blocked(), false)
+
 -- 5) защёлка: окно авторизации видели, потом сервер его закрыл, а
 --    подтверждения входа нет. Сначала ждём (окно авторизации ждёт
 --    подтверждения), потом защёлка снимается и интерфейс возвращается.
@@ -144,6 +155,7 @@ reset({ dialog = true, caption = "Вход", text = "Введите пароль
 eq("latch.firstHidden", D.blocked(), true)
 state.dialog = false
 state.spawned = true
+GRND_SPAWN.seen = true -- персонаж заспавнился (onSendSpawn)
 clock = 200
 eq("latch.waitHidden", D.blocked(), true)
 eq("latch.why", D.gate.why, "ожидание подтверждения авторизации")
@@ -158,6 +170,7 @@ reset({ dialog = true, caption = "Вход", text = "Введите пароль
 eq("latch.okHidden", D.blocked(), true)
 state.dialog = false
 state.spawned = true
+GRND_SPAWN.seen = true -- onSendSpawn
 _G.GRND_AUTH_STATE.showedAuthOk = true
 clock = 220
 eq("latch.okShown", D.blocked(), false)

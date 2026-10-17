@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.295"
+GRND_SCRIPT_VERSION = "1.19.296"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.296 — окна скрипта и автообновление не появляются до реального спавна: признак спавна берётся из отправки спавна клиентом (onSendSpawn), а не из sampIsLocalPlayerSpawned, который давал true раньше;
 v1.19.295 — уведомления автообновления («Проверяю обновления…», ошибки, тосты) не появляются до спавна;
 v1.19.294 — при входе в игру чекеры, обновления и оверлеи не появляются, пока персонаж не заспавнится;
 v1.19.293 — окна админ-формы и гос. новостей переносятся мышью за любое место карточки, не только за шапку;
@@ -1512,7 +1513,7 @@ function grndUiBlocked()
     end
     -- окна скрипта (чекеры, обновления, оверлеи) показываем только после спавна
     -- (или во время слежки): до входа в игру ничего не появляется
-    if spawned ~= true then
+    if spawned ~= true or not grndSpawnLatched() then
         local spec = false
         if type(sampIsPlayerSpectating) == "function" then
             local okS, v = pcall(sampIsPlayerSpectating)
@@ -1542,10 +1543,33 @@ function grndIsSpawnedSafe()
     local ok, res = pcall(sampIsLocalPlayerSpawned)
     return (ok and res) and true or false
 end
+-- Защёлка спавна: взводится только событием отправки спавна клиентом
+-- (sampev.onSendSpawn), то есть когда персонаж реально заспавнился.
+-- sampIsLocalPlayerSpawned сам по себе может давать true раньше (экран выбора
+-- персонажа), поэтому одного его недостаточно.
+GRND_SPAWN = GRND_SPAWN or { seen = nil, gs = nil }
+function grndSpawnLatched()
+    local S = GRND_SPAWN
+    if S.seen == nil then
+        -- при загрузке скрипта: уже в игре, если персонаж управляется
+        local inGame = false
+        if type(isPlayerPlaying) == "function" then
+            local okP, v = pcall(isPlayerPlaying, PLAYER_HANDLE)
+            inGame = okP and v == true
+        end
+        S.seen = inGame
+    end
+    if type(sampGetGamestate) == "function" then
+        local ok, st = pcall(sampGetGamestate)
+        st = ok and tonumber(st) or nil
+        if st and st ~= 3 then S.seen = false end
+    end
+    return S.seen == true
+end
 function grndSessionReady()
     if grndAuthDialogOpen() then return false end
     if GRND_GATE.authSeen and not grndAuthWaitExpired() then return false end
-    if grndIsSpawnedSafe() then return true end
+    if grndIsSpawnedSafe() and grndSpawnLatched() then return true end
     if type(sampIsPlayerSpectating) == "function" then
         local ok, value = pcall(sampIsPlayerSpectating)
         if ok and value then return true end
@@ -43096,6 +43120,9 @@ function grndMainBody()
                 if okA and hideA then return false end
                 local okRc, hideRc = pcall(grndRcOnDialog, dialogId, style, title, button1, button2, text)
                 if okRc and hideRc then return false end
+            end
+            function sampev.onSendSpawn()
+                GRND_SPAWN.seen = true
             end
             function sampev.onServerMessage(color, text)
                 if type(text) == "string" and authTextIsFail(text) then authNoteFail() end
