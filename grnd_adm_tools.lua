@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.274"
+GRND_SCRIPT_VERSION = "1.19.275"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.275 — отклонённая форма не появляется снова (повтор той же строки из чата игнорируется 120 с);
 v1.19.274 — окна админ-формы и гос. волны не блокируют кнопки движения;
 v1.19.273 — окно админ-формы не включает курсор (управление клавишами Y / N);
 v1.19.272 — карточки форм берут цвет выбранной темы (вместо фиксированного зелёного);
@@ -12744,6 +12745,9 @@ function grndFormsUiWanted()
     if F.active then return true end
     return (tonumber(F.uiUntil) or 0) > os.clock()
 end
+function grndFormKey(f)
+    return tostring(f.adminId) .. "|" .. tostring(f.cmd)
+end
 function grndFormsResolve(action)
     local F = _G.GRND_FORMS
     if type(F) ~= "table" then return false end
@@ -12752,6 +12756,9 @@ function grndFormsResolve(action)
         F.want = nil
         return false
     end
+    -- запоминаем решённую форму: повтор той же строки из чата не открывает окно заново
+    F.done = F.done or {}
+    F.done[grndFormKey(form)] = os.clock()
     local nextForm = table.remove(F.queue or {}, 1)
     if type(nextForm) == "table" then nextForm.openedAt = os.clock() end
     F.active = nextForm
@@ -35375,6 +35382,13 @@ function grndMainBody()
         _G.GRND_FORMS = _G.GRND_FORMS or { active = nil, queue = {} }
         local forms = _G.GRND_FORMS
         if type(forms.queue) ~= "table" then forms.queue = {} end
+        local key = grndFormKey(newForm)
+        local doneAt = type(forms.done) == "table" and forms.done[key] or nil
+        if doneAt and (now - doneAt) < 120 then return end
+        if forms.active and grndFormKey(forms.active) == key then return end
+        for _, q in ipairs(forms.queue) do
+            if grndFormKey(q) == key then return end
+        end
         if not forms.active then
             newForm.openedAt = now
             forms.active = newForm
