@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.346"
+GRND_SCRIPT_VERSION = "1.19.347"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -1673,6 +1673,16 @@ function grndMouseInside(r)
     local mx, my = GRND_MOUSE.x, GRND_MOUSE.y
     return mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h
 end
+-- Текущая позиция курсора в момент кадра (как у Kill List); запасной вариант — GRND_MOUSE
+function grndCursorXY()
+    if type(getCursorPos) == "function" then
+        local ok, x, y = pcall(getCursorPos)
+        if ok and type(x) == "number" and type(y) == "number" then return x, y end
+    end
+    return GRND_MOUSE.x, GRND_MOUSE.y
+end
+function grndCursorX() local x = grndCursorXY() return x end
+function grndCursorY() local _, y = grndCursorXY() return y end
 function grndClickAlive()
     return (GRND_MOUSE.frame or -9999) - GRND_UIFRAME <= 0
        and (GRND_MOUSE.frame or -9999) >= GRND_UIFRAME - 1
@@ -12600,8 +12610,8 @@ function grndFormUiDrag(form, px, py, fw, fh, resX, resY, headRect, skipRect)
         if type(_G.grndCamCfgSave) == "function" then pcall(_G.grndCamCfgSave) end
     end
     local M = _G.GRND_MOUSE
-    local mx = tonumber(M and M.x) or 0
-    local my = tonumber(M and M.y) or 0
+    local mx, my = grndCursorXY()
+    mx, my = tonumber(mx) or 0, tonumber(my) or 0
     local down = (M and M.down) and true or false
     local was = U.mouseWasDown and true or false
     U.mouseWasDown = down
@@ -40772,8 +40782,8 @@ function grndMainBody()
             py = tonumber(H.y) or 90
             if H.dragging then
                 if down then
-                    px = GRND_MOUSE.x - (H.dragDX or 0)
-                    py = GRND_MOUSE.y - (H.dragDY or 0)
+                    px = grndCursorX() - (H.dragDX or 0)
+                    py = grndCursorY() - (H.dragDY or 0)
                 else
                     H.dragging = false
                     pcall(grndCamCfgSave)
@@ -40874,8 +40884,8 @@ function grndMainBody()
                 if justDown and grndMouseInside(headRect) then
                     H.dragging = true
                     H.pressPid = nil
-                    H.dragDX = GRND_MOUSE.x - px
-                    H.dragDY = GRND_MOUSE.y - py
+                    H.dragDX = grndCursorX() - px
+                    H.dragDY = grndCursorY() - py
                 end
                 local sepH = math.max(1, S(1))
                 local sepY = sh + headH
@@ -41264,18 +41274,18 @@ function grndMainBody()
             local winRect = { x = px, y = py, w = W, h = H }
             if RC.cursor and GRND_MOUSE.down then
                 if not RC.dragging and grndMouseInside(winRect)
-                    and not onWidget(GRND_MOUSE.x, GRND_MOUSE.y) then
+                    and not onWidget(grndCursorX(), grndCursorY()) then
                     RC.dragging = true
-                    RC.dragDX = GRND_MOUSE.x - px
-                    RC.dragDY = GRND_MOUSE.y - py
+                    RC.dragDX = grndCursorX() - px
+                    RC.dragDY = grndCursorY() - py
                 end
             elseif RC.dragging then
                 RC.dragging = false
                 pcall(grndCamCfgSave)
             end
             if RC.dragging then
-                px = math.max(0, math.min(resX - W, GRND_MOUSE.x - (RC.dragDX or 0)))
-                py = math.max(0, math.min(resY - H, GRND_MOUSE.y - (RC.dragDY or 0)))
+                px = math.max(0, math.min(resX - W, grndCursorX() - (RC.dragDX or 0)))
+                py = math.max(0, math.min(resY - H, grndCursorY() - (RC.dragDY or 0)))
                 RC.posX, RC.posY = px, py
                 RC.windowPos = { x = px, y = py }
                 icRect.x, icRect.y = px + pad + titleW + 10, py + 6
@@ -41511,15 +41521,15 @@ function grndMainBody()
                 if RC.cursor and GRND_MOUSE.down then
                     if not SB.dragging and not SB.hov and grndMouseInside(barRect) then
                         SB.dragging = true
-                        SB.dx = GRND_MOUSE.x - SB.x
-                        SB.dy = GRND_MOUSE.y - SB.y
+                        SB.dx = grndCursorX() - SB.x
+                        SB.dy = grndCursorY() - SB.y
                     end
                 else
                     SB.dragging = false
                 end
                 if SB.dragging then
-                    SB.x = math.max(0, math.min(resX - SW, GRND_MOUSE.x - SB.dx))
-                    SB.y = math.max(0, math.min(resY - SH, GRND_MOUSE.y - SB.dy))
+                    SB.x = math.max(0, math.min(resX - SW, grndCursorX() - SB.dx))
+                    SB.y = math.max(0, math.min(resY - SH, grndCursorY() - SB.dy))
                     SB.posDirty = true
                 elseif SB.posDirty then
                     SB.posDirty = false
