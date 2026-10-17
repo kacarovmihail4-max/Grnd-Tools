@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.301"
+GRND_SCRIPT_VERSION = "1.19.302"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -1340,7 +1340,15 @@ end
 GRND_SPAWN = GRND_SPAWN or { seen = nil, gs = nil }
 function grndSpawnLatched()
     local S = GRND_SPAWN
-    if S.seen == nil then S.seen = false end
+    if S.seen == nil then
+        S.seen = false
+        local UU = rawget(_G, "GRND_UPDATE")
+        if type(UU) == "table" and type(UU.consumeKeepSpawn) == "function" then
+            pcall(UU.loadCfg)
+            local okK, keep = pcall(UU.consumeKeepSpawn)
+            if okK and keep then S.seen = true end
+        end
+    end
     if type(sampGetGamestate) == "function" then
         local ok, st = pcall(sampGetGamestate)
         st = ok and tonumber(st) or nil
@@ -32812,6 +32820,7 @@ local function grndUpdInit()
             end
             if k == "last" then U.lastAt = tonumber(v) or U.lastAt end
             if k == "updatedVer" then U.updatedVer = v end
+            if k == "keepSpawn" then U.keepSpawnAt = tonumber(v) end
             if k == "updatedFrom" then U.updatedFrom = v end
             if k == "channel" then U.activeId = v end
             if k == "repo" or k == "mirror" then
@@ -32837,6 +32846,7 @@ local function grndUpdInit()
         out[#out + 1] = "period=" .. tostring(math.floor(U.period))
         out[#out + 1] = "last=" .. tostring(math.floor(U.lastAt or 0))
         if U.activeId then out[#out + 1] = "channel=" .. tostring(U.activeId) end
+        if U.keepSpawnAt then out[#out + 1] = "keepSpawn=" .. tostring(U.keepSpawnAt) end
         if U.updatedVer then
             out[#out + 1] = "updatedVer=" .. tostring(U.updatedVer)
             out[#out + 1] = "updatedFrom=" .. tostring(U.updatedFrom or "0.0.0")
@@ -33220,7 +33230,22 @@ local function grndUpdInit()
         U.refreshFrame()
         return true
     end
+    function U.consumeKeepSpawn()
+        local t = U.keepSpawnAt
+        if not t then return false end
+        U.keepSpawnAt = nil
+        pcall(U.saveCfg)
+        if os.time() - t > 120 then return false end
+        if type(isPlayerPlaying) ~= "function" then return false end
+        local okP, playing = pcall(isPlayerPlaying, PLAYER_HANDLE)
+        return okP and playing == true
+    end
     function U.reload()
+        local seen = rawget(_G, "GRND_SPAWN")
+        if type(seen) == "table" and seen.seen == true then
+            U.keepSpawnAt = os.time()
+            pcall(U.saveCfg)
+        end
         if type(thisScript) == "function" then
             local ok, sc = pcall(thisScript)
             if ok and sc and type(sc.reload) == "function" then
