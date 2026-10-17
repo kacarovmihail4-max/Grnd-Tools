@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.276"
+GRND_SCRIPT_VERSION = "1.19.277"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.277 — отклонённая форма не открывается снова: служебные строки скрипта — пример команды, ответы — не принимаются за новую форму;
 v1.19.276 — защита от повтора формы: 1,5 с для форм от любого администратора (было 120 с);
 v1.19.275 — отклонённая форма не появляется снова;
 v1.19.274 — окна админ-формы и гос. волны не блокируют кнопки движения;
@@ -35357,6 +35358,11 @@ function grndMainBody()
         if GRND_ADMIN_CFG and GRND_ADMIN_CFG.autoForms == false then return end
         local nick,adminId,msg=grndFormAdminLine(text)
         if not nick or not adminId or not msg then return end
+        -- служебные строки самого скрипта (пример команды, ответы на форму) — не форма
+        if msg:find("Пример правильной команды", 1, true) or msg:find("Пропиши форму", 1, true)
+            or msg:find("отклонена", 1, true) or msg:find("принята.", 1, true) then
+            return
+        end
         local idStr=tostring(adminId)
         local myId = nil
         if type(sampGetLocalPlayerId) == "function" then
