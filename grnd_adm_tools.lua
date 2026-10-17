@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.294"
+GRND_SCRIPT_VERSION = "1.19.295"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.295 — уведомления автообновления («Проверяю обновления…», ошибки, тосты) не появляются до спавна;
 v1.19.294 — при входе в игру чекеры, обновления и оверлеи не появляются, пока персонаж не заспавнится;
 v1.19.293 — окна админ-формы и гос. новостей переносятся мышью за любое место карточки, не только за шапку;
 v1.19.292 — окно «Форма на Гос. Новости» как у админ-формы: та же позиция и перетаскивание, Y/N по нажатию клавиши;
@@ -32974,6 +32975,14 @@ local function grndUpdInit()
     end
     function U.notify(text, kind, life)
         text = tostring(text or "")
+        -- до спавна уведомления обновления не показываем (ни в чат, ни тостом)
+        if type(_G.grndSessionReady) == "function" then
+            local okR, ready = pcall(_G.grndSessionReady)
+            if okR and not ready then
+                pcall(print, text)
+                return false
+            end
+        end
         local N = rawget(_G, "notify")
         if type(N) == "table" and type(N.add) == "function" then
             local ok = pcall(N.add, text, kind or "ok", life or 3, true)
