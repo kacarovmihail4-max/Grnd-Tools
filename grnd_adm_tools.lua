@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.339"
+GRND_SCRIPT_VERSION = "1.19.340"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41567,8 +41567,15 @@ function grndMainBody()
                         elseif key == "flag" then
                             local px = cx - 1.5
                             bdl:AddLine(bat(px, cy - 8), bat(px, cy + 8), ic, 1.5)
-                            bdl:AddLine(bat(px, cy - 8), bat(px + 4.5, cy - 5.5), ic, 1.5)
-                            bdl:AddLine(bat(px + 4.5, cy - 5.5), bat(px, cy - 1.5), ic, 1.5)
+                            -- флажок: замкнутый треугольник, стыки без разрывов
+                            local fT1, fT2, fT3 = bat(px, cy - 8), bat(px + 6, cy - 5), bat(px, cy - 2)
+                            if bdl.AddTriangle then
+                                bdl:AddTriangle(fT1, fT2, fT3, ic, 1.5)
+                            else
+                                bdl:AddLine(fT1, fT2, ic, 1.5)
+                                bdl:AddLine(fT2, fT3, ic, 1.5)
+                                bdl:AddLine(fT3, fT1, ic, 1.5)
+                            end
                             -- полукольцо постоянной толщины: закрашенные квады из двух треугольников
                             -- U-образная подставка под древком, концы загнуты вверх (как на эталоне)
                             local U_R, U_CY, U_N = 3.8, cy + 4, 32
