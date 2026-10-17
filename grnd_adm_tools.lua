@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.319"
+GRND_SCRIPT_VERSION = "1.19.320"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41434,11 +41434,11 @@ function grndMainBody()
                             bdl:AddLine(bat(gx, cy), bat(gx + 5, cy + 5), ic, 1.6)
                             bdl:AddLine(bat(gx + 11, cy - 5), bat(gx + 6, cy), ic, 1.6)
                             bdl:AddLine(bat(gx + 6, cy), bat(gx + 11, cy + 5), ic, 1.6)
-                            uiText(bpos.x + (gx + 16) * S, bpos.y + (cy - 6) * S, "(Q)", c4(TH.textHi), 0.80 * S)
+                            uiText((gx + 16) * S, (cy - 6) * S, "(Q)", c4(TH.textHi), 0.80 * S)
                         elseif key == "fwd" then
                             local tw = drawnWb("(E)", 0.80 * S) / S
                             local gx = cx - (tw + 5 + 11) / 2
-                            uiText(bpos.x + gx * S, bpos.y + (cy - 6) * S, "(E)", c4(TH.textHi), 0.80 * S)
+                            uiText(gx * S, (cy - 6) * S, "(E)", c4(TH.textHi), 0.80 * S)
                             local x0 = gx + tw + 5
                             bdl:AddLine(bat(x0, cy - 5), bat(x0 + 5, cy), ic, 1.6)
                             bdl:AddLine(bat(x0 + 5, cy), bat(x0, cy + 5), ic, 1.6)
@@ -41457,10 +41457,10 @@ function grndMainBody()
                             bdl:AddLine(bat(cx + 0.5, cy - 4.5), bat(cx + 3, cy - 2), ic, 1.5)
                             bdl:AddLine(bat(cx + 3, cy - 2), bat(cx + 0.5, cy + 0.5), ic, 1.5)
                         elseif key == "flag" then
-                            bdl:AddLine(bat(cx - 4, cy - 8), bat(cx - 4, cy + 4), ic, 1.5)
+                            bdl:AddLine(bat(cx - 4, cy - 8), bat(cx - 4, cy + 1), ic, 1.5)
                             bdl:AddLine(bat(cx - 4, cy - 8), bat(cx + 4, cy - 5), ic, 1.5)
                             bdl:AddLine(bat(cx + 4, cy - 5), bat(cx - 4, cy - 2), ic, 1.5)
-                            bdl:AddCircle(bat(cx - 1, cy + 4), 3 * S, ic, 12, 1.4)
+                            bdl:AddCircle(bat(cx - 4, cy + 4), 3 * S, ic, 16, 1.4)
                         end
                         if clicked then
                             if key == "back" then grndSpecSwitch(-1)
