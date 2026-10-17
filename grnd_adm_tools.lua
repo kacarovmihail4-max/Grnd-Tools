@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.313"
+GRND_SCRIPT_VERSION = "1.19.314"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -32997,13 +32997,17 @@ local function grndUpdInit()
     end
     function U.markInstalled(fromVer, toVer)
         U.updatedFrom, U.updatedVer = tostring(fromVer), tostring(toVer)
-        U.saveCfg()
+        local okS = U.saveCfg()
+        grndPerfWrite(("обновление сохранено: %s -> %s (запись конфига: %s)")
+            :format(tostring(fromVer), tostring(toVer), tostring(okS)))
     end
     function U.markSeen()
         if U.markChecked then return end
         U.markChecked = true
         U.loadCfg()
         local to, from = U.updatedVer, U.updatedFrom
+        grndPerfWrite(("после запуска: отметка обновления=%s, текущая версия=%s")
+            :format(tostring(to), tostring(U.cur)))
         if not to or U.verNum(to) ~= U.verNum(U.cur) then return end
         U.justUpdated = { from = from or "?", to = to }
         U.state = "ready"
