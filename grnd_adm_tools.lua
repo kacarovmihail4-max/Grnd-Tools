@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.303"
+GRND_SCRIPT_VERSION = "1.19.304"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -1340,6 +1340,11 @@ end
 GRND_SPAWN = GRND_SPAWN or { seen = nil, gs = nil }
 function grndSpawnLatched()
     local S = GRND_SPAWN
+    local st
+    if type(sampGetGamestate) == "function" then
+        local ok, v = pcall(sampGetGamestate)
+        st = ok and tonumber(v) or nil
+    end
     if S.seen == nil then
         S.seen = false
         local UU = rawget(_G, "GRND_UPDATE")
@@ -1348,11 +1353,22 @@ function grndSpawnLatched()
             local okK, keep = pcall(UU.consumeKeepSpawn)
             if okK and keep then S.seen = true end
         end
+        if st == 3 and not S.seen then S.loadedConnected, S.connAt = true, os.clock() end
     end
-    if type(sampGetGamestate) == "function" then
-        local ok, st = pcall(sampGetGamestate)
-        st = ok and tonumber(st) or nil
-        if st and st ~= 3 then S.seen = false end
+    if st and st ~= 3 then
+        S.seen, S.heur, S.loadedConnected = false, nil, nil
+    end
+    if S.loadedConnected and not S.seen and not S.heurDone and st == 3
+        and os.clock() - (S.connAt or 0) >= 3 and not grndAuthDialogOpen() then
+        local playing = false
+        if type(isPlayerPlaying) == "function" then
+            local okP, v = pcall(isPlayerPlaying, PLAYER_HANDLE)
+            playing = okP and v == true
+        end
+        if playing then S.seen, S.heur = true, true end
+    end
+    if S.heur and grndAuthDialogOpen() then
+        S.seen, S.heur, S.heurDone = false, nil, true
     end
     return S.seen == true
 end
@@ -33190,7 +33206,7 @@ local function grndUpdInit()
         return U.check("spawn")
     end
     function U.tick()
-        if not U.markChecked then U.markSeen() end
+        if not U.markChecked and U.sessionReady() then U.markSeen() end
         if U.reloadPending then
             U.reloadPending = false
             if U.reload() then return true end

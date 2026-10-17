@@ -869,7 +869,12 @@ U3.CHANNELS = { CHA, CH1, CH2, CH3 }
 U3.inetLoad = function() return nil end
 U3.inet, U3.inetErr, U3.road = nil, nil, nil
 U3.cfgLoaded = false
+_G.grndSessionReady = function() return false end
 U3.tick()
+check(U3.markChecked ~= true and U3.window ~= true, "после перезапуска: до спавна окно не открывается")
+_G.grndSessionReady = function() return true end
+U3.tick()
+_G.grndSessionReady = nil
 check(U3.cur == NEW, "после перезапуска: версия — новая")
 check(U3.window == true, "после перезапуска: окно изменений открылось само")
 check(U3.justUpdated and U3.justUpdated.from == V and U3.justUpdated.to == NEW,
