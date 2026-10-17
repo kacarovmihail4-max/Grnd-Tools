@@ -2,9 +2,11 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.280"
+GRND_SCRIPT_VERSION = "1.19.281"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.281 — очередь между формами: после Y/N следующая форма (и повтор от бота) ждёт 1,5 с;
+  клавиши во время паузы не действуют;
 v1.19.280 — ошибки «Данный игрок не в транспорте!» и «Игрок должен находится в транспорте» уходят в админ-чат; добавлена команда /untie (без проверки синтаксиса);
 v1.19.279 — после Y/N окно формы не остаётся: копии уже решённой формы из очереди удаляются;
 v1.19.278 — команды без проверки синтаксиса: после Y скрипт ждёт ответ сервера;
@@ -12231,6 +12233,7 @@ function grndFormApply(form)
     return cmd, "ok"
 end
 _G.GRND_FORM_WAIT_SEC = tonumber(_G.GRND_FORM_WAIT_SEC) or 4.0
+_G.GRND_FORM_GAP_SEC = tonumber(_G.GRND_FORM_GAP_SEC) or 1.5
 _G.GRND_FORM_SETTLE_SEC = tonumber(_G.GRND_FORM_SETTLE_SEC) or 0
 _G.GRND_FORM_MSG_LIMIT = tonumber(_G.GRND_FORM_MSG_LIMIT) or 140
 _G.GRND_FORMWAIT = _G.GRND_FORMWAIT or {
@@ -12794,8 +12797,13 @@ function grndFormsResolve(action)
     for i = #q, 1, -1 do
         if type(q[i]) == "table" and grndFormKey(q[i]) == rk then table.remove(q, i) end
     end
+    local now0 = os.clock()
+    F.nextAt = now0 + (tonumber(_G.GRND_FORM_GAP_SEC) or 1.5)
     local nextForm = table.remove(q, 1)
-    if type(nextForm) == "table" then nextForm.openedAt = os.clock() end
+    if type(nextForm) == "table" then
+        nextForm.showAt = F.nextAt
+        nextForm.openedAt = F.nextAt
+    end
     F.active = nextForm
     F.want = nil
     F.lastResolveAt = os.clock()
@@ -12864,6 +12872,7 @@ function grndFormsKeyTick()
     if not (yEdge or nEdge) then return end
     local F = _G.GRND_FORMS
     if type(F) ~= "table" or not F.active then return end
+    if F.active.showAt and os.clock() < F.active.showAt then return end
     if type(sampIsChatInputActive) == "function" then
         local okC, isC = pcall(sampIsChatInputActive)
         if okC and isC then return end
@@ -35432,8 +35441,14 @@ function grndMainBody()
         for _, q in ipairs(forms.queue) do
             if grndFormKey(q) == key then return end
         end
+        local gapEnd = tonumber(forms.nextAt) or 0
         if not forms.active then
-            newForm.openedAt = now
+            if gapEnd > now then
+                newForm.showAt = gapEnd
+                newForm.openedAt = gapEnd
+            else
+                newForm.openedAt = now
+            end
             forms.active = newForm
         else
             table.insert(forms.queue, newForm)
@@ -40146,6 +40161,7 @@ function grndMainBody()
             if not _G.GRND_FORMS or not _G.GRND_FORMS.active then return false end
             local form = _G.GRND_FORMS.active
             local now = os.clock()
+            if form.showAt and now < form.showAt then return false end
             local timeout = tonumber(_G.GRND_FORM_POPUP_TIMEOUT_SEC) or 5.0
             local openedAt = tonumber(form.openedAt) or tonumber(form.time) or now
             local elapsed = math.max(0, now - openedAt)
