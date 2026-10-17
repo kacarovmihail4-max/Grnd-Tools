@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.287"
+GRND_SCRIPT_VERSION = "1.19.288"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.288 — в слежке при открытом серверном окне колесо, стрелки и +/- не перехватываются скриптом (прокрутка и ввод в окне);
 v1.19.287 — формы от Grnd_Bot не открываются (только формы, остальные строки бота не меняются);
 v1.19.286 — в слежке серверное окно закрывается и прокручивается: панель слежки без курсора не захватывает мышь и клавиши;
 v1.19.285 — в слежке серверные окна не блокируют ввод, полёт и открытие чата скрипта;
@@ -11111,7 +11112,7 @@ function onWindowMessage(msg, wparam, lparam)
             return
         end
         if GRND_RC and GRND_RC.show and grndSpecNative
-            and not grndCamWindowsOpen() then
+            and not grndCamWindowsOpen() and not grndServerDialogOpen() then
             local wpRaw = tonumber(wparam) or 0
             local dRaw = math.floor(wpRaw / 65536) % 65536
             if dRaw >= 32768 then dRaw = dRaw - 65536 end
@@ -11127,7 +11128,7 @@ function onWindowMessage(msg, wparam, lparam)
             return
         end
         if GRND_CAM.enabled and GRND_CAM.wheelAdjust
-           and not grndCamWindowsOpen() then
+           and not grndCamWindowsOpen() and not grndServerDialogOpen() then
             local altHeld = false
             if type(isKeyDown) == "function" then
                 local okA, a = pcall(isKeyDown, 0x12)
@@ -11195,11 +11196,10 @@ function onWindowMessage(msg, wparam, lparam)
     if GRND_RC and GRND_RC.show
         and (wp == 0x25 or wp == 0x26 or wp == 0x27 or wp == 0x28
             or wp == 0xBB or wp == 0x6B or wp == 0xBD or wp == 0x6D) then
-        if grndCamWindowsOpen() then
-            if isUp then
-                GRND_RC.camKeys = GRND_RC.camKeys or {}
-                GRND_RC.camKeys[wp] = false
-            end
+        if grndCamWindowsOpen() or grndServerDialogOpen() then
+            -- стрелки и +/- нужны серверному окну (списки, ввод): не съедаем
+            GRND_RC.camKeys = GRND_RC.camKeys or {}
+            GRND_RC.camKeys[wp] = false
         else
             GRND_RC.camKeys = GRND_RC.camKeys or {}
             GRND_RC.camKeys[wp] = not isUp
