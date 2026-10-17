@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.325"
+GRND_SCRIPT_VERSION = "1.19.326"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -17277,7 +17277,7 @@ function grndSpecRoadTp(withCars)
     if not okC or type(px) ~= "number" then return false end
     local pnx, pny, pnz = grndSpecCarNodeNear(px, py, pz)
     if not pnx then
-        notify.add("ТП на дорогу: дорога рядом не найдена", "warn", 3)
+        notify.add("Скрипт не нашел ближайшую дорогу", "warn", 3)
         return false
     end
     local cars = {}
@@ -41418,8 +41418,11 @@ function grndMainBody()
                 local PAD, GAP, BH = 8, 7, 29
                 local WIDE, NARROW = 60, 30
                 local kinds = {
-                    { "back", WIDE }, { "road", NARROW }, { "diamond", NARROW },
-                    { "flag", NARROW }, { "fwd", WIDE },
+                    { "back", WIDE, "Предыдущий ID" },
+                    { "road", NARROW, "ТП на дорогу: игрок и т/с в радиусе 20 м" },
+                    { "diamond", NARROW, "ТП игрока на дорогу" },
+                    { "flag", NARROW, "ТП к игроку (/spoff, затем /goto)" },
+                    { "fwd", WIDE, "Следующий ID" },
                 }
                 local PW = 2 * PAD + 2 * WIDE + 3 * NARROW + 4 * GAP
                 local PH = BH + 2 * PAD
@@ -41464,13 +41467,16 @@ function grndMainBody()
                     local ic = col32(245, 245, 250, 245)
                     local bx = PAD
                     for i, kb in ipairs(kinds) do
-                        local key, bw = kb[1], kb[2]
+                        local key, bw, hint = kb[1], kb[2], kb[3]
                         local by = PAD
                         im.SetCursorPos(im.ImVec2(bx * S, by * S))
                         local clicked = im.InvisibleButton("##grnd_spec_btn" .. i, im.ImVec2(bw * S, BH * S))
                         local hov = (im.IsItemHovered and im.IsItemHovered()) or false
                         local act = (im.IsItemActive and im.IsItemActive()) or false
-                        if hov then anyHov = true end
+                        if hov then
+                            anyHov = true
+                            if type(im.SetTooltip) == "function" then pcall(im.SetTooltip, hint) end
+                        end
                         local ac = TH.accent
                         local bgc = (act and col32(ac[1], ac[2], ac[3], 255))
                             or (hov and col32(ac[1], ac[2], ac[3], 190)) or col32(31, 28, 41, 235)
