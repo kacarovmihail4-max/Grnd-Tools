@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.296"
+GRND_SCRIPT_VERSION = "1.19.297"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.297 — окно формы, гос. новости, статистика и чекеры в меню тоже скрыты до спавна (гейт grndUiBlocked);
 v1.19.296 — окна скрипта и автообновление не появляются до реального спавна: признак спавна берётся из отправки спавна клиентом (onSendSpawn), а не из sampIsLocalPlayerSpawned, который давал true раньше;
 v1.19.295 — уведомления автообновления («Проверяю обновления…», ошибки, тосты) не появляются до спавна;
 v1.19.294 — при входе в игру чекеры, обновления и оверлеи не появляются, пока персонаж не заспавнится;
@@ -38865,7 +38866,10 @@ function grndMainBody()
                                 pcall(grndAoCfgSave)
                             end })
                         grndSetUiSync("checkers", im)
-                        local okCkP, errCkP = pcall(grndSetDrawCheckerPopups, ckCtx)
+                        local okCkP, errCkP = true, nil
+                        if not grndUiBlocked() then
+                            okCkP, errCkP = pcall(grndSetDrawCheckerPopups, ckCtx)
+                        end
                         if not okCkP then
                             uiText(ckX, cardY + 150, "Ошибка окна чекеров: " .. tostring(errCkP),
                                 c4({ 255, 135, 135, 255 }), 0.85)
@@ -42616,17 +42620,17 @@ function grndMainBody()
                     elseif eP then wantCursor = true end
                 end
             end
-            if _G.GRND_FORMS and _G.GRND_FORMS.active then
+            if not gated and _G.GRND_FORMS and _G.GRND_FORMS.active then
                 -- окно формы без курсора: управляется клавишами Y / N
                 local ok, e = pcall(drawFormPopup)
                 if not ok then logRenderErr("forms", e) end
             end
-            if GRND_RC and GRND_RC.statsPop and _G.grndDrawStatsPopup then
+            if not gated and GRND_RC and GRND_RC.statsPop and _G.grndDrawStatsPopup then
                 local ok, e = pcall(_G.grndDrawStatsPopup)
                 if not ok then logRenderErr("stats_pop", e)
                 elseif e and ((GRND_RC and GRND_RC.cursor) or menu.open) then wantCursor = true end
             end
-            if _G.GRND_GNEWS and _G.GRND_GNEWS.active then
+            if not gated and _G.GRND_GNEWS and _G.GRND_GNEWS.active then
                 local ok, e = pcall(drawGnewsPopup)
                 if not ok then logRenderErr("gnews", e)
                 elseif e and ((GRND_RC and GRND_RC.cursor) or menu.open) then wantCursor = true end
