@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.332"
+GRND_SCRIPT_VERSION = "1.19.333"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41570,7 +41570,7 @@ function grndMainBody()
                             bdl:AddLine(bat(px, cy - 8), bat(px + 8, cy - 5), ic, 1.5)
                             bdl:AddLine(bat(px + 8, cy - 5), bat(px, cy - 2), ic, 1.5)
                             -- полукольцо постоянной толщины: закрашенные квады из двух треугольников
-                            local ARC_R, ARC_CY, ARC_T, ARC_N = 4.5, cy + 2.5, 0.75, 36
+                            local ARC_R, ARC_CY, ARC_T, ARC_N = 4.5, cy + 2.5, 0.4, 36
                             local function arcPt(r, ang)
                                 return px - r * math.cos(ang), ARC_CY + r * math.sin(ang)
                             end
