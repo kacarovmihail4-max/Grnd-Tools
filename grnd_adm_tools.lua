@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.304"
+GRND_SCRIPT_VERSION = "1.19.305"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -32273,21 +32273,11 @@ do
                 end
                 R.uiText(cx + cw - W(status, 0.9), y, status, scol, 0.9)
                 y = y + 18
-                if U.window then
-                    if R.button("rt_upd_show", cx, y, cw, 26,
-                        "Что нового?", { cutW = cw - 16 }) then
-                        if type(_G.ensureRender) == "function" then
-                            pcall(_G.ensureRender, true)
-                        end
-                    end
-                else
-                    if R.button("rt_upd_check", cx, y, cw, 26,
-                        "Проверить обновления", { cutW = cw - 16 }) then
-                        U.window = true
-                        if type(U.check) == "function" then U.check("section") end
-                        if type(_G.ensureRender) == "function" then
-                            pcall(_G.ensureRender, true)
-                        end
+                if R.button("rt_upd_check", cx, y, cw, 26,
+                    "Проверить обновления", { cutW = cw - 16 }) then
+                    if type(U.check) == "function" then U.check("section") end
+                    if type(_G.ensureRender) == "function" then
+                        pcall(_G.ensureRender, true)
                     end
                 end
                 y = y + 26
@@ -32337,7 +32327,6 @@ local function grndUpdInit()
     U.err, U.job = nil, nil
     U.newVer, U.installed = nil, false
     U.staleSeen = nil
-    U.window = false
     U.lastAt, U.wasSpawn = 0, false
     U.reloadPending = false
     U.sessionAt = 0
@@ -32916,7 +32905,6 @@ local function grndUpdInit()
     end
     function U.finish(msg, kind)
         if msg then U.state, U.err = "error", msg end
-        if U.checkReason == "manual" then U.window = true end
         if msg then failToast("Обновления: " .. tostring(msg)) end
         U.job = nil
         U.refreshFrame()
@@ -32992,7 +32980,7 @@ local function grndUpdInit()
         local to, from = U.updatedVer, U.updatedFrom
         if not to or U.verNum(to) ~= U.verNum(U.cur) then return end
         U.justUpdated = { from = from or "?", to = to }
-        U.state, U.window = "ready", true
+        U.state = "ready"
         U.updatedVer, U.updatedFrom = nil, nil
         U.lastAt = math.floor(U.io.time())
         U.saveCfg()
@@ -33156,8 +33144,10 @@ local function grndUpdInit()
         local c = nextChan()
         if not c then
             U.probing, U.state = false, "uptodate"
-            U.window = true
             U.diag("обход зеркал закончен")
+            if U.probeLines and type(sampAddChatEntry) == "function" then
+                for _, l in ipairs(U.probeLines) do pcall(sampAddChatEntry, -1, "[GRND] " .. l) end
+            end
             U.refreshFrame()
             return false
         end
@@ -33186,7 +33176,7 @@ local function grndUpdInit()
         if U.probing or U.job then return false, "уже проверяю" end
         U.state, U.err = "checking", nil
         if not U.justUpdated then
-            U.installed, U.window = false, false
+            U.installed = false
         end
         U.staleSeen = nil
         U.lastAt = math.floor(U.io.time())
@@ -33210,7 +33200,7 @@ local function grndUpdInit()
         if U.reloadPending then
             U.reloadPending = false
             if U.reload() then return true end
-            U.window, U.installed = true, true
+            U.installed = true
             U.notify("Обновление скачано — включится при следующем запуске игры",
                 "warn", 4)
             U.refreshFrame()
@@ -33241,7 +33231,6 @@ local function grndUpdInit()
     end
     function U.requestReload()
         U.reloadPending = true
-        U.window = false
         U.notify("Перезагружаю скрипт…", "info", 2.5)
         U.refreshFrame()
         return true
@@ -33311,74 +33300,6 @@ local function grndUpdInit()
     local function muted(im, text) colored(im, themeColor("textMuted", { 172, 166, 190, 255 }), text) end
     local function accent(im, text) colored(im, themeColor("accent", { 164, 112, 224, 255 }), text) end
     local function sep(im) if type(im.Separator) == "function" then pcall(im.Separator) end end
-    function U.draw(H)
-        if not U.window then return false end
-        local im = H and H.im
-        if not im or type(H.begin) ~= "function" then return false end
-        local W, HH = 620, 520
-        if type(im.SetNextWindowSize) == "function" and type(im.ImVec2) == "function" then
-            pcall(im.SetNextWindowSize, im.ImVec2(W, HH),
-                (im.Cond and tonumber(im.Cond.FirstUseEver)) or 4)
-        end
-        if type(im.SetNextWindowPos) == "function" and type(im.ImVec2) == "function"
-            and type(getScreenResolution) == "function" then
-            local okr, sx, sy = pcall(getScreenResolution)
-            if okr and tonumber(sx) and tonumber(sy) then
-                pcall(im.SetNextWindowPos, im.ImVec2(sx / 2, sy / 2),
-                    (im.Cond and tonumber(im.Cond.Appearing)) or 1,
-                    im.ImVec2(0.5, 0.5))
-            end
-        end
-        local flags = 0
-        if type(H.wf) == "function" then
-            local okF, f = pcall(H.wf, "NoResize", "NoCollapse", "NoSavedSettings")
-            if okF and tonumber(f) then flags = tonumber(f) end
-        end
-        local okB, shown = pcall(H.begin, "Grnd Tools##grnd_upd", flags)
-        if okB and shown then
-            local okD, err = pcall(function()
-                accent(im, "ОБНОВЛЕНИЕ СКРИПТА")
-                local head, sub
-                if U.probeLines then
-                    head = "Проверка связи с каналами"
-                elseif U.justUpdated then
-                    head = "Установлена версия " .. tostring(U.justUpdated.to)
-                    sub = "Была " .. tostring(U.justUpdated.from)
-                        .. ". Новая версия уже работает."
-                elseif U.installed then
-                    head = "Обновление " .. tostring(U.newVer) .. " установлено"
-                    sub = "Включаю новую версию…"
-                elseif U.state == "error" then
-                    head = "Не удалось проверить обновления"
-                    sub = "Сервер не ответил. Это не страшно: проверка идёт "
-                        .. "при каждом заходе в игру и сама догонит новую версию."
-                elseif U.state == "downloading" then
-                    head = "Обновляюсь до версии " .. tostring(U.newVer or "")
-                    sub = "Скачиваю новую версию…"
-                else
-                    head = "Версия " .. U.cur
-                    sub = "У вас самая свежая версия."
-                end
-                hi(im, head)
-                if sub then muted(im, sub) end
-                sep(im)
-                if U.probeLines then
-                    muted(im, "ОТВЕТЫ КАНАЛОВ")
-                    for i = 1, #U.probeLines do label(im, U.probeLines[i]) end
-                end
-                sep(im)
-                if btn(im, "Закрыть##grnd_upd_close", 140) then
-                    U.window = false
-                    U.probeLines = nil
-                end
-            end)
-            if not okD then U.err = tostring(err) end
-        end
-        if okB and type(H.endWin) == "function" then pcall(H.endWin) end
-        return true
-    end
-    _G.grndUpdDraw = U.draw
-    _G.grndUpdWanted = function() return U.window and true or false end
     function U.compile()
         local target = U.scriptPath()
         if U.installedBytecode() then
@@ -33414,10 +33335,8 @@ local function grndUpdInit()
     if type(sampRegisterChatCommand) == "function" then
         pcall(sampRegisterChatCommand, "grndupdate", function(arg)
             local a = tostring(arg or ""):lower()
-            U.window = false
             if a:find("compile", 1, true) or a:find("компил", 1, true)
                 or a:find("байт", 1, true) or a:find("luac", 1, true) then
-                U.window = false
                 U.compile()
                 U.refreshFrame()
                 return
@@ -42047,22 +41966,6 @@ function grndMainBody()
                 if not ok then logRenderErr("gnews", e)
                 elseif e and ((GRND_RC and GRND_RC.cursor) or menu.open) then wantCursor = true end
             end
-            if not gated and type(_G.grndUpdWanted) == "function"
-                and _G.grndUpdWanted() then
-                local depth = endDepth
-                local ok, e = pcall(_G.grndUpdDraw, {
-                    im = im,
-                    begin = grndBegin,
-                    wf = wf,
-                    always = COND_ALWAYS,
-                    endWin = function()
-                        if endDepth > depth then endDepth = endDepth - 1 end
-                        pcall(im.End)
-                    end,
-                })
-                if not ok then logRenderErr("updater", e)
-                elseif e then wantCursor = true end
-            end
             if GRND_LOG.wanted() then
                 local depth=endDepth
                 local ok,result=pcall(GRND_LOG.windows,{
@@ -42177,7 +42080,6 @@ function grndMainBody()
                             or (GRND_CATCH and GRND_CATCH.active)
                             or formUi
                             or (_G.grndGnewsUiWanted and _G.grndGnewsUiWanted())
-                            or (_G.grndUpdWanted and _G.grndUpdWanted())
                             or plainCursorOn or ((clw ~= nil) and clw.aiming)
                     end,
                     function(self)
@@ -43073,9 +42975,6 @@ function grndMainBody()
                 ensureRender(true)
             end
             if type(_G.grndGnewsUiWanted) == "function" and _G.grndGnewsUiWanted() then
-                ensureRender(true)
-            end
-            if type(_G.grndUpdWanted) == "function" and _G.grndUpdWanted() then
                 ensureRender(true)
             end
             if GRND_REPHUD and GRND_REPHUD.enabled then ensureRender() end

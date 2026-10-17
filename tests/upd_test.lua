@@ -373,7 +373,7 @@ local LUAC_PATH = "/game/moonloader/grnd_adm_tools.luac"
 
 -- ---------- 1. начальное состояние ----------
 check(U.cur == V, "старт: текущая версия из шапки")
-check(U.state == "idle" and U.window == false, "старт: состояние idle, окно закрыто")
+check(U.state == "idle", "старт: состояние idle")
 check(#U.CHANNELS == 4, "канал: четыре канала в стабе")
 -- боевой порядок каналов из самого скрипта (стаб подменяет список, поэтому
 -- смотрим на текст блока): первым — api.github.com (без кэша), последним —
@@ -472,7 +472,6 @@ check((gconf.sections.update or ""):find("channel=api", 1, true) ~= nil,
     "настройки: канал сохранён в общем конфиге скрипта (секция update)")
 check(gconf.opens > 0, "настройки: пишем через GRND_CONFIG, а не файлом")
 check(FS[CFG_PATH] == nil, "настройки: отдельного файла рядом со сборкой нет")
-check(U.window == true, "ручная проверка: окно открыто")
 check(#logs == 0, "диагностика: никаких файлов не создаётся")
 check(table.concat(U.logs or {}, "\n"):find("api: версия " .. V, 1, true) ~= nil,
     "диагностика: живёт в памяти (видна кнопкой «Проверить каналы»)")
@@ -501,7 +500,6 @@ succeed(3, blobJson(newBody(NEW, "установка прошла")))
 U.tick()
 check(U.state == "ready", "установка: состояние ready")
 check(U.installed == true, "установка: флаг installed")
-check(U.window == false, "установка: окно ещё не открыто (его покажет новая версия)")
 check(U.reloadPending == true, "установка: сразу просим перезапуск (без кнопок)")
 check(reloaded == 0, "установка: в кадре перезапуска нет")
 check(hasToast("Обновление " .. NEW .. " установлено"), "установка: тост об установке")
@@ -808,7 +806,6 @@ U.tick()
 failDl(4, 4)
 U.tick()
 check(U.probing == false, "проба: закончилась")
-check(U.window == true, "проба: окно открыто")
 check(#U.probeLines == 8, "проба: по строке на канал (пробую + ответ)")
 check(table.concat(U.probeLines, "|"):find("api: версия " .. V, 1, true) ~= nil,
     "проба: у ответившего канала видна версия")
@@ -843,7 +840,6 @@ local function mkCtx(im)
         wf = function() return 0 end, always = 1,
         endWin = function() im.End() end }
 end
-check(U.draw(mkCtx(mkIm())) == false, "окно: закрыто — не рисуется")
 
 -- полный цикл: нашли версию → скачали → сами перезапустились,
 -- а окно со списком изменений открывает УЖЕ НОВАЯ версия (как в игре)
@@ -856,7 +852,6 @@ check(U.reloadPending == true, "цикл: после установки сраз
 check(reloaded == 0, "цикл: перезапуск не в кадре, а в главном цикле")
 U.tick()
 check(reloaded == 1, "цикл: перезапуск выполнен")
-check(U.window == false, "цикл: старая версия окно не показывает")
 
 -- после перезапуска запускается НОВЫЙ файл: он читает отметку и сам
 -- открывает окно «что изменилось»
@@ -871,90 +866,17 @@ U3.inet, U3.inetErr, U3.road = nil, nil, nil
 U3.cfgLoaded = false
 _G.grndSessionReady = function() return false end
 U3.tick()
-check(U3.markChecked ~= true and U3.window ~= true, "после перезапуска: до спавна окно не открывается")
+check(U3.markChecked ~= true, "после перезапуска: до спавна отметка не ставится")
 _G.grndSessionReady = function() return true end
 U3.tick()
 _G.grndSessionReady = nil
 check(U3.cur == NEW, "после перезапуска: версия — новая")
-check(U3.window == true, "после перезапуска: окно изменений открылось само")
 check(U3.justUpdated and U3.justUpdated.from == V and U3.justUpdated.to == NEW,
     "после перезапуска: известно, с какой версии обновились")
 check(hasToast("Обновление завершено"),
     "после перезапуска: тост про включённую версию")
 check((gconf.sections.update or ""):find("updatedVer", 1, true) == nil,
     "после перезапуска: отметка снята (окно покажем один раз)")
-
-local im = mkIm()
-check(U3.draw(mkCtx(im)) == true, "окно: нарисовалось")
-check(im.began and im.began:find("Grnd Tools", 1, true) ~= nil,
-    "окно: называется «Grnd Tools»")
-check(im.ended == 1, "окно: End вызван один раз")
-check(im.children == 0, "окно: все блоки закрыты (EndChild парный)")
-local body = table.concat(im.texts, "\n")
-check(body:find("ОБНОВЛЕНИЕ СКРИПТА", 1, true) ~= nil, "окно: наш заголовок")
-check(body:find("Установлена версия " .. NEW, 1, true) ~= nil, "окно: было/стало")
-check(body:find("Была " .. V, 1, true) ~= nil, "окно: прежняя версия видна")
-check(body:find("v" .. NEW, 1, true) == nil, "окно: строки «v<версия>» нет (только текст изменений)")
-check(body:find("Диагностика", 1, true) == nil, "окно: диагностики нет")
-check(body:find("Канал:", 1, true) == nil, "окно: служебного «Канал:» нет")
-check(body:find("grnd_update.log", 1, true) == nil, "окно: про лог не пишем")
-local labels = table.concat(im.buttons, "|")
-check(labels:find("Закрыть", 1, true) ~= nil, "окно: кнопка «Закрыть»")
-check(select(2, labels:gsub("|", "")) == 0, "окно: кнопка всего одна")
-check(labels:find("Перезагрузить", 1, true) == nil,
-    "окно: кнопки перезапуска больше нет (обновление включается само)")
-check(labels:find("Позже", 1, true) == nil, "окно: кнопки «Позже» больше нет")
-im.clicked["Закрыть##grnd_upd_close"] = true
-U3.draw(mkCtx(im))
-check(U3.window == false, "окно: «Закрыть» закрывает окно")
-
--- «уже самая свежая» — окно ручной проверки, тоже одна кнопка
-resetU()
-U.window, U.state = true, "uptodate"
-local im3 = mkIm()
-check(U.draw(mkCtx(im3)) == true, "окно: рисуется и без изменений")
-check(table.concat(im3.texts, " "):find("самая свежая версия", 1, true) ~= nil,
-    "окно: текст «самая свежая версия»")
-local labels3 = table.concat(im3.buttons, "|")
-check(labels3:find("Закрыть", 1, true) ~= nil, "окно: кнопка «Закрыть» и здесь")
-check(labels3:find("Проверить", 1, true) == nil,
-    "окно: кнопок проверки больше нет")
-check(table.concat(im3.texts, " "):find("Диагностика", 1, true) == nil,
-    "окно: служебных логов тут тоже нет")
-
--- ошибка: короткий текст и никаких логов
-resetU()
-U.window, U.state, U.err = true, "error", "нет связи ни с одним каналом (4 шт.)"
-local im5 = mkIm()
-U.draw(mkCtx(im5))
-local body5 = table.concat(im5.texts, " ")
-check(body5:find("Не удалось проверить", 1, true) ~= nil, "окно: заголовок ошибки")
-check(body5:find("проверка идёт", 1, true) ~= nil, "окно: успокоили про заход")
-check(body5:find("нет связи ни с одним каналом", 1, true) == nil,
-    "окно: техническая причина не показана")
-
--- режим обхода каналов показывает ответы
-resetU()
-U.window, U.probeLines = true, { "api: версия " .. V, "statically: статус 4" }
-local im4 = mkIm()
-U.draw(mkCtx(im4))
-check(table.concat(im4.texts, " "):find("statically: статус 4", 1, true) ~= nil,
-    "окно: ответы каналов в режиме обхода")
-check(table.concat(im4.texts, " "):find("ОТВЕТЫ КАНАЛОВ", 1, true) ~= nil,
-    "окно: подзаголовок ответов каналов")
-
-check(U.draw(nil) == false, "окно: ctx=nil → false")
-check(U.draw({}) == false, "окно: ctx без begin → false")
-
--- окно рисуется и без цветов в im (запасной путь)
-local plain = { texts = {} }
-plain.Begin = function() return true end
-plain.Text = function(s) plain.texts[#plain.texts + 1] = tostring(s) end
-plain.Separator = function() end
-plain.Button = function() return false end
-U.window = true
-check(U.draw({ im = plain, begin = function() return plain.Begin() end,
-    endWin = function() end }) == true, "окно: рисуется и без TextColored")
 
 -- ---------- 12a. скомпилированный скрипт (.luac) ----------
 -- Установлен байткод: определяем его по магии, а не по расширению
