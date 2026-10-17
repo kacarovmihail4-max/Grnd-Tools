@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.312"
+GRND_SCRIPT_VERSION = "1.19.313"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -33242,7 +33242,7 @@ local function grndUpdInit()
             U.wasSpawn = false
             U.spawnChecked = false
         end
-        if sp and U.wasSpawn and not U.spawnChecked and U.spawnAt and now - U.spawnAt >= 8 then
+        if sp and U.wasSpawn and not U.spawnChecked and U.spawnAt and now - U.spawnAt >= 1 then
             U.spawnChecked = true
             U.onSpawn()
         end
