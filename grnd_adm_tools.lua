@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.273"
+GRND_SCRIPT_VERSION = "1.19.274"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.274 — окна админ-формы и гос. волны не блокируют кнопки движения;
 v1.19.273 — окно админ-формы не включает курсор (управление клавишами Y / N);
 v1.19.272 — карточки форм берут цвет выбранной темы (вместо фиксированного зелёного);
 v1.19.271 — карточки админ-форм и гос. волны плотнее (фон менее прозрачный);
@@ -9130,8 +9131,6 @@ function grndCamWindowsRaw()
     if _G.GRND_RC and _G.GRND_RC.prompt then
         return true
     end
-    if _G.GRND_FORMS and _G.GRND_FORMS.active then return true end
-    if _G.GRND_GNEWS and _G.GRND_GNEWS.active then return true end
     if _G.GRND_LOG and (_G.GRND_LOG.viewerOpen or _G.GRND_LOG.dateOpen) then
         return true
     end
@@ -9160,8 +9159,6 @@ local function grndUiMouseCaptureActive()
     if REP and REP.open then return true end
     local RC=_G.GRND_RC
     if RC and ((RC.show and RC.cursor) or RC.prompt) then return true end
-    if _G.GRND_FORMS and _G.GRND_FORMS.active then return true end
-    if _G.GRND_GNEWS and _G.GRND_GNEWS.active then return true end
     if _G.GRND_LOG and (_G.GRND_LOG.viewerOpen or _G.GRND_LOG.dateOpen) then return true end
     if _G.GRND_TARGET_RING and _G.GRND_TARGET_RING.capture then return true end
     if _G.GRND_KL and _G.GRND_KL.moving then return true end
@@ -9300,8 +9297,8 @@ _G.grndStickyDebug = {
 }
 local GRND_UI_MOVE_KEYS={0x57,0x41,0x53,0x44,0x25,0x26,0x27,0x28}
 local function grndUiMovementGuardTick()
-    local approvalPopupOpen = ((_G.GRND_FORMS and _G.GRND_FORMS.active) ~= nil)
-        or ((_G.GRND_GNEWS and _G.GRND_GNEWS.active) == true)
+    -- окна админ-формы и гос. волны не блокируют движение персонажа
+    local approvalPopupOpen = false
     if not (approvalPopupOpen or GRND_UI_MOUSE.uiGuard or GRND_UI_MOUSE.active) then return end
     if grndNativeChatInputActive() and not approvalPopupOpen then return end
     if type(grndIsSpawned)=="function" then
@@ -9684,8 +9681,7 @@ function grndTargetRingSceneReady()
         or (GRND_TAB and GRND_TAB.open)
         or (_G.GRND_RC and _G.GRND_RC.prompt)
         or (_G.GRND_REP and _G.GRND_REP.open)
-        or (_G.GRND_FORMS and _G.GRND_FORMS.active)
-        or (_G.GRND_GNEWS and _G.GRND_GNEWS.active) then
+        then
         return false
     end
     return true
