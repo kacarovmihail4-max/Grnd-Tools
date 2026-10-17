@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.270"
+GRND_SCRIPT_VERSION = "1.19.271"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.271 — карточки админ-форм и гос. волны плотнее (фон менее прозрачный);
 v1.19.270 — окна админ-форм и гос. волны как на сервере:
   1) полупрозрачная карточка без кнопок и без крестика: «Форма от Админа NICK»,
      строка команды, «Принять форму: Y | Для отказа: N», таймер автозакрытия;
@@ -40053,7 +40054,7 @@ function grndMainBody()
             local pos = im.GetWindowPos()
             local dl = im.GetWindowDrawList()
             local function at(x, y) return im.ImVec2(pos.x + x, pos.y + y) end
-            roundRect(dl, at(0, 0), at(FW, FH), col32(0, 0, 0, 120), 8)
+            roundRect(dl, at(0, 0), at(FW, FH), col32(0, 0, 0, 200), 8)
             local WHITE = col32(245, 248, 255, 255)
             local GREEN = col32(63, 209, 145, 255)
             local RED = col32(235, 70, 70, 255)
