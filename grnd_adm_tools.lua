@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.323"
+GRND_SCRIPT_VERSION = "1.19.324"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -17237,6 +17237,14 @@ function grndSpecSwitch(step)
     notify.add(("Слежка: #%d"):format(found), "ok", 2)
     return true
 end
+function grndSpecPedInterior(ped)
+    if type(getCharPointer) ~= "function" or type(ffi) ~= "table" then return nil end
+    local okP, ptr = pcall(getCharPointer, ped)
+    if not okP or type(ptr) ~= "number" or ptr == 0 then return nil end
+    local ok, v = pcall(function() return ffi.cast("int*", ptr + 0x58)[0] end)
+    if ok and type(v) == "number" then return v end
+    return nil
+end
 function grndSpecRoadTp(withCars)
     if not grndSpecInSpec() then
         notify.add("ТП на дорогу: слежка не активна", "warn", 3)
@@ -17253,6 +17261,11 @@ function grndSpecRoadTp(withCars)
     end
     if not ped or type(getCharCoordinates) ~= "function" then
         notify.add(("ТП на дорогу: игрок #%d не в зоне видимости"):format(pid), "warn", 3)
+        return false
+    end
+    local inInt = grndSpecPedInterior(ped)
+    if inInt and inInt ~= 0 then
+        notify.add(("ТП на дорогу отменена: игрок #%d в интерьере (%d)"):format(pid, inInt), "warn", 4)
         return false
     end
     local okC, px, py, pz = pcall(getCharCoordinates, ped)
