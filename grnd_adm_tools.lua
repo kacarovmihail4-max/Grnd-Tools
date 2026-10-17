@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.298"
+GRND_SCRIPT_VERSION = "1.19.299"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.299 — проверка обновлений при заходе запускается после реального спавна (раньше уходила на экран входа и съедала паузу, из-за чего тоста после спавна не было);
 v1.19.298 — до спавна: защёлка спавна не стартует взведённой (isPlayerPlaying на экране входа давал true), окно авторизации распознаётся, тосты скрыты кроме «Скрипт загружен», меню не открывается по M, оверлей админов скрыт;
 v1.19.297 — окно формы, гос. новости, статистика и чекеры в меню тоже скрыты до спавна (гейт grndUiBlocked);
 v1.19.296 — окна скрипта и автообновление не появляются до реального спавна: признак спавна берётся из отправки спавна клиентом (onSendSpawn), а не из sampIsLocalPlayerSpawned, который давал true раньше;
@@ -33385,13 +33386,14 @@ local function grndUpdInit()
             local okD, open = pcall(dlg)
             if okD and open then return false end
         end
-        if U.spawned() then return true end
+        -- готовность берём только из гейта с защёлкой спавна: sampIsLocalPlayerSpawned
+        -- до спавна может давать true, и тогда проверка уходила бы на экране входа
         local f = rawget(_G, "grndSessionReady")
         if type(f) == "function" then
             local ok, v = pcall(f)
-            if ok and v then return true end
+            return ok and v == true
         end
-        return false
+        return U.spawned()
     end
     local function loud()
         return U.checkReason ~= "spawn"
