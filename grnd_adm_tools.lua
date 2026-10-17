@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.310"
+GRND_SCRIPT_VERSION = "1.19.311"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -1242,13 +1242,7 @@ function grndDialogTextNow()
     local caption, text = grndDialogPartsNow()
     return caption .. "\n" .. text
 end
-function grndAuthDialogOpen()
-    local authState = _G.GRND_AUTH_STATE
-    if authState and authState.showedAuthOk then return false end
-    if type(sampIsLocalPlayerSpawned) == "function" then
-        local okS, sp = pcall(sampIsLocalPlayerSpawned)
-        if okS and sp and grndSpawnLatched() then return false end
-    end
+function grndAuthDialogRaw()
     local caption, text = grndDialogPartsNow()
     if caption == "" and text == "" then return false end
     local title, body = grndUiLower(caption), grndUiLower(text)
@@ -1270,6 +1264,15 @@ function grndAuthDialogOpen()
         or body:find("аккаунт", 1, true) or body:find("account", 1, true)
         or body:find("логин", 1, true) or body:find("login", 1, true)
     return hasPassword and hasPrompt and true or false
+end
+function grndAuthDialogOpen()
+    local authState = _G.GRND_AUTH_STATE
+    if authState and authState.showedAuthOk then return false end
+    if type(sampIsLocalPlayerSpawned) == "function" then
+        local okS, sp = pcall(sampIsLocalPlayerSpawned)
+        if okS and sp and grndSpawnLatched() then return false end
+    end
+    return grndAuthDialogRaw()
 end
 function grndAuthWaitExpired()
     local authState = _G.GRND_AUTH_STATE
@@ -1359,7 +1362,7 @@ function grndSpawnLatched()
         S.seen, S.heur, S.loadedConnected = false, nil, nil
     end
     if S.loadedConnected and not S.seen and not S.heurDone and st == 3
-        and os.clock() - (S.connAt or 0) >= 3 and not grndAuthDialogOpen() then
+        and os.clock() - (S.connAt or 0) >= 3 and not grndAuthDialogRaw() then
         local playing = false
         if type(isPlayerPlaying) == "function" then
             local okP, v = pcall(isPlayerPlaying, PLAYER_HANDLE)
@@ -1367,7 +1370,7 @@ function grndSpawnLatched()
         end
         if playing then S.seen, S.heur = true, true end
     end
-    if S.heur and grndAuthDialogOpen() then
+    if S.heur and grndAuthDialogRaw() then
         S.seen, S.heur, S.heurDone = false, nil, true
     end
     return S.seen == true

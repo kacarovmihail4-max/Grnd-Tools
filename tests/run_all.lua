@@ -42,7 +42,7 @@ end
 
 for _, name in ipairs({ "punauto_logic_test", "punauto_module_test",
     "chatlog_test", "ao_level_test", "radtools_test", "upd_test",
-    "dlgpolicy_test" }) do
+    "dlgpolicy_test", "latch_test" }) do
     local okRun, out = runStand(name)
     io.write(out)
     if okRun then
