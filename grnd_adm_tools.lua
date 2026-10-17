@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.305"
+GRND_SCRIPT_VERSION = "1.19.306"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -32273,14 +32273,6 @@ do
                 end
                 R.uiText(cx + cw - W(status, 0.9), y, status, scol, 0.9)
                 y = y + 18
-                if R.button("rt_upd_check", cx, y, cw, 26,
-                    "Проверить обновления", { cutW = cw - 16 }) then
-                    if type(U.check) == "function" then U.check("section") end
-                    if type(_G.ensureRender) == "function" then
-                        pcall(_G.ensureRender, true)
-                    end
-                end
-                y = y + 26
             end
         end
         return y
@@ -32321,7 +32313,7 @@ local function grndUpdInit()
     U.auto    = true
     U.timeout = 12
     U.fileTimeout = 60
-    U.connectTimeout = 4000
+    U.connectTimeout = 2000
     U.recvTimeout    = 6000
     U.state = "idle"
     U.err, U.job = nil, nil
@@ -32916,7 +32908,7 @@ local function grndUpdInit()
             if not c then
                 if U.staleSeen then
                     U.state = "uptodate"
-                    U.notify("Обновлений нет — версия " .. U.cur, "ok", 2.6)
+                    if U.checkReason ~= "spawn" then U.notify("Обновлений нет — версия " .. U.cur, "ok", 2.6) end
                     U.finish()
                     return false
                 end
@@ -33030,7 +33022,7 @@ local function grndUpdInit()
             U.activeId = c.id
             U.saveCfg()
         end
-        U.notify("Обновлений нет — версия " .. U.cur, "ok", 2.6)
+        if U.checkReason ~= "spawn" then U.notify("Обновлений нет — версия " .. U.cur, "ok", 2.6) end
         U.finish()
         return true
     end
@@ -33183,7 +33175,7 @@ local function grndUpdInit()
         U.saveCfg()
         buildOrder()
         U.diag(("проверка (%s), зеркал: %d"):format(tostring(reason), #U.order))
-        U.notify("Проверяю обновления…", "info", 2.2)
+        if U.checkReason ~= "spawn" then U.notify("Проверяю обновления…", "info", 2.2) end
         return U.dlVersion()
     end
     function U.onSpawn()
@@ -33210,9 +33202,14 @@ local function grndUpdInit()
         local sp = U.sessionReady()
         if sp and not U.wasSpawn then
             U.wasSpawn = true
-            U.onSpawn()
+            U.spawnAt = now
         elseif not sp then
             U.wasSpawn = false
+            U.spawnChecked = false
+        end
+        if sp and U.wasSpawn and not U.spawnChecked and U.spawnAt and now - U.spawnAt >= 8 then
+            U.spawnChecked = true
+            U.onSpawn()
         end
         local job = U.job
         if not job then return false end

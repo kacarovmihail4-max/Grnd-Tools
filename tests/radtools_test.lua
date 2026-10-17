@@ -1113,7 +1113,7 @@ _G.GRND_UPDATE = {
         _G.GRND_UPDATE.reloadPending = true end,
 }
 local yUpd = RT.page(mkR(), 10, y0, cw)
-check(keys(clicks):find("rt_upd_check") ~= nil, "обновления: кнопка проверки")
+check(keys(clicks):find("rt_upd_check") == nil, "обновления: кнопки проверки в настройках нет")
 local updHead = {}
 for _, d in ipairs(drawn) do updHead[#updHead + 1] = tostring(d.t) end
 check(table.concat(updHead, "|"):find("ОБНОВЛЕНИЯ", 1, true) ~= nil,
@@ -1128,7 +1128,7 @@ check(yUpd > yNoUpd, "обновления: строка добавила выс
 -- Клик по кнопке: стартует проверка и открывается окно статуса.
 resetDrawn()
 RT.page(mkR({ rt_upd_check = true }), 10, y0, cw)
-check(updCheck == 1, "обновления: клик запускает проверку")
+check(updCheck == 0, "обновления: клика по кнопке нет (кнопка убрана)")
 
 -- Обновление скачано: кнопки перезапуска больше нет (v1.19.229 — обновление
 -- включается само), в строке видно, что оно включается.

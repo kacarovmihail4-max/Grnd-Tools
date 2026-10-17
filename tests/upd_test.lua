@@ -249,6 +249,8 @@ local function resetU()
     FS[SCRIPT_PATH] = "-- старый скрипт\n"
     _G.__toasts = {}
     _G.__spawned = false
+    U.wasSpawn, U.spawnChecked, U.spawnAt = false, false, nil
+    U.cfgLoaded = false
     downloads = {}
     logs = {}
     reloaded = 0
@@ -711,37 +713,51 @@ check(U.state == "ready" and U.installed, "зеркало: обычная уст
 resetU()
 _G.__spawned = true
 U.tick()
-check(U.state == "checking", "спавн: проверка запустилась")
-check(hasToast("Проверяю обновления"), "спавн: тост «Проверяю обновления…»")
+check(U.state ~= "checking", "спавн: сразу после входа проверки ещё нет")
+now = now + 9
+U.tick()
+check(U.state == "checking", "спавн: проверка запустилась через 8 с")
+check(not hasToast("Проверяю обновления"), "спавн: тоста «Проверяю…» при автопроверке нет")
 succeed(1, V .. "\n")
 U.tick()
 check(U.state == "uptodate", "спавн: проверка завершилась")
-check(hasToast("Обновлений нет — версия " .. V),
-    "спавн: результат проверки видно тостом")
-check(hasToast("Проверяю обновления"), "спавн: тост проверки тоже был")
+check(not hasToast("Обновлений нет"), "спавн: тоста «нет обновлений» при автопроверке нет")
 
 -- следующий заход (через полминуты) — проверяем снова
 wallNow = wallNow + 30
 _G.__spawned = false U.tick() _G.__spawned = true U.tick()
+now = now + 9
+U.tick()
 check(#downloads == 2, "спавн: следующий заход снова проверяет")
 succeed(2, V .. "\n")
 U.tick()
 -- а дребезг флага спавна (в пределах 20 с) второй раз не дёргает
 _G.__spawned = false U.tick() _G.__spawned = true U.tick()
+now = now + 9
+U.tick()
 check(#downloads == 2, "спавн: в пределах 20 с второй раз не дёргаем")
 wallNow = wallNow + 30
 _G.__spawned = false U.tick() _G.__spawned = true U.tick()
+now = now + 9
+U.tick()
 check(#downloads == 3, "спавн: через полминуты — снова проверка")
 
 -- period: реже, если задан
 resetU()
 gconf.sections.update = "auto=1\nperiod=10800\nlast=0\n"
+_G.__spawned = false
+U.tick()
 _G.__spawned = true
+U.tick()
+now = now + 9
 U.tick()
 check(U.state == "checking", "period=10800: первый заход проверяет")
 succeed(1, V .. "\n")
 U.tick()
+check(U.state == "uptodate", "period=10800: первый заход проверен")
 _G.__spawned = false U.tick() _G.__spawned = true U.tick()
+now = now + 9
+U.tick()
 check(U.state == "uptodate", "period=10800: второй заход молчит")
 
 -- ДО авторизации проверок нет: ждём спавна сколько угодно
@@ -770,6 +786,8 @@ _G.__spawned = false
 U.spawned = function() return false end
 _G.grndSessionReady = function() return true end
 U.tick()
+now = now + 9
+U.tick()
 check(U.state == "checking", "запасной источник: готовность сессии тоже годится")
 U.spawned = realSpawned
 _G.grndSessionReady = nil
@@ -778,8 +796,10 @@ _G.grndAuthDialogOpen = nil
 resetU()
 _G.__spawned = true
 U.tick()
+now = now + 9
+U.tick()
 check(U.state == "checking", "авторизация: после входа проверка идёт")
-check(hasToast("Проверяю обновления"), "авторизация: тост проверки")
+check(not hasToast("Проверяю обновления"), "авторизация: тоста проверки при спавне нет")
 _G.__spawned = false
 U.job = nil
 
@@ -787,6 +807,8 @@ U.job = nil
 resetU()
 gconf.sections.update = "auto=0\nperiod=0\nlast=0\n"
 _G.__spawned = true
+U.tick()
+now = now + 9
 U.tick()
 check(#downloads == 0, "auto=0: при заходе не проверяем")
 check(U.auto == false, "auto=0: настройка прочитана")
