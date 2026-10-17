@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.288"
+GRND_SCRIPT_VERSION = "1.19.289"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.289 — при открытом серверном окне с полем ввода буквы, цифры, Enter и Backspace идут в это поле, а не в горячие клавиши скрипта (T, M, R, E и др.); Esc, F-клавиши и Tab работают как раньше;
 v1.19.288 — в слежке при открытом серверном окне колесо, стрелки и +/- не перехватываются скриптом (прокрутка и ввод в окне);
 v1.19.287 — формы от Grnd_Bot не открываются (только формы, остальные строки бота не меняются);
 v1.19.286 — в слежке серверное окно закрывается и прокручивается: панель слежки без курсора не захватывает мышь и клавиши;
@@ -1352,6 +1353,20 @@ function grndServerDialogOpen()
     return (ok and res) and true or false
 end
 -- серверные окна не блокируют ввод и закрытие окон скрипта, пока идёт слежка
+-- серверное окно с полем ввода (стиль INPUT=1 или PASSWORD=3)
+function grndServerInputDialogTyping()
+    local D = _G.GRND_SRVDLG
+    if type(D) ~= "table" then return false end
+    if not grndServerDialogOpen() then return false end
+    return D.style == 1 or D.style == 3
+end
+-- клавиши, которые печатаются в строку ввода серверного окна
+function grndSrvTypingKey(wp)
+    wp = tonumber(wp) or 0
+    return wp == 0x20 or wp == 0x08 or wp == 0x0D or wp == 0x2E
+        or (wp >= 0x30 and wp <= 0x5A) or (wp >= 0x60 and wp <= 0x6F)
+        or (wp >= 0xBA and wp <= 0xC0) or (wp >= 0xDB and wp <= 0xDF)
+end
 function grndServerWinBlocks()
     if type(grndCamSpectating) == "function" and grndCamSpectating() then return false end
     return grndServerDialogOpen()
@@ -11244,6 +11259,12 @@ function onWindowMessage(msg, wparam, lparam)
     end
     if GRND_KEYS.blocked then return end
     if BLOCK_KEYS_ON_ANY_DIALOG and GRND_KEYS.dlgActive then return end
+    -- открыто серверное окно с полем ввода: символы идут в его строку,
+    -- а не в горячие клавиши скрипта (T, M, R, E и т.п.)
+    if (isDown or isUp) and grndServerInputDialogTyping() and grndSrvTypingKey(wp)
+        and not grndCamWindowsOpen() and not grndNativeChatInputActive() then
+        return
+    end
     if not isDown and not isUp then return end
     if _G.grndRingOnKeyMsg and _G.grndRingOnKeyMsg(isDown, wp, lp) then
         grndConsumeMsg(true)
@@ -42905,6 +42926,7 @@ function grndMainBody()
                 if data then whSyncFeed(whSyncSlotPassenger, playerId, data) end
             end
             function sampev.onShowDialog(dialogId, style, title, button1, button2, text)
+                _G.GRND_SRVDLG = { id = dialogId, style = tonumber(style) or -1, at = os.clock() }
                 if GRND_SKIPZZ and GRND_SKIPZZ.on then
                     local okZ, hideZ = pcall(grndSkipZZMatch, title, text)
                     if okZ and hideZ then return false end
