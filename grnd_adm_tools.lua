@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.338"
+GRND_SCRIPT_VERSION = "1.19.339"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41566,12 +41566,12 @@ function grndMainBody()
                             bdl:AddLine(bat(cx + 3, cy - 2), bat(cx + 0.5, cy + 0.5), ic, 1.5)
                         elseif key == "flag" then
                             local px = cx - 1.5
-                            bdl:AddLine(bat(px, cy - 8), bat(px, cy + 6.5), ic, 1.5)
-                            bdl:AddLine(bat(px, cy - 8), bat(px + 8, cy - 5), ic, 1.5)
-                            bdl:AddLine(bat(px + 8, cy - 5), bat(px, cy - 2), ic, 1.5)
+                            bdl:AddLine(bat(px, cy - 8), bat(px, cy + 8), ic, 1.5)
+                            bdl:AddLine(bat(px, cy - 8), bat(px + 4.5, cy - 5.5), ic, 1.5)
+                            bdl:AddLine(bat(px + 4.5, cy - 5.5), bat(px, cy - 1.5), ic, 1.5)
                             -- полукольцо постоянной толщины: закрашенные квады из двух треугольников
                             -- U-образная подставка под древком, концы загнуты вверх (как на эталоне)
-                            local U_R, U_CY, U_N = 4.5, cy + 2, 32
+                            local U_R, U_CY, U_N = 3.8, cy + 4, 32
                             local uPx, uPy = nil, nil
                             for k = 0, U_N do
                                 local ang = math.pi * k / U_N
@@ -41579,8 +41579,6 @@ function grndMainBody()
                                 if uPx then bdl:AddLine(bat(uPx, uPy), bat(ux, uy), ic, 1.5) end
                                 uPx, uPy = ux, uy
                             end
-                            bdl:AddLine(bat(px - U_R, U_CY), bat(px - U_R, U_CY - 2.5), ic, 1.5)
-                            bdl:AddLine(bat(px + U_R, U_CY), bat(px + U_R, U_CY - 2.5), ic, 1.5)
                         end
                         if clicked then
                             if key == "back" then grndSpecSwitch(-1)
