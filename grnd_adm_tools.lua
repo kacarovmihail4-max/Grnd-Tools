@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.344"
+GRND_SCRIPT_VERSION = "1.19.345"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41589,12 +41589,13 @@ function grndMainBody()
                             bdl:AddLine(bat(cx + 0.5, cy - 4.5), bat(cx + 3, cy - 2), ic, 1.5)
                             bdl:AddLine(bat(cx + 3, cy - 2), bat(cx + 0.5, cy + 0.5), ic, 1.5)
                         elseif key == "flag" then
+                            local function fat(x2, y2) return im.ImVec2(math.floor(bpos.x + x2 * S + 0.5), math.floor(bpos.y + y2 * S + 0.5)) end
                             local px = cx - 1.5
-                            bdl:AddLine(bat(px, cy - 8), bat(px, cy + 8), ic, 1.5)
-                            bdl:AddCircleFilled(bat(px, cy - 8), 0.75 * S, ic, 10)
-                            bdl:AddCircleFilled(bat(px, cy + 8), 0.75 * S, ic, 10)
+                            bdl:AddLine(fat(px, cy - 8), fat(px, cy + 8), ic, 1.5)
+                            bdl:AddCircleFilled(fat(px, cy - 8), 0.75 * S, ic, 10)
+                            bdl:AddCircleFilled(fat(px, cy + 8), 0.75 * S, ic, 10)
                             -- флажок: сплошной треугольник (как на эталоне)
-                            local fT1, fT2, fT3 = bat(px, cy - 8), bat(px + 6, cy - 5), bat(px, cy - 2)
+                            local fT1, fT2, fT3 = fat(px, cy - 8), fat(px + 6, cy - 5), fat(px, cy - 2)
                             if bdl.AddTriangleFilled then
                                 bdl:AddTriangleFilled(fT1, fT2, fT3, ic)
                             elseif bdl.AddTriangle then
@@ -41612,7 +41613,7 @@ function grndMainBody()
                             local U_OVER = 0.6
                             for k = 0, U_N do
                                 local ang = -U_OVER + (math.pi + 2 * U_OVER) * k / U_N
-                                bdl:AddCircleFilled(bat(px + U_R * math.cos(ang), U_CY + U_R * math.sin(ang)), 0.75 * S, ic, 10)
+                                bdl:AddCircleFilled(fat(px + U_R * math.cos(ang), U_CY + U_R * math.sin(ang)), 0.75 * S, ic, 10)
                             end
                         end
                         if clicked then
