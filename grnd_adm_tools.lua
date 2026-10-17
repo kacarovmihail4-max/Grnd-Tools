@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.326"
+GRND_SCRIPT_VERSION = "1.19.327"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41459,11 +41459,12 @@ function grndMainBody()
                 local flagsB = wf("NoTitleBar", "NoResize", "NoMove", "NoScrollbar",
                     "NoCollapse", "NoFocusOnAppearing", "NoBringToFrontOnFocus")
                 local anyHov = false
+                local hovHint = nil
                 if grndBegin("##grnd_spec_bar", flagsB) then
                     local bpos = im.GetWindowPos()
                     local bdl = im.GetWindowDrawList()
                     local function bat(x2, y2) return im.ImVec2(bpos.x + x2 * S, bpos.y + y2 * S) end
-                    roundRect(bdl, bat(0, 0), bat(PW, PH), col32(12, 10, 18, 240), 8)
+                    roundRect(bdl, bat(0, 0), bat(PW, PH), col32(12, 10, 18, 240), 14)
                     local ic = col32(245, 245, 250, 245)
                     local bx = PAD
                     for i, kb in ipairs(kinds) do
@@ -41475,12 +41476,12 @@ function grndMainBody()
                         local act = (im.IsItemActive and im.IsItemActive()) or false
                         if hov then
                             anyHov = true
-                            if type(im.SetTooltip) == "function" then pcall(im.SetTooltip, hint) end
+                            hovHint = { text = hint, cx = bx + bw / 2 }
                         end
                         local ac = TH.accent
                         local bgc = (act and col32(ac[1], ac[2], ac[3], 255))
                             or (hov and col32(ac[1], ac[2], ac[3], 190)) or col32(31, 28, 41, 235)
-                        roundRect(bdl, bat(bx, by), bat(bx + bw, by + BH), bgc, 6)
+                        roundRect(bdl, bat(bx, by), bat(bx + bw, by + BH), bgc, 10)
                         local cx, cy = bx + bw / 2, by + BH / 2
                         if key == "back" then
                             local tw = drawnWb("(Q)", 0.80 * S) / S
@@ -41512,19 +41513,19 @@ function grndMainBody()
                             bdl:AddLine(bat(cx + 0.5, cy - 4.5), bat(cx + 3, cy - 2), ic, 1.5)
                             bdl:AddLine(bat(cx + 3, cy - 2), bat(cx + 0.5, cy + 0.5), ic, 1.5)
                         elseif key == "flag" then
-                            bdl:AddLine(bat(cx - 4, cy - 8), bat(cx - 4, cy + 4.2), ic, 1.5)
-                            bdl:AddLine(bat(cx - 4, cy - 8), bat(cx + 4, cy - 5), ic, 1.5)
-                            bdl:AddLine(bat(cx + 4, cy - 5), bat(cx - 4, cy - 2), ic, 1.5)
-                            local hx, hy = cx - 4, cy + 1
+                            local px = cx - 2.25
+                            bdl:AddLine(bat(px, cy - 8), bat(px, cy + 7), ic, 1.5)
+                            bdl:AddLine(bat(px, cy - 8), bat(px + 8, cy - 5), ic, 1.5)
+                            bdl:AddLine(bat(px + 8, cy - 5), bat(px, cy - 2), ic, 1.5)
                             local okArc = pcall(function()
-                                bdl:PathArcTo(bat(hx, hy), 3.2 * S, 0, math.pi, 32)
+                                bdl:PathArcTo(bat(px, cy + 3.5), 3.5 * S, 0, math.pi, 40)
                                 bdl:PathStroke(ic, 0, 1.5)
                             end)
                             if not okArc then
-                                local prevX, prevY = hx + 3.2, hy
-                                for k = 1, 24 do
-                                    local ang = math.pi * k / 24
-                                    local nx2, ny2 = hx + 3.2 * math.cos(ang), hy + 3.2 * math.sin(ang)
+                                local prevX, prevY = px + 3.5, cy + 3.5
+                                for k = 1, 30 do
+                                    local ang = math.pi * k / 30
+                                    local nx2, ny2 = px + 3.5 * math.cos(ang), cy + 3.5 + 3.5 * math.sin(ang)
                                     bdl:AddLine(bat(prevX, prevY), bat(nx2, ny2), ic, 1.5)
                                     prevX, prevY = nx2, ny2
                                 end
@@ -41545,6 +41546,34 @@ function grndMainBody()
                 grndPopCol(clB)
                 grndPopStyle(stB)
                 SB.hov = anyHov
+                if hovHint then
+                    local tw = drawnWb(hovHint.text, 0.80 * S)
+                    local HW = math.floor(tw + 20 * S)
+                    local HH = math.floor(22 * S)
+                    local hx = math.floor(SB.x + hovHint.cx * S - HW / 2)
+                    hx = math.max(0, math.min(resX - HW, hx))
+                    local hy = SB.y - HH - 6
+                    if hy < 0 then hy = SB.y + SH + 6 end
+                    im.SetNextWindowPos(im.ImVec2(hx, hy), COND_ALWAYS)
+                    im.SetNextWindowSize(im.ImVec2(HW, HH), COND_ALWAYS)
+                    local stH, clH = 0, 0
+                    if grndPushStyleV2(im.StyleVar and im.StyleVar.WindowPadding, 0, 0) then stH = stH + 1 end
+                    if grndPushStyleF(im.StyleVar and im.StyleVar.WindowRounding, 0) then stH = stH + 1 end
+                    if grndPushCol(im.Col and im.Col.WindowBg, rgba(0, 0, 0, 0)) then clH = clH + 1 end
+                    if grndPushCol(im.Col and im.Col.Border, rgba(0, 0, 0, 0)) then clH = clH + 1 end
+                    local flagsH = wf("NoTitleBar", "NoResize", "NoMove", "NoScrollbar",
+                        "NoCollapse", "NoFocusOnAppearing", "NoBringToFrontOnFocus", "NoInputs")
+                    if grndBegin("##grnd_spec_hint", flagsH) then
+                        local hpos = im.GetWindowPos()
+                        local hdl = im.GetWindowDrawList()
+                        roundRect(hdl, im.ImVec2(hpos.x, hpos.y), im.ImVec2(hpos.x + HW, hpos.y + HH),
+                            col32(12, 10, 18, 235), 10)
+                        uiText(10 * S, 4 * S, hovHint.text, c4(TH.textHi), 0.80 * S)
+                    end
+                    if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
+                    grndPopCol(clH)
+                    grndPopStyle(stH)
+                end
             end
             do
                 if RC.actionsWinOpen and RC.id ~= nil
