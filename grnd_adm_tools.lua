@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.279"
+GRND_SCRIPT_VERSION = "1.19.280"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.280 — ошибки «Данный игрок не в транспорте!» и «Игрок должен находится в транспорте» уходят в админ-чат; добавлена команда /untie (без проверки синтаксиса);
 v1.19.279 — после Y/N окно формы не остаётся: копии уже решённой формы из очереди удаляются;
 v1.19.278 — команды без проверки синтаксиса: после Y скрипт ждёт ответ сервера;
   ошибка («|Неверный ID игрока», «Используйте: ...») уходит в админ-чат как «>> текст»,
@@ -11914,7 +11915,7 @@ GRND_FORM_ALLOWED_EXTRA = {
     uncuff = true, arm = true, unwarn = true, offunwarn = true, unjail = true,
     unfreeze = true, auninvite = true, rgun = true, runmute = true,
     unmute = true, unban = true, offunjail = true, spawn = true,
-    flip = true, fixcar = true, setskin = true,
+    flip = true, fixcar = true, setskin = true, untie = true,
 }
 function grndFormCommandName(cmd)
     local s = tostring(cmd or ""):gsub("^%s+", "")
@@ -12263,6 +12264,7 @@ GRND_FORM_FAIL_WORDS = {
     "варнов нет", "не наказан", "не в розыске", "не за что", "нечего",
     "слишком мало", "слишком много", "слишком большой", "слишком длинный",
     "минимум", "максимум", "превышен", "превышает",
+    "не в транспорте", "должен находится в транспорте", "должен находиться в транспорте",
 }
 GRND_FORM_OK_WORDS = {
     "вы посадили", "вы выдали", "вы дали мут", "вы забанили", "вы замучили",

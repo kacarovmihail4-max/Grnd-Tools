@@ -332,6 +332,10 @@ ok("plain.watch", src:find("grndFormWatchStart, form, cmd, name, not punish", 1,
 ok("plain.errorSend", src:find('grndFormFitText(text, grndFormPrefix() .. ">> ")', 1, true) ~= nil)
 ok("plain.pipeVerdict", src:find('u:match("^%s*|")', 1, true) ~= nil)
 
+-- ошибки про транспорт и команда /untie
+ok("form.vehicleFail", src:find('"не в транспорте"', 1, true) ~= nil and src:find('"должен находится в транспорте"', 1, true) ~= nil)
+ok("form.untie", src:find("untie = true", 1, true) ~= nil)
+
 print(string.format("--- серверное окно и окна скрипта: %d/%d ok ---", total - fails, total))
 if fails > 0 then os.exit(1) end
 os.exit(0)
