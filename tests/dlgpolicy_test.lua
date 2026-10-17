@@ -327,6 +327,11 @@ ok("forms.msg.reject", src:find('" отклонена!"', 1, true) ~= nil and sr
 ok("forms.wait.4s", src:find("GRND_FORM_WAIT_SEC) or 4.0", 1, true) ~= nil)
 ok("forms.card.noButtons", src:find("grndSrvCardDraw(FW, FH", 1, true) ~= nil and src:find("Нашёл форму", 1, true) == nil)
 
+-- команды без проверки синтаксиса: ждём ответ сервера, ошибка уходит как «>> текст»
+ok("plain.watch", src:find("grndFormWatchStart, form, cmd, name, not punish", 1, true) ~= nil)
+ok("plain.errorSend", src:find('grndFormFitText(text, grndFormPrefix() .. ">> ")', 1, true) ~= nil)
+ok("plain.pipeVerdict", src:find('u:match("^%s*|")', 1, true) ~= nil)
+
 print(string.format("--- серверное окно и окна скрипта: %d/%d ok ---", total - fails, total))
 if fails > 0 then os.exit(1) end
 os.exit(0)

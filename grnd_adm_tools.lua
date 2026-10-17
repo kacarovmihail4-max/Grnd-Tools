@@ -2,9 +2,12 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.277"
+GRND_SCRIPT_VERSION = "1.19.278"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.278 — команды без проверки синтаксиса: после Y скрипт ждёт ответ сервера;
+  ошибка («|Неверный ID игрока», «Используйте: ...») уходит в админ-чат как «>> текст»,
+  без «Форма ... принята»; если ошибки нет — «Форма от NICK принята.»;
 v1.19.277 — отклонённая форма не открывается снова: служебные строки скрипта — пример команды, ответы — не принимаются за новую форму;
 v1.19.276 — защита от повтора формы: 1,5 с для форм от любого администратора (было 120 с);
 v1.19.275 — отклонённая форма не появляется снова;
@@ -12216,8 +12219,8 @@ function grndFormApply(form)
         return nil,"bad","Не удалось отправить команду на сервер"
     end
     local started = false
-    if punish and type(grndFormWatchStart) == "function" then
-        local okW, resW = pcall(grndFormWatchStart, form, cmd, name)
+    if type(grndFormWatchStart) == "function" then
+        local okW, resW = pcall(grndFormWatchStart, form, cmd, name, not punish)
         started = (okW and resW == true)
     end
     if not started then
@@ -12488,7 +12491,7 @@ function grndFormRejectSend(nick, reason)
     if detail ~= "" then grndChatSend(detail) end
     return head, detail
 end
-function grndFormWatchStart(form, cmd, cmdName)
+function grndFormWatchStart(form, cmd, cmdName, plain)
     local W = _G.GRND_FORMWAIT
     if type(W) ~= "table" then return false end
     if not grndFormWaitCfgOn() then return false end
@@ -12497,6 +12500,7 @@ function grndFormWatchStart(form, cmd, cmdName)
     if sec < 0.5 then sec = 0.5 end
     if sec > 10 then sec = 10 end
     W.active   = true
+    W.plain    = plain and true or false
     W.done     = false
     W.nick     = tostring((type(form) == "table" and form.adminNick) or "")
     W.cmd      = tostring(cmd or "")
@@ -12540,6 +12544,16 @@ function grndFormWatchFinish(mode, reason)
     W.active = false
     W.done   = true
     local nick = W.nick
+    if W.plain and mode == "fail" then
+        local text = grndFormPlainText(reason or W.last or "")
+        local msg = grndFormFitText(text, grndFormPrefix() .. ">> ")
+        if msg ~= "" then grndChatSend(msg) end
+        pcall(grndTrace, "forms", "сторож: ошибка сервера по команде -> " .. tostring(msg))
+        if type(notify) == "table" and notify.add then
+            pcall(notify.add, "Сервер ответил ошибкой — в /a ушло: " .. grndFormUtf8Cut(text, 70), "warn", 5)
+        end
+        return true
+    end
     if mode == "fail" then
         local why = grndFormWaitNorm(reason or W.last or "")
         local msg, detail = grndFormRejectSend(nick, why)
@@ -12588,6 +12602,11 @@ function grndFormWatchOnChat(text)
         return false
     end
     if not W.active then return false end
+    if W.plain and (u:match("^%s*|") or u:find("Используйте", 1, true)) then
+        W.last = u
+        grndFormWatchFinish("fail", u)
+        return true
+    end
     local probe = grndFormWaitProbe(u, W.reason)
     if probe == "" then return false end
     local verdict = grndFormWaitClassify(probe, W.cmdName)
@@ -12614,6 +12633,11 @@ function grndFormWatchOnChat(text)
         end
     end
     return false
+end
+function grndFormPlainText(s)
+    local t = tostring(s or "")
+    t = t:gsub("^%s*|%s*", ""):gsub("%s+$", "")
+    return t
 end
 function grndFormWatchTick()
     local W = _G.GRND_FORMWAIT
@@ -12792,6 +12816,9 @@ function grndFormsResolve(action)
                 pcall(notify.add, text, sentWhy and "warn" or "info", 5)
             elseif sentStatus == "bad" then
                 pcall(notify.add, "Форма не отправлена: " .. tostring(sentWhy or "команда неверна"), "warn", 5)
+            elseif _G.GRND_FORMWAIT and _G.GRND_FORMWAIT.active then
+                pcall(notify.add, "Команда отправлена: " .. tostring(sentCmd or form.cmd)
+                    .. " — жду ответ сервера", "ok", 3)
             elseif not grndFormIsPunish(commandName) then
                 pcall(notify.add, "Форма принята: " .. tostring(sentCmd or form.cmd), "ok", 3)
             elseif grndFormWaitCfgOn() then
