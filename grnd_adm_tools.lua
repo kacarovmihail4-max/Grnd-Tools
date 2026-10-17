@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.341"
+GRND_SCRIPT_VERSION = "1.19.342"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41567,6 +41567,8 @@ function grndMainBody()
                         elseif key == "flag" then
                             local px = cx - 1.5
                             bdl:AddLine(bat(px, cy - 8), bat(px, cy + 8), ic, 1.5)
+                            bdl:AddCircleFilled(bat(px, cy - 8), 0.75 * S, ic, 10)
+                            bdl:AddCircleFilled(bat(px, cy + 8), 0.75 * S, ic, 10)
                             -- флажок: сплошной треугольник (как на эталоне)
                             local fT1, fT2, fT3 = bat(px, cy - 8), bat(px + 6, cy - 5), bat(px, cy - 2)
                             if bdl.AddTriangleFilled then
@@ -41580,13 +41582,11 @@ function grndMainBody()
                             end
                             -- полукольцо постоянной толщины: закрашенные квады из двух треугольников
                             -- U-образная подставка под древком, концы загнуты вверх (как на эталоне)
-                            local U_R, U_CY, U_N = 3.8, cy + 4, 32
-                            local uPx, uPy = nil, nil
+                            -- скруглённая U: цепочка круглых точек толщиной 1.5, концы и стыки круглые
+                            local U_R, U_CY, U_N = 3.2, cy + 4.2, 60
                             for k = 0, U_N do
                                 local ang = math.pi * k / U_N
-                                local ux, uy = px + U_R * math.cos(ang), U_CY + U_R * math.sin(ang)
-                                if uPx then bdl:AddLine(bat(uPx, uPy), bat(ux, uy), ic, 1.5) end
-                                uPx, uPy = ux, uy
+                                bdl:AddCircleFilled(bat(px + U_R * math.cos(ang), U_CY + U_R * math.sin(ang)), 0.75 * S, ic, 10)
                             end
                         end
                         if clicked then
