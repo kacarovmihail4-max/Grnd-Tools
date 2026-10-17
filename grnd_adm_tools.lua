@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.335"
+GRND_SCRIPT_VERSION = "1.19.336"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41566,22 +41566,14 @@ function grndMainBody()
                             bdl:AddLine(bat(cx + 3, cy - 2), bat(cx + 0.5, cy + 0.5), ic, 1.5)
                         elseif key == "flag" then
                             local px = cx - 1.5
-                            bdl:AddLine(bat(px, cy - 8), bat(px, cy), ic, 1.5)
+                            bdl:AddLine(bat(px, cy - 8), bat(px, cy + 3), ic, 1.5)
                             bdl:AddLine(bat(px, cy - 8), bat(px + 8, cy - 5), ic, 1.5)
                             bdl:AddLine(bat(px + 8, cy - 5), bat(px, cy - 2), ic, 1.5)
                             -- полукольцо постоянной толщины: закрашенные квады из двух треугольников
-                            -- чаша: нижняя половина окружности с прямой линией сверху, толщина 1
-                            local BOWL_R, BOWL_N = 5, 40
-                            local bowlPx, bowlPy = nil, nil
-                            for k = 0, BOWL_N do
-                                local ang = math.pi * k / BOWL_N
-                                local bx2, by2 = px + BOWL_R * math.cos(ang), cy + BOWL_R * math.sin(ang)
-                                if bowlPx then
-                                    bdl:AddLine(bat(bowlPx, bowlPy), bat(bx2, by2), ic, 1.0)
-                                end
-                                bowlPx, bowlPy = bx2, by2
+                            -- жирная точка под древком
+                            if bdl.AddCircleFilled then
+                                bdl:AddCircleFilled(bat(px, cy + 5), 2.2 * S, ic, 16)
                             end
-                            bdl:AddLine(bat(px - BOWL_R, cy), bat(px + BOWL_R, cy), ic, 1.0)
                         end
                         if clicked then
                             if key == "back" then grndSpecSwitch(-1)
