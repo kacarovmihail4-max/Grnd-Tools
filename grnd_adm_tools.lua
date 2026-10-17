@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.329"
+GRND_SCRIPT_VERSION = "1.19.330"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -43023,7 +43023,7 @@ function grndMainBody()
             end
             local gateOverlays = type(grndUiBlocked) == "function" and grndUiBlocked()
             if not gateOverlays then
-                if type(_G.grndReconFallback) == "function" then
+                if type(_G.grndReconFallback) == "function" and _G.GRND_IMGUI_ALIVE ~= true then
                     grndPerfRun("_G.grndReconFallback", _G.grndReconFallback)
                 end
                 if type(_G.drawReconHintDx) == "function" then
