@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.306"
+GRND_SCRIPT_VERSION = "1.19.307"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -32919,9 +32919,6 @@ local function grndUpdInit()
             U.chan = c
             local url = chanUrl(c, "version")
             local hdr = (c.kind == "api") and U.API_HDR or nil
-            if U.inetLoad() and startJob(url, nil, true, hdr, { mem = true }) then
-                return true
-            end
             if startJob(url, U.tmpFile(), nil, hdr) then
                 return true
             end
@@ -39703,6 +39700,7 @@ function grndMainBody()
             local elapsed = math.max(0, now - openedAt)
             local remaining = math.max(0, timeout - elapsed)
             if elapsed >= timeout then
+                pcall(notify.add, "Вы не успели принять Админ форму", "warn", 4)
                 if type(_G.grndFormsResolve) == "function" then
                     pcall(_G.grndFormsResolve, "timeout")
                 end
@@ -39770,6 +39768,7 @@ function grndMainBody()
             local remaining = math.max(0, timeout - elapsed)
             if elapsed >= timeout then
                 grndGnewsClose()
+                pcall(notify.add, "Вы не успели принять гос. волну", "warn", 4)
                 return false
             end
             local wantAccept, wantReject = false, false

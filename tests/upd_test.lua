@@ -589,9 +589,18 @@ now = now + 20
 U.tick()
 check(#downloads == 2, "таймаут: молчащий загрузчик — следующий канал")
 
+-- ---------- 8b. проверка версии не блокирует игру: сначала MoonLoader (асинхронно) ----------
+resetU()
+local inetCalls = 0
+U.inetLoad = function() inetCalls = inetCalls + 1 return false end
+U.check("spawn")
+check(inetCalls == 0, "асинхронно: WinINet на игровом потоке не вызывается, пока есть MoonLoader")
+check(#downloads == 1, "асинхронно: версия идёт через загрузчик MoonLoader")
+
 -- ---------- 9. вторая дорога: WinINet ----------
 -- файл версии при доступном WinINet читается В ПАМЯТЬ: никаких файлов
 resetU()
+U.moonDl = nil
 U.inetLoad = inetBackend
 plan["https://api.test/contents/update.txt?ref=grnd-latest"] = V .. "\n"
 U.check("manual")
