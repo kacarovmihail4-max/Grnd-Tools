@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.272"
+GRND_SCRIPT_VERSION = "1.19.273"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.273 — окно админ-формы не включает курсор (управление клавишами Y / N);
 v1.19.272 — карточки форм берут цвет выбранной темы (вместо фиксированного зелёного);
 v1.19.271 — карточки админ-форм и гос. волны плотнее (фон менее прозрачный);
 v1.19.270 — окна админ-форм и гос. волны как на сервере:
@@ -42334,9 +42335,9 @@ function grndMainBody()
                 end
             end
             if _G.GRND_FORMS and _G.GRND_FORMS.active then
+                -- окно формы без курсора: управляется клавишами Y / N
                 local ok, e = pcall(drawFormPopup)
-                if not ok then logRenderErr("forms", e)
-                elseif e then wantCursor = true end
+                if not ok then logRenderErr("forms", e) end
             end
             if GRND_RC and GRND_RC.statsPop and _G.grndDrawStatsPopup then
                 local ok, e = pcall(_G.grndDrawStatsPopup)
