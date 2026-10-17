@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.317"
+GRND_SCRIPT_VERSION = "1.19.318"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41379,9 +41379,14 @@ function grndMainBody()
             grndPopCol(colorN)
             grndPopStyle(styleN)
             if grndSpecInSpec() and im and im.SetNextWindowPos then
-                local BW, BH, GAP = 44, 30, 8
-                local PW = 5 * BW + 4 * GAP + 16
-                local PH = BH + 16
+                local PAD, GAP, BH = 8, 7, 29
+                local WIDE, NARROW = 60, 30
+                local kinds = {
+                    { "back", WIDE }, { "road", NARROW }, { "diamond", NARROW },
+                    { "flag", NARROW }, { "fwd", WIDE },
+                }
+                local PW = 2 * PAD + 2 * WIDE + 3 * NARROW + 4 * GAP
+                local PH = BH + 2 * PAD
                 im.SetNextWindowPos(im.ImVec2(math.floor(resX / 2 - PW / 2), 64), COND_ALWAYS)
                 im.SetNextWindowSize(im.ImVec2(PW, PH), COND_ALWAYS)
                 local stB, clB = 0, 0
@@ -41395,48 +41400,54 @@ function grndMainBody()
                     local bpos = im.GetWindowPos()
                     local bdl = im.GetWindowDrawList()
                     local function bat(x2, y2) return im.ImVec2(bpos.x + x2, bpos.y + y2) end
-                    local keys = { "back", "road", "diamond", "person", "fwd" }
-                    local iconCol = col32(226, 232, 242, 240)
-                    for i, key in ipairs(keys) do
-                        local bx, by = 8 + (i - 1) * (BW + GAP), 8
+                    roundRect(bdl, bat(0, 0), bat(PW, PH), col32(12, 10, 18, 240), 8)
+                    local ic = col32(245, 245, 250, 245)
+                    local bx = PAD
+                    for i, kb in ipairs(kinds) do
+                        local key, bw = kb[1], kb[2]
+                        local by = PAD
                         im.SetCursorPos(im.ImVec2(bx, by))
-                        local clicked = im.InvisibleButton("##grnd_spec_btn" .. i, im.ImVec2(BW, BH))
+                        local clicked = im.InvisibleButton("##grnd_spec_btn" .. i, im.ImVec2(bw, BH))
                         local hov = (im.IsItemHovered and im.IsItemHovered()) or false
                         local act = (im.IsItemActive and im.IsItemActive()) or false
-                        local bgc = (act and col32(44, 52, 66, 245))
-                            or (hov and col32(34, 41, 54, 240)) or col32(20, 24, 33, 225)
-                        roundRect(bdl, bat(bx, by), bat(bx + BW, by + BH), bgc, 6)
-                        local cx, cy = bx + BW / 2, by + BH / 2
+                        local bgc = (act and col32(60, 56, 76, 245))
+                            or (hov and col32(48, 44, 64, 240)) or col32(31, 28, 41, 235)
+                        roundRect(bdl, bat(bx, by), bat(bx + bw, by + BH), bgc, 6)
+                        local cx, cy = bx + bw / 2, by + BH / 2
                         if key == "back" then
-                            bdl:AddLine(bat(cx - 2, cy - 6), bat(cx - 7, cy), iconCol, 1.6)
-                            bdl:AddLine(bat(cx - 7, cy), bat(cx - 2, cy + 6), iconCol, 1.6)
-                            bdl:AddLine(bat(cx + 6, cy - 6), bat(cx + 1, cy), iconCol, 1.6)
-                            bdl:AddLine(bat(cx + 1, cy), bat(cx + 6, cy + 6), iconCol, 1.6)
                             local tw = drawnWb("(Q)", 0.80)
-                            uiText(cx - tw / 2 + 12, cy - 8, "(Q)", c4(TH.textHi), 0.80)
+                            local gx = cx - (11 + 5 + tw) / 2
+                            bdl:AddLine(bat(gx + 5, cy - 5), bat(gx, cy), ic, 1.6)
+                            bdl:AddLine(bat(gx, cy), bat(gx + 5, cy + 5), ic, 1.6)
+                            bdl:AddLine(bat(gx + 11, cy - 5), bat(gx + 6, cy), ic, 1.6)
+                            bdl:AddLine(bat(gx + 6, cy), bat(gx + 11, cy + 5), ic, 1.6)
+                            uiText(gx + 16, cy - 7, "(Q)", c4(TH.textHi), 0.80)
                         elseif key == "fwd" then
                             local tw = drawnWb("(E)", 0.80)
-                            uiText(cx - tw / 2 - 12, cy - 8, "(E)", c4(TH.textHi), 0.80)
-                            bdl:AddLine(bat(cx + 2, cy - 6), bat(cx + 7, cy), iconCol, 1.6)
-                            bdl:AddLine(bat(cx + 7, cy), bat(cx + 2, cy + 6), iconCol, 1.6)
-                            bdl:AddLine(bat(cx - 6, cy - 6), bat(cx - 1, cy), iconCol, 1.6)
-                            bdl:AddLine(bat(cx - 1, cy), bat(cx - 6, cy + 6), iconCol, 1.6)
+                            local gx = cx - (tw + 5 + 11) / 2
+                            uiText(gx, cy - 7, "(E)", c4(TH.textHi), 0.80)
+                            local x0 = gx + tw + 5
+                            bdl:AddLine(bat(x0, cy - 5), bat(x0 + 5, cy), ic, 1.6)
+                            bdl:AddLine(bat(x0 + 5, cy), bat(x0, cy + 5), ic, 1.6)
+                            bdl:AddLine(bat(x0 + 6, cy - 5), bat(x0 + 11, cy), ic, 1.6)
+                            bdl:AddLine(bat(x0 + 11, cy), bat(x0 + 6, cy + 5), ic, 1.6)
                         elseif key == "road" then
-                            if type(_G.grndDrawActIcon) == "function" then
-                                _G.grndDrawActIcon(bdl, bat, "tproad", cx, cy, BH - 10, iconCol)
-                            end
+                            bdl:AddLine(bat(cx - 5, cy + 9), bat(cx - 2, cy - 9), ic, 1.5)
+                            bdl:AddLine(bat(cx + 5, cy + 9), bat(cx + 2, cy - 9), ic, 1.5)
+                            bdl:AddLine(bat(cx, cy - 6), bat(cx, cy - 4), ic, 1.8)
+                            bdl:AddLine(bat(cx, cy - 1), bat(cx, cy + 1), ic, 1.8)
+                            bdl:AddLine(bat(cx, cy + 4), bat(cx, cy + 6), ic, 1.8)
                         elseif key == "diamond" then
-                            bdl:AddLine(bat(cx, cy - 8), bat(cx + 8, cy), iconCol, 1.5)
-                            bdl:AddLine(bat(cx + 8, cy), bat(cx, cy + 8), iconCol, 1.5)
-                            bdl:AddLine(bat(cx, cy + 8), bat(cx - 8, cy), iconCol, 1.5)
-                            bdl:AddLine(bat(cx - 8, cy), bat(cx, cy - 8), iconCol, 1.5)
-                            bdl:AddLine(bat(cx - 3, cy + 3), bat(cx + 3, cy - 3), iconCol, 1.5)
-                        elseif key == "person" then
-                            bdl:AddCircle(bat(cx, cy - 6), 3, iconCol, 16, 1.5)
-                            bdl:AddLine(bat(cx, cy - 2), bat(cx, cy + 4), iconCol, 1.5)
-                            bdl:AddLine(bat(cx - 5, cy), bat(cx + 5, cy), iconCol, 1.5)
-                            bdl:AddLine(bat(cx, cy + 4), bat(cx - 4, cy + 9), iconCol, 1.5)
-                            bdl:AddLine(bat(cx, cy + 4), bat(cx + 4, cy + 9), iconCol, 1.5)
+                            pcall(bdl.AddQuad, bdl, bat(cx, cy - 9), bat(cx + 9, cy), bat(cx, cy + 9), bat(cx - 9, cy), ic, 1.5)
+                            bdl:AddLine(bat(cx - 3, cy + 4), bat(cx - 3, cy - 1), ic, 1.5)
+                            bdl:AddLine(bat(cx - 3, cy - 1), bat(cx + 3, cy - 1), ic, 1.5)
+                            bdl:AddLine(bat(cx + 0.5, cy - 3.5), bat(cx + 3, cy - 1), ic, 1.5)
+                            bdl:AddLine(bat(cx + 3, cy - 1), bat(cx + 0.5, cy + 1.5), ic, 1.5)
+                        elseif key == "flag" then
+                            bdl:AddLine(bat(cx - 4, cy - 9), bat(cx - 4, cy + 4), ic, 1.5)
+                            bdl:AddLine(bat(cx - 4, cy - 9), bat(cx + 4, cy - 6), ic, 1.5)
+                            bdl:AddLine(bat(cx + 4, cy - 6), bat(cx - 4, cy - 3), ic, 1.5)
+                            bdl:AddCircle(bat(cx - 1, cy + 4), 3, ic, 12, 1.4)
                         end
                         if clicked then
                             if key == "back" then grndSpecSwitch(-1)
@@ -41444,6 +41455,7 @@ function grndMainBody()
                             elseif key == "road" then grndSpecRoadTp()
                             end
                         end
+                        bx = bx + bw + GAP
                     end
                 end
                 if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
