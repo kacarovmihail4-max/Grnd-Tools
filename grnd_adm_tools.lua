@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.307"
+GRND_SCRIPT_VERSION = "1.19.308"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -6971,44 +6971,61 @@ function grndChatScanPtr(budget)
     if not base then return nil end
     GRND_CHAT.dbg.base = base
     budget = budget or 40000
-    local wp, slot, checkedW = grndChatScanWindows()
-    if wp then
-        GRND_CHAT._p, GRND_CHAT._src = wp, ("поиск рядом с офсетами (samp.dll+0x%X)"):format(slot)
-        GRND_CHAT.dbg.ptr, GRND_CHAT.dbg.src = GRND_CHAT._p, GRND_CHAT._src
-        return wp
+    local st = GRND_CHAT._sc
+    if not st or st.base ~= base then
+        local wp, slot, checkedW = grndChatScanWindows()
+        if wp then
+            GRND_CHAT._p, GRND_CHAT._src = wp, ("поиск рядом с офсетами (samp.dll+0x%X)"):format(slot)
+            GRND_CHAT.dbg.ptr, GRND_CHAT.dbg.src = GRND_CHAT._p, GRND_CHAT._src
+            GRND_CHAT._sc = nil
+            return wp
+        end
+        local secs = grndChatSections(base)
+        table.sort(secs, function(a, b)
+            return (a.writable and 1 or 0) > (b.writable and 1 or 0)
+        end)
+        st = { base = base, secs = secs, si = 1, i = 0, secN = 0, seen = 0, checked = 0, checkedW = checkedW or 0 }
+        GRND_CHAT._sc = st
     end
-    local secs = grndChatSections(base)
-    table.sort(secs, function(a, b)
-        return (a.writable and 1 or 0) > (b.writable and 1 or 0)
-    end)
-    local checked, secN, seen = 0, 0, 0
-    for _, s in ipairs(secs) do
+    local t0 = os.clock()
+    while st.si <= #st.secs do
+        local s = st.secs[st.si]
         if s.writable and s.size > 0 and s.size <= 1024 * 1024 then
-            secN = secN + 1
-            local i = 0
-            while i + 4 <= s.size do
-                seen = seen + 1
-                local p = grndChatU32(grndChatRd32(base + s.va + i))
+            if st.i == 0 then st.secN = st.secN + 1 end
+            while st.i + 4 <= s.size do
+                st.seen = st.seen + 1
+                local p = grndChatU32(grndChatRd32(base + s.va + st.i))
                 if grndChatPtrPlausible(p) and (p % 4) == 0 then
-                    checked = checked + 1
+                    st.checked = st.checked + 1
                     if grndChatPtrOk(p, true) then
                         GRND_CHAT.dbg.scanStat =
                             ("секций %d, слов %d, кандидатов %d — нашёл samp.dll+0x%X")
-                            :format(secN, seen, checked, s.va + i)
+                            :format(st.secN, st.seen, st.checked, s.va + st.i)
                         GRND_CHAT._p = p
-                        GRND_CHAT._src = ("поиск по секциям (samp.dll+0x%X)"):format(s.va + i)
+                        GRND_CHAT._src = ("поиск по секциям (samp.dll+0x%X)"):format(s.va + st.i)
                         GRND_CHAT.dbg.ptr, GRND_CHAT.dbg.src = p, GRND_CHAT._src
+                        GRND_CHAT._sc = nil
                         return p
                     end
-                    if checked >= budget then break end
+                    if st.checked >= budget then
+                        GRND_CHAT._sc = nil
+                        GRND_CHAT.dbg.scanStat = ("секций %d, слов %d, кандидатов %d — лимит кандидатов")
+                            :format(st.secN, st.seen, st.checked)
+                        return nil
+                    end
                 end
-                i = i + 4
+                st.i = st.i + 4
+                if (st.seen % 2048) == 0 and (os.clock() - t0) >= 0.004 then
+                    return nil
+                end
             end
         end
-        if checked >= budget then break end
+        st.si = st.si + 1
+        st.i = 0
     end
+    GRND_CHAT._sc = nil
     GRND_CHAT.dbg.scanStat = ("секций %d, слов %d, кандидатов %d (окна: кандидатов %d) — не нашёл")
-        :format(secN, seen, checked, checkedW or 0)
+        :format(st.secN, st.seen, st.checked, st.checkedW or 0)
     return nil
 end
 function grndChatInfoPtr()
@@ -7065,16 +7082,21 @@ function grndChatInfoPtr()
     end
     D.ptr, D.src = nil, "не найден"
     local now = os.clock()
-    if (not GRND_CHAT.scanDone) and type(grndIsSpawnedSafe) == "function"
-        and grndIsSpawnedSafe() and (now - (GRND_CHAT.scanAt or 0)) > 15 then
-        GRND_CHAT.scanAt = now
-        GRND_CHAT.scanTries = (GRND_CHAT.scanTries or 0) + 1
-        local ok, q = pcall(grndChatScanPtr, 40000)
-        if ok and q then
-            GRND_CHAT.scanDone = true
-            return q, GRND_CHAT._src
+    if (not GRND_CHAT.scanDone) and type(grndIsSpawnedSafe) == "function" and grndIsSpawnedSafe() then
+        local paused = GRND_CHAT._sc ~= nil
+        if paused or (now - (GRND_CHAT.scanAt or 0)) > 15 then
+            if not paused then
+                GRND_CHAT.scanAt = now
+                GRND_CHAT.scanTries = (GRND_CHAT.scanTries or 0) + 1
+            end
+            local ok, q = pcall(grndChatScanPtr, 40000)
+            if ok and q then
+                GRND_CHAT.scanDone = true
+                return q, GRND_CHAT._src
+            end
+            if not ok then GRND_CHAT._sc = nil end
+            if GRND_CHAT._sc == nil and (GRND_CHAT.scanTries or 0) >= 3 then GRND_CHAT.scanDone = true end
         end
-        if GRND_CHAT.scanTries >= 3 then GRND_CHAT.scanDone = true end
     end
     return nil
 end
