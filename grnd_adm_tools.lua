@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.308"
+GRND_SCRIPT_VERSION = "1.19.309"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -7032,6 +7032,7 @@ function grndChatInfoPtr()
     local p = GRND_CHAT._p
     if p and grndChatPtrOk(p) then return p, GRND_CHAT._src end
     GRND_CHAT._p, GRND_CHAT._src = nil, nil
+    if not GRND_CHAT._sc and (GRND_CHAT._lookAt or -1) > os.clock() then return nil end
     local D = GRND_CHAT.dbg
     local base = grndChatBase()
     D.base = base
@@ -7082,6 +7083,7 @@ function grndChatInfoPtr()
     end
     D.ptr, D.src = nil, "не найден"
     local now = os.clock()
+    GRND_CHAT._lookAt = now + 0.5
     if (not GRND_CHAT.scanDone) and type(grndIsSpawnedSafe) == "function" and grndIsSpawnedSafe() then
         local paused = GRND_CHAT._sc ~= nil
         if paused or (now - (GRND_CHAT.scanAt or 0)) > 15 then
@@ -7100,7 +7102,7 @@ function grndChatInfoPtr()
     end
     return nil
 end
-function grndChatApply(force)
+function grndChatApplyNow(force)
     local D = GRND_CHAT.dbg
     local p, src = grndChatInfoPtr()
     D.ptr, D.src = p, src
@@ -7154,6 +7156,14 @@ function grndChatApply(force)
     D.redraw = grndChatRd32(p + 0x63DA)
     D.at     = os.clock()
     return true
+end
+function grndChatApply(force)
+    local C = GRND_CHAT
+    local now = os.clock()
+    if not force and C._applyAt and (now - C._applyAt) < 0.2 then return C._applyOk end
+    C._applyAt = now
+    C._applyOk = grndChatApplyNow(force) and true or false
+    return C._applyOk
 end
 grndChatStampApply = grndChatApply
 function grndChatDbgLines()
