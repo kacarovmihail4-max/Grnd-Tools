@@ -1,198 +1,8 @@
--- проверка «вызываемости» функций обёртки ImGui: это может быть function или cdata
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.299"
+GRND_SCRIPT_VERSION = "1.19.300"
 script_version(GRND_SCRIPT_VERSION)
-GRND_CHANGELOG = [[
-v1.19.299 — проверка обновлений при заходе запускается после реального спавна (раньше уходила на экран входа и съедала паузу, из-за чего тоста после спавна не было);
-v1.19.298 — до спавна: защёлка спавна не стартует взведённой (isPlayerPlaying на экране входа давал true), окно авторизации распознаётся, тосты скрыты кроме «Скрипт загружен», меню не открывается по M, оверлей админов скрыт;
-v1.19.297 — окно формы, гос. новости, статистика и чекеры в меню тоже скрыты до спавна (гейт grndUiBlocked);
-v1.19.296 — окна скрипта и автообновление не появляются до реального спавна: признак спавна берётся из отправки спавна клиентом (onSendSpawn), а не из sampIsLocalPlayerSpawned, который давал true раньше;
-v1.19.295 — уведомления автообновления («Проверяю обновления…», ошибки, тосты) не появляются до спавна;
-v1.19.294 — при входе в игру чекеры, обновления и оверлеи не появляются, пока персонаж не заспавнится;
-v1.19.293 — окна админ-формы и гос. новостей переносятся мышью за любое место карточки, не только за шапку;
-v1.19.292 — окно «Форма на Гос. Новости» как у админ-формы: та же позиция и перетаскивание, Y/N по нажатию клавиши;
-v1.19.291 — в меню «Репорт» подраздел «Настройки» в стиле общих настроек: переключатели «Репорты на экране» и «Ловля репорта», шестерёнки открывают окна настроек (размер, клавиша ловли);
-v1.19.290 — в меню «Репорт» новый подраздел «Оверлеи»: переключатели «Репорты на экране» и «Ловля репорта», назначение клавиши ловли;
-v1.19.289 — при открытом серверном окне с полем ввода буквы, цифры, Enter и Backspace идут в это поле, а не в горячие клавиши скрипта (T, M, R, E и др.); Esc, F-клавиши и Tab работают как раньше;
-v1.19.288 — в слежке при открытом серверном окне колесо, стрелки и +/- не перехватываются скриптом (прокрутка и ввод в окне);
-v1.19.287 — формы от Grnd_Bot не открываются (только формы, остальные строки бота не меняются);
-v1.19.286 — в слежке серверное окно закрывается и прокручивается: панель слежки без курсора не захватывает мышь и клавиши;
-v1.19.285 — в слежке серверные окна не блокируют ввод, полёт и открытие чата скрипта;
-v1.19.284 — повтор уже решённой формы (тот же админ и команда) игнорируется 3 с после решения;
-v1.19.283 — решённая форма (тот же админ и команда) не открывается повторно в течение 1 с, как и пауза;
-v1.19.282 — пауза между формами 1 с;
-v1.19.281 — очередь между формами: после Y/N следующая форма (и повтор от бота) ждёт 1,5 с;
-  клавиши во время паузы не действуют;
-v1.19.280 — ошибки «Данный игрок не в транспорте!» и «Игрок должен находится в транспорте» уходят в админ-чат; добавлена команда /untie (без проверки синтаксиса);
-v1.19.279 — после Y/N окно формы не остаётся: копии уже решённой формы из очереди удаляются;
-v1.19.278 — команды без проверки синтаксиса: после Y скрипт ждёт ответ сервера;
-  ошибка («|Неверный ID игрока», «Используйте: ...») уходит в админ-чат как «>> текст»,
-  без «Форма ... принята»; если ошибки нет — «Форма от NICK принята.»;
-v1.19.277 — отклонённая форма не открывается снова: служебные строки скрипта — пример команды, ответы — не принимаются за новую форму;
-v1.19.276 — защита от повтора формы: 1,5 с для форм от любого администратора (было 120 с);
-v1.19.275 — отклонённая форма не появляется снова;
-v1.19.274 — окна админ-формы и гос. волны не блокируют кнопки движения;
-v1.19.273 — окно админ-формы не включает курсор (управление клавишами Y / N);
-v1.19.272 — карточки форм берут цвет выбранной темы (вместо фиксированного зелёного);
-v1.19.271 — карточки админ-форм и гос. волны плотнее (фон менее прозрачный);
-v1.19.270 — окна админ-форм и гос. волны как на сервере:
-  1) полупрозрачная карточка без кнопок и без крестика: «Форма от Админа NICK»,
-     строка команды, «Принять форму: Y | Для отказа: N», таймер автозакрытия;
-  2) слово «Нашёл» убрано; Y / N по-прежнему принимают и отклоняют форму;
-v1.19.269 — ответы на админ-формы:
-  1) «Форма от NICK принята.» и «Форма от NICK отклонена!» (причина — следующим сообщением);
-  2) окно ожидания ответа сервера 2.5 → 4 с: раньше «принята» могла уйти раньше отказа,
-     и потом приходила «отклонена» (два противоречивых сообщения);
-v1.19.268 — подписи режимов чата уменьшены:
-  1) «Обычный / Админский / Семейный» и строка «TAB для смены чата | Раскладка»
-     приведены к разумному размеру (подсказка ввода не менялась);
-v1.19.267 — шрифт подписей чата действительно увеличивается:
-  1) функции PushFont / SetWindowFontScale обёртки ImGui имеют тип cdata, а проверка
-     требовала function, поэтому крупный шрифт и масштаб никогда не применялись;
-v1.19.266 — диагностика шрифта подписей чата:
-  1) в отчёте /grndkl dump (раздел ШРИФТ И ТЕКСТ) видно, какой кегль нужен,
-     какой взят из лестницы и применился ли нативный шрифт;
-v1.19.265 — ровная раскладка подписей чата:
-  1) ширина подписей режимов и строки TAB/раскладки считается тем же шрифтом,
-     которым они рисуются (раньше расхождение давало неровные промежутки);
-v1.19.264 — подписи чата увеличиваются даже без крупной лестницы шрифтов:
-  1) разница между нужным и ближайшим размером шрифта переносится в масштаб текста;
-v1.19.263 — подписи чата реально увеличиваются:
-  1) шрифт подписей чата не рос дальше 40 px: добавлены крупные размеры;
-v1.19.262 — ещё крупнее подписи чата:
-  1) «Обычный / Админский / Семейный», строка «TAB для смены чата | Раскладка»
-     и подсказка «Введите сообщение» увеличены;
-v1.19.261 — сбив анимации после падения срабатывает сразу:
-  1) проверка каждый кадр, без паузы;
-  2) обрываются и анимации падения, а не только вставания;
-v1.19.260 — новые читы:
-  1) «Бесконечный кислород» (вкладка «Читы»): персонаж не тонет под водой;
-  2) «Сбив анимации после падения»: после падения сразу встаёт, без анимации вставания;
-v1.19.259 — крупнее подписи чата и новый чит:
-  1) подписи оверлея чата («Обычный», «Админский», «Семейный», «TAB для смены
-     чата | Раскладка», подсказка ввода) стали крупнее;
-  2) чит «Бесконечный бег» (вкладка «Читы»): персонаж не устаёт при беге;
-v1.19.258 — GM при заходе без сообщений в чат:
-  1) при автоматическом включении GM тост «GM включён» не выводится
-     (тосты дублируются в чат);
-v1.19.257 — автоматический GM ничего не пишет в чат:
-  1) при заходе клиентский GM включается без отправки /gm в чат;
-  2) ручное включение кнопкой GM по-прежнему отправляет /gm (нужно серверу);
-v1.19.256 — GM не выключается после перезахода и обновления:
-  1) включённый GM активируется при заходе и после обновления скрипта
-     (раньше ждал окна входа, которого после обновления не бывает);
-  2) серверный GM больше не переключается /gm-ом вслепую: если на сервере
-     он остался включён, скрипт его не выключает;
-v1.19.255 — GM без лишних настроек:
-  1) убрана шестерёнка GM и пункт «Авто-GM при заходе» — включённый GM
-     и так остаётся включённым и активируется при заходе;
-  2) убрана команда /cgmauto;
-  3) в окне обновления больше не показывается строка с номером версии;
-v1.19.254 — GM запоминается:
-  1) если GM включён (карточка «GM» в читах, /gm, хоткей), он остаётся
-     включённым и сам активируется при каждом заходе на сервер;
-  2) выключенный GM при заходе не включается;
-v1.19.253 — Skip ZZ прячет окно, нарисованное текстдравами:
-  1) окно «Зеленая зона» на сервере — это текстдравы (чёрный фон, текст,
-     кнопка «Принять»), а не диалог: скрипт теперь прячет их по тексту и
-     по соседним элементам;
-  2) распознаёт текст «Вы находитесь в зелёной зоне» и «В данном месте … запрещено»;
-v1.19.252 — Skip ZZ срабатывает надёжно:
-  1) окно «Зеленая зона» прячется и по заголовку, и по тексту сервера
-     («В этом месте запрещено … драться/стрелять»);
-  2) проверка идёт до остальной обработки диалогов и не зависит от состояния
-     входа в игру;
-v1.19.251 — Skip ZZ в читах:
-  1) новый чит «Skip ZZ» (вкладка «Читы»): скрывает серверное окно
-     «Зеленая зона» (анти-ДМ зона на сервере); состояние сохраняется;
-v1.19.250 — Журнал без автопилота наказаний:
-  1) категория «Автопилот наказаний» убрана из журнала логов — автопилот
-     больше ничего туда не пишет; его статус виден в окне автопилота;
-  2) ошибка автопилота больше не печатается в консоль, она показывается
-     в окне автопилота;
-v1.19.249 — Серверное окно больше не блокирует окна скрипта:
-  1) отладочные печати убраны — в лог консоли больше не сыплется состояние
-     каждый кадр (осталась команда /grnd keys и файл-лог /camdiag);
-  2) серверное окно (диалог SA-MP) больше не гасит ни клавиши скрипта, ни его
-     окна: блокирует только собственное окно авторизации — и только пока
-     игрок не в игре;
-  3) окно авторизации больше не прячет интерфейс навсегда: если сервер не
-     подтвердил вход, интерфейс возвращается через 6 с;
-  4) таблица (Tab), формы (Y/N), окно новостей и окно статистики работают
-     поверх серверного окна;
-  5) поля ввода по-прежнему принадлежат серверу: панель ввода чата и свой чат
-     скрипт при открытом серверном окне не открывает;
-v1.19.248 — Отладка (v4):
-  1) debug-лог для sampIsChatInputActive;
-v1.19.247 — Отладка (v3):
-  1) debug-логи в grndCamWindowsRaw для всех причин;
-v1.19.246 — Отладка (v2):
-  1) debug-логи в grndCamWindowsRaw и grndKeysTick;
-v1.19.245 — Отладка:
-  1) добавлены debug-сообщения в консоль MoonLoader для диагностики
-     окон и слежки;
-v1.19.244 — Окна и слежка (v2):
-  1) убраны все блокировки по dlgActive и nativeDialogOpen — функционал
-     GRND работает при открытом серверном окне;
-  2) при входе в слежку проверяется реальное присутствие цели (без кэша);
-     если цель не обнаружена, камера не переключается;
-v1.19.243 — Окна и слежка:
-  1) серверное окно больше не блокирует функционал GRND (убрана проверка
-     sampIsDialogActive из grndIsTyping);
-  2) если цель не обнаружена, камера не переключается на слежку;
-v1.19.242 — Серверное окно и рекон:
-  1) dlgActive больше не считается «печатью» — функционал GRND работает
-     при открытом серверном окне, Tab не перехватывается;
-  2) при входе в слежку, если цель не обнаружена, рекон не появляется;
-v1.19.241 — Убран тост при выходе клавишей:
-  1) больше нет уведомления «Слежка: трекинг сброшен (выход клавишей)»
-     и при ручном сбросе;
-v1.19.240 — Серверное окно и выход из слежки:
-  1) убран тост при выходе из слежки;
-  2) при открытом серверном окне Tab больше не перехватывается GRND,
-     а функционал GRND продолжает работать;
-v1.19.239 — Без уведомлений при входе в слежку:
-  1) убраны всплывающие уведомления при начале слежки (через команду
-     и через Kill List);
-v1.19.238 — Платформа после слежки:
-  1) при выходе из слежки платформа под ногами больше не появляется
-     автоматически (только по F4);
-v1.19.237 — Мгновенное обновление слежки:
-  1) пропажа цели замечается мгновенно (убрана задержка 3 с и 0.75 с);
-  2) при обновлении слежки показывается тост «Обновляю рекон»;
-v1.19.236 — Камера полностью статична:
-  1) убрано остаточное авто-изменение наклона (smart pitch) при простое;
-  2) каждый кадр сбрасывается таймер бездействия камеры — игра больше не
-     применяет «idle camera» (медленное вращение вокруг игрока);
-  3) зум увеличен ещё: максимум 100 м, скорость ×3, шаг колеса ×2;
-v1.19.235 — Зум и авто-вращение камеры:
-  1) зум работает быстрее (скорость изменения дистанции удвоена) и дальше
-     (максимальная дистанция увеличена с 30 до 60 м, шаг колеса ×2);
-  2) камера больше не вращается сама по себе — авто-поворот за игроком
-     отключён, угол остаётся как задал пользователь;
-v1.19.234 — Камера слежки сверху:
-  1) вид слежки изменён: камера теперь смотрит на игрока сверху (top-down),
-     а не упирается в спину; дефолтный угол наклона поднят до ~83°;
-  2) диапазон ручной регулировки наклона расширен до ~89°;
-  3) все профили (пешком/авто/вертолёт/самолёт/лодка/мото) теперь тоже
-     держат вид сверху при простое;
-v1.19.233 — Файл без комментариев, окно изменений из кода:
-  1) исходник очищен от комментариев (2.83 → 1.95 МБ): эквивалентность кода
-     доказана побайтовым сравнением байткода LuaJIT, стенды 903/903;
-  2) список изменений теперь живёт не в комментариях, а в самой программе
-     (эта строка GRND_CHANGELOG): окно «Grnd Tools» показывает его и у
-     текстовой, и у скомпилированной сборки после каждого обновления;
-v1.19.232 — Оптимизация всех систем:
-  1) sync-пакеты движения разбираются только при включённом «новом WH»,
-     имена полей библиотеки запоминаются после первого пакета;
-  2) трейсер прицеливания и выключенный автопилот наказаний больше не
-     работают вхолостую на каждом пакете и строке чата;
-  3) чекер «Админы в сети» не чистит строки в простое;
-  4) исправлен баг окна обновлений: у заголовка версии срезался байт
-     тире «—» и оставались два битых символа.
-]]
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
 require "lib.sampfuncs"
@@ -1353,24 +1163,17 @@ function logRenderErr(where, err)
     pcall(grndTrace, "ERROR", "render: " .. key)
     pcall(notify.say, "рендер-ошибка " .. tostring(where) .. " (см. консоль)", "error")
 end
--- Серверное окно (диалог SA-MP) — окно, которое открыл сервер.
--- Правило скрипта: серверное окно НЕ отключает ни клавиши скрипта, ни его
--- окна — скрипт рисует свои окна поверх серверного. Отключать работу скрипта
--- может только собственное окно авторизации (см. grndAuthDialogOpen).
 function grndServerDialogOpen()
     if type(sampIsDialogActive) ~= "function" then return false end
     local ok, res = pcall(sampIsDialogActive)
     return (ok and res) and true or false
 end
--- серверные окна не блокируют ввод и закрытие окон скрипта, пока идёт слежка
--- серверное окно с полем ввода (стиль INPUT=1 или PASSWORD=3)
 function grndServerInputDialogTyping()
     local D = _G.GRND_SRVDLG
     if type(D) ~= "table" then return false end
     if not grndServerDialogOpen() then return false end
     return D.style == 1 or D.style == 3
 end
--- клавиши, которые печатаются в строку ввода серверного окна
 function grndSrvTypingKey(wp)
     wp = tonumber(wp) or 0
     return wp == 0x20 or wp == 0x08 or wp == 0x0D or wp == 0x2E
@@ -1381,10 +1184,6 @@ function grndServerWinBlocks()
     if type(grndCamSpectating) == "function" and grndCamSpectating() then return false end
     return grndServerDialogOpen()
 end
--- Панель слежки (GRND_RC) без курсора — это только показ, ввод ей не нужен.
--- Раньше она включала захват мыши и клавиш, и открытое серверное окно
--- нельзя было ни закрыть, ни прокрутить. Пока серверное окно открыто,
--- захват включается только когда курсор панели реально включён.
 function grndRcWantsUi()
     local RC = _G.GRND_RC
     if not (RC and RC.show) then return false end
@@ -1393,7 +1192,6 @@ function grndRcWantsUi()
 end
 GRND_GATE = GRND_GATE or { blockedFrames = 0, suppressed = 0, why = "", unblockAt = 0 }
 GRND_GATE.authSeen = false
--- сколько ждать подтверждения входа, прежде чем отпустить интерфейс
 GRND_GATE.authGrace = tonumber(GRND_GATE.authGrace) or 6
 local GRND_AUTH_TITLE_MARKERS = {
     "авторизац", "регистрац", "authorization", "authentication",
@@ -1447,8 +1245,6 @@ end
 function grndAuthDialogOpen()
     local authState = _G.GRND_AUTH_STATE
     if authState and authState.showedAuthOk then return false end
-    -- После входа в игру любое серверное окно — обычное окно, а не авторизация:
-    -- такие окна не должны отключать окна скрипта.
     if type(sampIsLocalPlayerSpawned) == "function" then
         local okS, sp = pcall(sampIsLocalPlayerSpawned)
         if okS and sp and grndSpawnLatched() then return false end
@@ -1475,9 +1271,6 @@ function grndAuthDialogOpen()
         or body:find("логин", 1, true) or body:find("login", 1, true)
     return hasPassword and hasPrompt and true or false
 end
--- Защёлка «ждём подтверждения входа»: окно авторизации уже видели, но сервер
--- не подтвердил вход. Ждём GRND_GATE.authGrace секунд; если подтверждения
--- так и нет — защёлку снимаем, иначе окна скрипта не появятся никогда.
 function grndAuthWaitExpired()
     local authState = _G.GRND_AUTH_STATE
     if authState and authState.showedAuthOk then
@@ -1514,8 +1307,6 @@ function grndUiBlocked()
         GRND_GATE.authSeen = false
         GRND_GATE.unblockAt = 0
     end
-    -- окна скрипта (чекеры, обновления, оверлеи) показываем только после спавна
-    -- (или во время слежки): до входа в игру ничего не появляется
     if spawned ~= true or not grndSpawnLatched() then
         local spec = false
         if type(sampIsPlayerSpectating) == "function" then
@@ -1546,10 +1337,6 @@ function grndIsSpawnedSafe()
     local ok, res = pcall(sampIsLocalPlayerSpawned)
     return (ok and res) and true or false
 end
--- Защёлка спавна: взводится только событием отправки спавна клиентом
--- (sampev.onSendSpawn), то есть когда персонаж реально заспавнился.
--- sampIsLocalPlayerSpawned сам по себе может давать true раньше (экран выбора
--- персонажа), поэтому одного его недостаточно.
 GRND_SPAWN = GRND_SPAWN or { seen = nil, gs = nil }
 function grndSpawnLatched()
     local S = GRND_SPAWN
@@ -6010,13 +5797,9 @@ local GRND_INVIS = {
     lastToggle = 0,
 }
 _G.GRND_INVIS = GRND_INVIS
--- Skip ZZ: скрывает серверный диалог «Зеленая зона» (анти-ДМ зона Arizona RP)
 GRND_SKIPZZ = { on = false }
--- Бесконечный бег: натив setPlayerNeverGetsTired (MoonLoader)
 GRND_RUN = { on = false, applied = false, at = 0 }
--- Бесконечный кислород: натив setCharDrownsInWater (персонаж не тонет)
 GRND_OXY = { on = false, applied = false, at = 0 }
--- Сбив анимации после падения: натив isCharPlayingAnim + clearCharTasksImmediately
 GRND_GETUP = { on = false, at = 0 }
 local GRND_ABRK = {
     on = false,
@@ -6145,9 +5928,6 @@ do
     end
     function C.active()
         if not C.enabled or (GRND_CAM and GRND_CAM.windowFocused==false) then return false end
-        -- Панель ввода чата — единственное окно скрипта, которое уступает
-        -- серверному окну: это поле ввода, и одновременно два поля ввода
-        -- (серверное и скрипта) работать не могут.
         if call(sampIsChatInputActive)~=true or call(sampIsDialogActive)==true then return false end
         if call(isPauseMenuActive)==true then return false end
         if type(grndSessionReady)=='function' and call(grndSessionReady)~=true then return false end
@@ -8106,8 +7886,6 @@ local function camCfgPath()
     return "grnd_settings.cfg"
 end
 GRND_RING_KEY = GRND_RING_KEY or { on = true }
--- Бесконечный бег: держим натив включённым (раз в секунду, на случай респавна),
--- а при выключении снимаем его один раз
 function grndRunFrame()
     local R = GRND_RUN
     if not R or type(setPlayerNeverGetsTired) ~= "function" or PLAYER_HANDLE == nil then return end
@@ -8124,7 +7902,6 @@ function grndRunFrame()
         pcall(setPlayerNeverGetsTired, PLAYER_HANDLE, false)
     end
 end
--- Бесконечный кислород: персонаж не тонет (раз в секунду), при выключении возвращаем
 function grndOxyFrame()
     local O = GRND_OXY
     if not O or type(setCharDrownsInWater) ~= "function" or PLAYER_PED == nil then return end
@@ -8141,8 +7918,6 @@ function grndOxyFrame()
         pcall(setCharDrownsInWater, PLAYER_PED, true)
     end
 end
--- Сбив анимации после падения: проверяем каждый кадр; как только играет анимация
--- падения или вставания — сразу обрываем её
 local GRND_GETUP_ANIMS = {
     "FALL_FRONT", "FALL_BACK", "KO_SKID_FRONT", "KO_SKID_BACK", "FLOOR_HIT",
     "FLOOR_HIT_F", "GETUP_FRONT", "GETUP_BACK",
@@ -8644,8 +8419,6 @@ function grndAirBreakTick()
         GRND_ABRK.prevKey = false
         return
     end
-    -- Пока открыто серверное окно, полёт не включается и камера стоит:
-    -- это было задумано, но переменная всегда была false.
     local nativeDialogOpen = grndServerWinBlocks()
     local typing = (type(grndIsTyping) == "function") and grndIsTyping() or false
     typing = typing or nativeDialogOpen
@@ -9383,7 +9156,6 @@ _G.grndStickyDebug = {
 }
 local GRND_UI_MOVE_KEYS={0x57,0x41,0x53,0x44,0x25,0x26,0x27,0x28}
 local function grndUiMovementGuardTick()
-    -- окна админ-формы и гос. волны не блокируют движение персонажа
     local approvalPopupOpen = false
     if not (approvalPopupOpen or GRND_UI_MOUSE.uiGuard or GRND_UI_MOUSE.active) then return end
     if grndNativeChatInputActive() and not approvalPopupOpen then return end
@@ -11115,8 +10887,6 @@ function onWindowMessage(msg, wparam, lparam)
         grndConsumeMsg(false)
         return
     end
-    -- Серверное окно не блокирует ввод GRND: окна скрипта работают поверх
-    -- серверного окна, и мышь/клавиши скрипта остаются его.
     if isMouseInput or isKeyInput then
         local uiGate=GRND_UI_MOUSE.uiGuard or grndUiMouseUpdate()
         local pressMsg=grndMsgIsPress(msgN)
@@ -11251,7 +11021,6 @@ function onWindowMessage(msg, wparam, lparam)
         and (wp == 0x25 or wp == 0x26 or wp == 0x27 or wp == 0x28
             or wp == 0xBB or wp == 0x6B or wp == 0xBD or wp == 0x6D) then
         if grndCamWindowsOpen() or grndServerDialogOpen() then
-            -- стрелки и +/- нужны серверному окну (списки, ввод): не съедаем
             GRND_RC.camKeys = GRND_RC.camKeys or {}
             GRND_RC.camKeys[wp] = false
         else
@@ -11298,8 +11067,6 @@ function onWindowMessage(msg, wparam, lparam)
     end
     if GRND_KEYS.blocked then return end
     if BLOCK_KEYS_ON_ANY_DIALOG and GRND_KEYS.dlgActive then return end
-    -- открыто серверное окно с полем ввода: символы идут в его строку,
-    -- а не в горячие клавиши скрипта (T, M, R, E и т.п.)
     if (isDown or isUp) and grndServerInputDialogTyping() and grndSrvTypingKey(wp)
         and not grndCamWindowsOpen() and not grndNativeChatInputActive() then
         return
@@ -11364,8 +11131,6 @@ function onWindowMessage(msg, wparam, lparam)
         return
     end
     if GRND_CHAT and GRND_CHAT.key and not grndIsTyping() then
-        -- Пока открыто серверное окно, скрипт свой чат не открывает:
-        -- поле ввода одно — серверное.
         local uiBusy = (GRND_REF.menu and GRND_REF.menu.open)
             or (GRND_TAB and GRND_TAB.open)
             or (GRND_REP and GRND_REP.open)
@@ -11540,8 +11305,6 @@ function onWindowMessage(msg, wparam, lparam)
         return
     end
     if wp == 0x09 then
-        -- Серверное окно таблицу скрипта не закрывает: окно скрипта должно
-        -- открываться и работать поверх серверного окна.
         if tapOnce(0x09) then
             GRND_TAB.hook = true
             GRND_TAB.held = false
@@ -12869,10 +12632,8 @@ function grndFormsResolve(action)
         F.want = nil
         return false
     end
-    -- запоминаем решённую форму: повтор той же строки из чата не открывает окно заново
     F.done = F.done or {}
     F.done[grndFormKey(form)] = os.clock()
-    -- копии уже решённой формы (тот же админ и команда) не показываем второй раз
     local rk = grndFormKey(form)
     local q = F.queue or {}
     for i = #q, 1, -1 do
@@ -13885,8 +13646,6 @@ do
         if stSpecActive() then return stOursAwaiting() or stOurPage(full) end
         return stOursAwaiting() or stOurPage(full)
     end
-    -- Окно анти-ДМ зоны: заголовок «Зеленая зона» или текст сервера
-    -- «В этом месте запрещено драться/стрелять» (на случай другого заголовка)
     function grndSkipZZMatch(title, text)
         local t = grndLowerUtf(grndToUtf(tostring(title or "")))
         t = t:gsub("^%s+", ""):gsub("%s+$", "")
@@ -13901,9 +13660,6 @@ do
         end
         return b:find("вы находитесь в зел", 1, true) ~= nil
     end
-    -- Текстдравы: окно рисуется текстдравами (чёрный фон, текст, кнопка «Принять»).
-    -- Текст есть только у части элементов, поэтому помним id совпавших текстдравов
-    -- и прячем соседние id, пришедшие в ту же секунду.
     GRND_SKIPZZ.tdIds = GRND_SKIPZZ.tdIds or {}
     GRND_SKIPZZ.tdLastId, GRND_SKIPZZ.tdLastAt = nil, 0
     function grndSkipZZTextDraw(id, text)
@@ -14540,7 +14296,7 @@ GRND_KL_ATLAS_PNG  = GRND_KL_ATLAS_PNG or table.concat({
         KL.src, KL.score = "поиск", best.score
         KL.origEn = klNorm(grndMemRd32(best.p))
         KL.memFail, KL.badReads, KL.badValid = 0, 0, 0
-        grndKlSay(("структура принята: %s (iEnabled=%s), проверьте /grndkl test")
+        grndKlSay(("структура принята: %s (iEnabled=%s)")
             :format(grndKlHx(best.p), tostring(KL.origEn)))
         return true
     end
@@ -15040,7 +14796,6 @@ GRND_KL_ATLAS_PNG  = GRND_KL_ATLAS_PNG or table.concat({
             end
             grndKlSay("если структура не находится — игра всё равно работает: убийства берутся из чата")
             grndKlSay("перебрать память сейчас: /grndkl scan · журнал чата: /grndkl chat")
-            grndKlSay("полный отчёт в файл: /grndkl dump (resource/grnd/logs/grnd_kl_diag.txt)")
         end
         local CH3 = GRND_FONT or {}
         grndKlSay("шрифт интерфейса: "
@@ -15065,204 +14820,6 @@ GRND_KL_ATLAS_PNG  = GRND_KL_ATLAS_PNG or table.concat({
         end
         grndKlSay("в скобках у ника: " .. (KL.showId and "ID игрока" or "счёт игрока")
             .. " · берётся один раз при появлении записи и не меняется")
-        grndKlSay("проверка записи в структуру: /grndkl test")
-    end
-    function grndKlSelfTest()
-        if not KL.ptr then
-            grndKlSay("самопроверка: структура не найдена — сначала /grndkl")
-            return false
-        end
-        local cur = klNorm(grndMemRd32(KL.ptr))
-        pcall(grndMemWr32, KL.ptr, 0)
-        local rb0 = klNorm(grndMemRd32(KL.ptr))
-        pcall(grndMemWr32, KL.ptr, 1)
-        local rb1 = klNorm(grndMemRd32(KL.ptr))
-        local okAll = (rb0 == 0 and rb1 == 1)
-        pcall(grndMemWr32, KL.ptr, cur ~= nil and cur or 1)
-        KL.badReads = 0
-        grndKlSay(("самопроверка %s: 0 -> %s, 1 -> %s (было %s)"):format(
-            okAll and "ПРОЙДЕНА" or "ПРОВАЛЕНА", tostring(rb0), tostring(rb1), tostring(cur)))
-        if not okAll then
-            KL.ptr, KL.slot, KL.src, KL.off = nil, nil, nil, nil
-            grndKlSay("запись не проходит — ищу структуру заново (это не та сборка клиента)")
-        end
-        return okAll
-    end
-    function grndKlDumpPath()
-        return grndStoragePath("logs","grnd_kl_diag.txt")
-    end
-    function grndKlDump()
-        local L = {}
-        local function w(s) L[#L + 1] = tostring(s) end
-        local function hx(v) return (type(v) == "number") and ("0x" .. string.format("%X", v)) or "—" end
-        w("GRND TOOLS — диагностика килл-листа (чекер «Новый Kill List»)")
-        w("сформировано: " .. tostring(os.date("%Y-%m-%d %H:%M:%S")))
-        w("версия скрипта: 1.8.3")
-        w("обёртка ImGui: " .. tostring(IMGUI_WRAP or "не определена"))
-        if type(getMoonloaderVersion) == "function" then
-            local okv, vmaj, vmin, vpat = pcall(getMoonloaderVersion)
-            if okv then w(("MoonLoader: %s.%s.%s"):format(tostring(vmaj), tostring(vmin), tostring(vpat))) end
-        end
-        w("")
-        w("=== СТРУКТУРА (stKillInfo / CDeathWindow) ===")
-        w("база samp.dll: " .. hx(KL.base) .. ", entry point: " .. hx(KL.entry)
-            .. ", размер образа: " .. hx(KL.imgsize))
-        w("версия по таблице: " .. tostring(KL.ver or "НЕ определена"))
-        if KL.ptr then
-            w(("НАЙДЕНА: %s (samp.dll+0x%X), источник %s, оценка %d")
-                :format(hx(KL.ptr), KL.off or 0, tostring(KL.src), KL.score or 0))
-            w(("iEnabled сейчас: %s, при захвате: %s, гашение системного списка: %s")
-                :format(tostring(klNorm(grndMemRd32(KL.ptr))), tostring(KL.origEn),
-                        tostring(KL.nativeOff)))
-            for i = 1, 5 do
-                local e = KL.ptr + 4 + (i - 1) * 59
-                w(("  запись %d: [%s] -> [%s]"):format(i, klNickFast(e), klNickFast(e + 25)))
-            end
-        else
-            w(("НЕ НАЙДЕНА (попыток: %d)"):format(KL.memFail or 0))
-        end
-        w("")
-        w("=== ПРОВЕРКИ ОФСЕТОВ ===")
-        for _, pr in ipairs(KL.probe or {}) do
-            w(("  %s %s -> %s  %s%s"):format(
-                tostring(pr.src or "?"),
-                (pr.off and pr.off > 0) and ("+" .. hx(pr.off)) or "(api)",
-                hx(pr.p or 0),
-                pr.ok and ("ок, оценка " .. tostring(pr.score or 0))
-                      or ("не подошёл: " .. tostring(pr.why or "?")),
-                pr.en and ("  iEnabled=" .. tostring(pr.en)) or ""))
-        end
-        w("")
-        w("=== СИСТЕМНЫЙ КИЛЛ-ЛИСТ (гашение) ===")
-        w("sampGetKillInfoPtr: " .. (KL.apiPtr and grndKlHx(KL.apiPtr)
-            or ("НЕТ — " .. tostring(KL.apiWhy or "ещё не пробовали"))))
-        w("гашение чекером: " .. (KL.nativeOff
-            and ("АКТИВНО, источник " .. tostring(KL.nativeSrc or "?"))
-            or (KL.enabled and "НЕ АКТИВНО — гасить нечем" or "не нужно (чекер выключен)")))
-        w("поиск структуры в памяти: " .. tostring(KL.heapStat or "не запускался")
-            .. (KL.heapDone and " · проход завершён" or "")
-            .. (", записей-подписей " .. tostring(#(KL.hist or {}))))
-        w("")
-        w("=== ПЕРЕБОР ПАМЯТИ ===")
-        w(tostring(KL.scanStat or "не запускался") .. ", автозапусков: " .. tostring(KL.scanTries or 0))
-        for i = 1, math.min(#(KL.scanTop or {}), 8) do
-            local c = KL.scanTop[i]
-            w(("  %d) структура %s, переменная %s, секция %s, оценка %d")
-                :format(i, hx(c.p), hx(c.slot), tostring(c.sec), c.score))
-        end
-        w("")
-        w("=== ШРИФТ И ТЕКСТ (v1.5.7) ===")
-        local CH2 = GRND_FONT or {}
-        do
-            local lc = CH2.lastCall
-            if type(lc) == "table" then
-                w("последний вызов подписи чата: нужно " .. tostring(lc.want) .. " px, лестница дала "
-                    .. tostring(lc.pick) .. " px, масштаб " .. tostring(lc.ratio)
-                    .. ", нативный шрифт применён: " .. tostring(lc.native))
-            else
-                w("подписи чата ещё не рисовались (вызовов шрифта не было)")
-            end
-            local imx = _G.GRND_IM or _G.grndImgui
-            w("PushFont в обёртке: " .. typeFnV(imx and imx.PushFont) .. ", SetWindowFontScale: "
-                .. type(imx and imx.SetWindowFontScale))
-        end
-        w("загруженный шрифт: " .. tostring(CH2.fontLoadedPath or "НЕ загружен — системный шрифт обёртки"))
-        w("выбран в настройках: " .. tostring(CH2.fontPath or "не выбран")
-            .. ", базовый кегль: " .. tostring(CH2.fontBase or "—"))
-        do
-            local sz = CH2.ladderSizes
-            if type(sz) == "table" and #sz > 0 then
-                local ss = {}
-                for i = 1, #sz do ss[i] = tostring(sz[i]) end
-                w("«лестница» кеглей: " .. tostring(#sz) .. " шт (" .. table.concat(ss, ", ") .. ")")
-            else
-                w("«лестница» кеглей: нет (текст рисуется растяжкой SetWindowFontScale)")
-            end
-        end
-        w("выравнивание ников убийц: " .. tostring(KL.dbgAlign or "—")
-            .. ", кегль строки: " .. tostring(KL.dbgFpx or "—") .. " px")
-        w("рендер текста: " .. (KL.dbgDx
-            and ("DX GDI (как чат SA-MP): " .. tostring(KL.dbgDxFam or "?")
-                .. ", кегль " .. tostring(KL.dbgDxPx or "?") .. " px, жирный")
-            or "ImGui-атлас (render-библиотека недоступна)"))
-        w("тень текста: " .. (KL.textShadow
-            and ("мягкая (alpha " .. tostring(KL.dbgShA or 88) .. ")") or "выключена"))
-        w("сетка строки: колонка ников убийц " .. tostring(KL.dbgColK or 0)
-            .. " px, колонка ников жертв " .. tostring(KL.dbgColV or 0)
-            .. " px, значки с " .. tostring(KL.dbgIconX or 0)
-            .. " px, жертвы с " .. tostring(KL.dbgVx0 or 0)
-            .. " px, высота строки " .. tostring(KL.dbgRowH or 0) .. " px")
-        w("")
-        w("=== ЗНАЧКИ «ЧЕМ УБИТ» ===")
-        local ATS = GRND_KL_ATLAS or {}
-        w("текстура атласа: " .. (ATS.tex and ("ЗАГРУЖЕНА (" .. tostring(ATS.how) .. ")")
-                                  or ("НЕТ — " .. tostring(ATS.why or "ещё не пробовали"))))
-        w("сборка из пикселей: " .. (ATS.runs and ("доступна, значков " .. tostring(ATS.runsCount or 0))
-                                   or ("НЕТ — " .. tostring(ATS.runsWhy or "не собиралась"))))
-        w("функции текстур у обёртки: "
-            .. ((#(ATS.have or {}) > 0) and table.concat(ATS.have, ", ") or "НИ ОДНОЙ"))
-        for i, tr in ipairs(ATS.tries or {}) do
-            w(("  попытка %d: %s -> %s"):format(i, tostring(tr.name),
-                tr.ok and "ок" or ("не вышло: " .. tostring(tr.err))))
-        end
-        if ATS.filePath then w("файл атласа: " .. tostring(ATS.filePath) .. (ATS.fileOk and " (записан)" or "")) end
-        if ATS.fileWhy then w("про файл: " .. tostring(ATS.fileWhy)) end
-        if ATS.ptrWhy then w("про буфер: " .. tostring(ATS.ptrWhy)) end
-        w("")
-        w("=== ИСТОРИЯ УБИЙСТВ ===")
-        w(("записей: %d, подхват из чата: %s, системный список гасится: %s")
-            :format(#(KL.hist or {}), tostring(KL.fromChat), tostring(KL.nativeOff)))
-        w("в скобках у ника: " .. (KL.showId and "ID игрока" or "счёт игрока")
-            .. " — значение фиксируется при появлении записи и НЕ меняется (v1.5.9)")
-        for i = math.max(1, #(KL.hist or {}) - 9), #(KL.hist or {}) do
-            local r = KL.hist[i]
-            if r then
-                w(("  [%s] %s (ID %s, счёт %s) -> %s (ID %s, счёт %s), оружие id=%s%s, источник %s")
-                    :format(tostring(r.time), tostring(r.k), tostring(r.kidF), tostring(r.ks),
-                            tostring(r.v), tostring(r.vidF), tostring(r.vs), tostring(r.typ),
-                            r.wnameu and (" «" .. tostring(r.wnameu) .. "»") or "",
-                            tostring(r.src)))
-            end
-        end
-        w("")
-        w("=== ЖУРНАЛ ЧАТА (подхват убийств) ===")
-        for _, e in ipairs(KL.chatLog or {}) do
-            w(("  [%s] %s | %s"):format(tostring(e.t), tostring(e.s), tostring(e.r)))
-        end
-        if #(KL.chatLog or {}) == 0 then w("  (сообщений не было)") end
-        w("")
-        w("=== ОШИБКИ РЕНДЕРА (последние) ===")
-        local E = GRND_ERRLOG
-        if E and E.n and E.n > 0 then
-            for i = 1, math.min(E.n, 24) do
-                local e = E[((E.n - i) % 24) + 1]
-                if e then w(("  [%s] %s: %s"):format(tostring(e.at), tostring(e.where), tostring(e.err))) end
-            end
-        else
-            w("  (не было)")
-        end
-        w("")
-        w("=== ОКРУЖЕНИЕ ===")
-        if type(grndTraceEnv) == "function" then
-            local have, miss = grndTraceEnv()
-            w("есть функции: " .. table.concat(have or {}, ", "))
-            w("нет функций: " .. table.concat(miss or {}, ", "))
-        end
-        w(("кадров ImGui отрисовано: %s, состояние меню: %s")
-            :format(tostring(T_frames and T_frames() or "?"),
-                    tostring(_G.GRND_MENU and _G.GRND_MENU.open)))
-        local path = grndKlDumpPath()
-        local ok, f = pcall(io.open, path, "w")
-        if not ok or not f then
-            grndKlSay("дамп НЕ записался: " .. tostring(path))
-            return false
-        end
-        pcall(f.write, f, "\239\187\191")
-        pcall(f.write, f, table.concat(L, "\r\n") .. "\r\n")
-        pcall(f.close, f)
-        grndKlSay("дамп записан: " .. path)
-        grndKlSay("пришлите этот файл — в нём всё, что нужно для разбора")
-        return true
     end
     function grndKlChatDiag()
         local log = KL.chatLog or {}
@@ -15484,16 +15041,12 @@ GRND_KL_ATLAS_PNG  = GRND_KL_ATLAS_PNG or table.concat({
                 pcall(sampRegisterChatCommand, "grndkl", function(arg)
                     local a = tostring(arg or ""):lower()
                     a = a:gsub("^%s+", ""):gsub("%s+$", "")
-                    if a == "test" then
-                        pcall(grndKlSelfTest)
-                    elseif a == "scan" then
+                    if a == "scan" then
                         pcall(grndKlScanNow)
                     elseif a == "tex" then
                         pcall(grndKlAtlasDiag)
                     elseif a == "chat" then
                         pcall(grndKlChatDiag)
-                    elseif a == "dump" then
-                        pcall(grndKlDump)
                     elseif a == "heap" then
                         pcall(grndKlHeapDiag, true)
                     elseif a:match("^ptr") then
@@ -17349,8 +16902,6 @@ local function grndKeysTick()
         GRND_KEYS.typingSince = nil
         GRND_KEYS.typingFresh = false
     end
-    -- Серверное окно клавиши скрипта не блокирует: блокирует только
-    -- собственное окно авторизации — там ввод принадлежит серверу.
     GRND_KEYS.blocked = authWin
     pcall(grndTraceState)
     grndRegisterToolCmds()
@@ -18855,8 +18406,6 @@ function grndSpecCamControl(S, now)
                 S.camLastInput = now
             else
                 local idleT = now - (S.camLastInput or 0)
-                -- авто-изменение наклона отключено: камера статична
-                -- авто-поворот камеры отключён: угол остаётся как задал пользователь
             end
             S.camActiveSince = S.camActiveSince or now
             local dT = S.camDist or 10.0
@@ -20729,10 +20278,6 @@ function grndBinderRegisterCmd()
             else grndBinderNote("Сейчас ничего не отправляется", "info") end
             return
         end
-        if a == "test" then
-            grndBinderSelfTest()
-            return
-        end
         grndBinderOpenMenu()
     end)
 end
@@ -21258,61 +20803,6 @@ function grndBinderDrawInner(ctx)
         end
         uiText(rightX, bottom - 16, hint, rgba(96, 104, 122, 210), 0.86)
     end
-end
-function grndBinderSelfTest()
-    local fails = {}
-    local function near(name, got, exp, eps)
-        got, exp = tonumber(got), tonumber(exp)
-        if not got or not exp or math.abs(got - exp) > (eps or 0.001) then
-            fails[#fails + 1] = name .. " got=" .. tostring(got) .. " exp=" .. tostring(exp)
-        end
-    end
-    local function eq(name, got, exp)
-        if got ~= exp then
-            fails[#fails + 1] = name .. " got=" .. tostring(got) .. " exp=" .. tostring(exp)
-        end
-    end
-    near("min", grndBinderClampDelay(0), 0.5)
-    near("max", grndBinderClampDelay(9000), 5000)
-    near("nil", grndBinderClampDelay(nil), 1000)
-    near("nan", grndBinderClampDelay(0/0), 1000)
-    near("t0", grndBinderMsToT(0.5), 0, 0.0001)
-    near("t1", grndBinderMsToT(5000), 1, 0.0001)
-    near("back0", grndBinderTToMs(0), 0.5, 0.05)
-    near("back1", grndBinderTToMs(1), 5000, 1)
-    eq("fmt0", grndBinderFormatDelay(0.5), "0.5 мс")
-    eq("fmt1", grndBinderFormatDelay(1000), "1.0 сек.")
-    eq("fmt5", grndBinderFormatDelay(5000), "5.0 сек.")
-    eq("fmt250", grndBinderFormatDelay(250), "250 мс")
-    local lines = grndBinderCollectLines(" a \n\n// коммент\n/b\n   \nпривет")
-    eq("n", #lines, 3)
-    eq("l1", lines[1], "a")
-    eq("l2", lines[2], "/b")
-    eq("l3", lines[3], "привет")
-    local sample = "a\\b\nстрока"
-    eq("esc", grndBinderUnescape(grndBinderEscape(sample)), sample)
-    local body = "v=1\nsel=2\nnext=3\n---\nid=2\nname="
-        .. grndBinderEscape("Король М4") .. "\nkey=66\ndelay=0.5\ntext="
-        .. grndBinderEscape("/a тест\n//x\nпривет") .. "\n---\n"
-    local binds, sel = grndBinderParse(body)
-    eq("parseN", #binds, 1)
-    eq("parseName", binds[1].name, "Король М4")
-    near("parseDelay", binds[1].delay, 0.5)
-    eq("parseText", binds[1].text, "/a тест\n//x\nпривет")
-    eq("parseSel", sel, 2)
-    local cut, was = grndBinderUtf8Cut("привет", 3)
-    eq("cut", cut, "при")
-    eq("cutFlag", was, true)
-    local msg
-    if #fails == 0 then
-        msg = "Биндер: проверка пройдена"
-        print("{00FFAA}[GRND]{FFFFFF} " .. msg)
-    else
-        msg = "Биндер: ошибок " .. tostring(#fails)
-        print("{FF6666}[GRND]{FFFFFF} " .. msg .. " | " .. table.concat(fails, " | "))
-    end
-    grndBinderNote(msg, #fails == 0 and "ok" or "error")
-    return #fails == 0
 end
 function grndUiSwitchPaint(ctx, x, y, on, hovered, id, dt)
     local dl, at, col32, rect = ctx.dl, ctx.at, ctx.col32, ctx.roundRect
@@ -23033,7 +22523,6 @@ function grndSetUiPopupBody(c, key, spec, W, H, HDR)
         grndSetUiClose()
     end
 end
--- Раздел «Репорт» → «Настройки»: оверлеи репортов (стиль общих настроек)
 function grndRepSaveCfg()
     if type(grndCamCfgSave) == "function" then pcall(grndCamCfgSave) end
     if type(ensureRender) == "function" then pcall(ensureRender, true) end
@@ -32822,7 +32311,7 @@ local function grndUpdInit()
     U.recvTimeout    = 6000
     U.state = "idle"
     U.err, U.job = nil, nil
-    U.newVer, U.notes, U.installed = nil, nil, false
+    U.newVer, U.installed = nil, false
     U.staleSeen = nil
     U.window = false
     U.lastAt, U.wasSpawn = 0, false
@@ -32994,7 +32483,6 @@ local function grndUpdInit()
     end
     function U.notify(text, kind, life)
         text = tostring(text or "")
-        -- до спавна уведомления обновления не показываем (ни в чат, ни тостом)
         if type(_G.grndSessionReady) == "function" then
             local okR, ready = pcall(_G.grndSessionReady)
             if okR and not ready then
@@ -33324,7 +32812,6 @@ local function grndUpdInit()
             end
             if k == "last" then U.lastAt = tonumber(v) or U.lastAt end
             if k == "updatedVer" then U.updatedVer = v end
-            if k == "notesCache" then U.notesCache = v end
             if k == "updatedFrom" then U.updatedFrom = v end
             if k == "channel" then U.activeId = v end
             if k == "repo" or k == "mirror" then
@@ -33353,9 +32840,6 @@ local function grndUpdInit()
         if U.updatedVer then
             out[#out + 1] = "updatedVer=" .. tostring(U.updatedVer)
             out[#out + 1] = "updatedFrom=" .. tostring(U.updatedFrom or "0.0.0")
-        end
-        if U.notesCache and U.notesCache ~= "" then
-            out[#out + 1] = "notesCache=" .. tostring(U.notesCache)
         end
         for i = 1, #U.CHANNELS do
             local c = U.CHANNELS[i]
@@ -33386,8 +32870,6 @@ local function grndUpdInit()
             local okD, open = pcall(dlg)
             if okD and open then return false end
         end
-        -- готовность берём только из гейта с защёлкой спавна: sampIsLocalPlayerSpawned
-        -- до спавна может давать true, и тогда проверка уходила бы на экране входа
         local f = rawget(_G, "grndSessionReady")
         if type(f) == "function" then
             local ok, v = pcall(f)
@@ -33473,98 +32955,9 @@ local function grndUpdInit()
         end
         return U.dlScript()
     end
-    function U.changelogOf(body, minVer)
-        local min = minVer and U.verNum(minVer) or U.verNum(U.cur)
-        local out = {}
-        local embedded = tostring(body or ""):match("GRND_CHANGELOG%s*=%s*%[%[(.-)%]%]")
-        if embedded then
-            local cur
-            for line in embedded:gmatch("[^\r\n]+") do
-                local ver = line:match("^v(%d+%.%d+%.%d+)")
-                if ver then
-                    if U.verNum(ver) > min then
-                        cur = ver
-                        out[#out + 1] = { ver = ver, lines = {} }
-                        local head = line:match("^v[%d%.]+%s*[—%-]*%s*(.*)$")
-                        if head and head ~= "" then
-                            out[#out].lines[#out[#out].lines + 1] = head
-                        end
-                    else
-                        cur = nil
-                    end
-                elseif cur then
-                    local text = line:match("^%s*(.-)%s*$")
-                    if text ~= "" then
-                        out[#out].lines[#out[#out].lines + 1] = text
-                    end
-                end
-            end
-            if #out > 0 then return out end
-        end
-        local cur, seen = nil, 0
-        for line in tostring(body or ""):gmatch("[^\r\n]+") do
-            seen = seen + 1
-            if seen > 600 then break end
-            local ver = line:match("^%-%- v(%d+%.%d+%.%d+)")
-            if ver then
-                if U.verNum(ver) > min then
-                    cur = ver
-                    out[#out + 1] = { ver = ver, lines = {} }
-                    local head = line:match("^%-%- v[%d%.]+%s*[—%-]*%s*(.*)$")
-                    if head and head ~= "" then
-                        out[#out].lines[#out[#out].lines + 1] = head
-                    end
-                else
-                    break
-                end
-            elseif cur then
-                local text = line:match("^%-%-%s*(.*)$")
-                if text and text ~= "" then
-                    out[#out].lines[#out[#out].lines + 1] = text
-                elseif not line:match("^%-%-") then
-                    cur = nil
-                end
-            end
-        end
-        return out
-    end
-    function U.markInstalled(fromVer, toVer, notes)
+    function U.markInstalled(fromVer, toVer)
         U.updatedFrom, U.updatedVer = tostring(fromVer), tostring(toVer)
-        U.notesCache = U.encodeNotes(notes)
         U.saveCfg()
-    end
-    function U.encodeNotes(notes)
-        local out = {}
-        for i = 1, #(notes or {}) do
-            local it = notes[i]
-            local lines = {}
-            for j = 1, #(it.lines or {}) do
-                lines[#lines + 1] = tostring(it.lines[j]):gsub("|", "/")
-                    :gsub("~~", "~")
-            end
-            out[#out + 1] = "v" .. tostring(it.ver) .. "|"
-                .. table.concat(lines, "|")
-        end
-        local text = table.concat(out, "~~")
-        if #text > 8000 then text = text:sub(1, 8000) end
-        return text
-    end
-    function U.decodeNotes(text)
-        text = tostring(text or "")
-        if text == "" then return nil end
-        local out = {}
-        for part in (text .. "~~"):gmatch("(.-)~~") do
-            local ver, rest = part:match("^v([%d%.]+)|(.*)$")
-            if ver then
-                local lines = {}
-                for line in (rest .. "|"):gmatch("(.-)|") do
-                    if line ~= "" then lines[#lines + 1] = line end
-                end
-                out[#out + 1] = { ver = ver, lines = lines }
-            end
-        end
-        if #out == 0 then return nil end
-        return out
     end
     function U.markSeen()
         if U.markChecked then return end
@@ -33572,16 +32965,9 @@ local function grndUpdInit()
         U.loadCfg()
         local to, from = U.updatedVer, U.updatedFrom
         if not to or U.verNum(to) ~= U.verNum(U.cur) then return end
-        local body = U.readHead(U.scriptPath(), 16384)
-        local notes
-        if body and not U.isBytecode(body) then
-            notes = U.changelogOf(body, from)
-        end
-        if not notes or #notes == 0 then notes = U.decodeNotes(U.notesCache) end
-        U.notes = notes or {}
         U.justUpdated = { from = from or "?", to = to }
         U.state, U.window = "ready", true
-        U.updatedVer, U.updatedFrom, U.notesCache = nil, nil, nil
+        U.updatedVer, U.updatedFrom = nil, nil
         U.lastAt = math.floor(U.io.time())
         U.saveCfg()
         U.notify("Обновление " .. to .. " включено", "ok", 3)
@@ -33675,7 +33061,6 @@ local function grndUpdInit()
             out = bc
             U.diag(("байткод собран: %d байт (из %d байт исходника)"):format(#bc, #body))
         end
-        U.notes = U.changelogOf(body)
         local target = U.scriptPath()
         if not U.writeFile(target, out) then
             dropTemp(job)
@@ -33692,7 +33077,7 @@ local function grndUpdInit()
         U.state, U.installed = "ready", true
         U.diag("установлено: " .. tostring(U.newVer) .. " (" .. #body .. " байт)")
         U.notify("Обновление " .. tostring(U.newVer) .. " установлено", "ok", 3)
-        U.markInstalled(U.cur, tostring(U.newVer), U.notes)
+        U.markInstalled(U.cur, tostring(U.newVer))
         U.requestReload()
         return true
     end
@@ -33775,7 +33160,7 @@ local function grndUpdInit()
         if U.probing or U.job then return false, "уже проверяю" end
         U.state, U.err = "checking", nil
         if not U.justUpdated then
-            U.installed, U.window, U.notes = false, false, nil
+            U.installed, U.window = false, false
         end
         U.staleSeen = nil
         U.lastAt = math.floor(U.io.time())
@@ -33936,28 +33321,9 @@ local function grndUpdInit()
                 hi(im, head)
                 if sub then muted(im, sub) end
                 sep(im)
-                local notes = U.notes or {}
-                if #notes > 0 then
-                    muted(im, "ЧТО ИЗМЕНИЛОСЬ")
-                    local child = false
-                    if type(im.BeginChild) == "function" and type(im.ImVec2) == "function" then
-                        local okC, vis = pcall(im.BeginChild, "##grnd_upd_body",
-                            im.ImVec2(W - 24, HH - 300), false, 0)
-                        child = okC and vis and true or false
-                    end
-                    for i = 1, #notes do
-                        local item = notes[i]
-                        for j = 1, #(item.lines or {}) do
-                            label(im, "   " .. item.lines[j])
-                        end
-                    end
-                    if child then pcall(im.EndChild) end
-                elseif U.probeLines then
+                if U.probeLines then
                     muted(im, "ОТВЕТЫ КАНАЛОВ")
                     for i = 1, #U.probeLines do label(im, U.probeLines[i]) end
-                elseif U.installed then
-                    muted(im, "В самой новой версии отдельных пометок об "
-                        .. "изменениях нет.")
                 end
                 sep(im)
                 if btn(im, "Закрыть##grnd_upd_close", 140) then
@@ -34853,8 +34219,6 @@ function grndMainBody()
     end
     function grndGMToggle()
         local target = not GRND_GM.on
-        -- включил — GM остаётся включённым и активируется при каждом заходе;
-        -- выключил — при заходе не включается
         GRND_GM.autoClient, GRND_GM.autoServer = target, target
         _G.GRND_GM_AUTO = target
         pcall(grndCamCfgSave)
@@ -35598,9 +34962,7 @@ function grndMainBody()
         if GRND_ADMIN_CFG and GRND_ADMIN_CFG.autoForms == false then return end
         local nick,adminId,msg=grndFormAdminLine(text)
         if not nick or not adminId or not msg then return end
-        -- формы от бота Grnd_Bot не открываем (только формы; остальные строки бота не трогаем)
         if tostring(nick):lower() == "grnd_bot" then return end
-        -- служебные строки самого скрипта (пример команды, ответы на форму) — не форма
         if msg:find("Пример правильной команды", 1, true) or msg:find("Пропиши форму", 1, true)
             or msg:find("отклонена", 1, true) or msg:find("принята.", 1, true) then
             return
@@ -36084,7 +35446,6 @@ function grndMainBody()
                 if now - item.start >= item.life then table.remove(queue, i) end
             end
             if grndUiBlocked() then
-                -- до спавна показываем только системное уведомление о загрузке
                 for i = #queue, 1, -1 do
                     if not queue[i].force then table.remove(queue, i) end
                 end
@@ -40448,7 +39809,6 @@ function grndMainBody()
                 local okC, isC = pcall(sampIsChatInputActive)
                 if okC and isC then typing = true end
             end
-            -- Y/N как у админ-формы: фронт нажатия клавиши, пока не печатаем в чат
             local K = _G.GRND_GNEWS_KEYS or { y = false, n = false }
             _G.GRND_GNEWS_KEYS = K
             local okY, dY = pcall(isKeyDown, 0x59)
@@ -40462,7 +39822,6 @@ function grndMainBody()
             elseif not typing and nEdge then
                 wantReject = true
             end
-            -- позиция и перетаскивание — те же, что у окна админ-формы
             local resX, resY = getScreenResolution()
             local FW, FH = 400, 96
             local fx, fy = grndFormUiPos(resX, resY, FW, FH)
@@ -42622,7 +41981,6 @@ function grndMainBody()
                 end
             end
             if not gated and _G.GRND_FORMS and _G.GRND_FORMS.active then
-                -- окно формы без курсора: управляется клавишами Y / N
                 local ok, e = pcall(drawFormPopup)
                 if not ok then logRenderErr("forms", e) end
             end
@@ -43866,12 +43224,9 @@ function grndMainBody()
                 GRND_GM.autoFired = false
             elseif not GRND_GM.autoFired and grndSessionReady() then
                 GRND_GM.autoFired = true
-                -- при заходе тихо: без тоста (тосты дублируются в чат)
                 if GRND_GM.autoClient and not GRND_GM.on then
                     grndGMClientSet(true)
                 end
-                -- серверный GM при заходе в чат не отправляем: /gm не шлём.
-                -- Если на сервере GM остался включён с прошлого захода, просто помним это.
                 if GRND_GM.autoServer and not GRND_GM.srv and _G.GRND_GM_SRV == true then
                     GRND_GM.srv, GRND_GM.srvKnown = true, false
                 end

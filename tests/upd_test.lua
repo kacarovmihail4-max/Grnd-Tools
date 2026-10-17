@@ -437,57 +437,6 @@ wallNow = wallNow + 120
 check(U.bustQ() ~= q1, "кэш: метка меняется со временем")
 wallNow = 1700000000
 
--- ---------- 2. разбор списка изменений ----------
-local head = table.concat({
-    'script_name("grnd_adm_tools")',
-    'GRND_SCRIPT_VERSION = "' .. NEW .. '"',
-    "-- v" .. NEW .. " — ТЕСТ: свежая правка:",
-    "--   1) первое изменение;",
-    "--   2) второе изменение.",
-    "-- v" .. V .. " — прошлая версия:",
-    "--   1) это уже наше, в список попасть не должно.",
-}, "\n")
-local notes = U.changelogOf(head)
-check(#notes == 1, "changelog: только версии новее текущей")
-check(notes[1] and notes[1].ver == NEW, "changelog: версия в первой записи")
-local joined = notes[1] and table.concat(notes[1].lines, "|") or ""
-check(joined:find("ТЕСТ: свежая правка", 1, true) ~= nil, "changelog: заголовок")
--- v1.19.232: тире «—» в UTF-8 — три байта; заголовок версии в окне не должен
--- начинаться с битых байтов (раньше класс [—%-]? съедал только первый байт)
-check(notes[1].lines[1] == "ТЕСТ: свежая правка:",
-    "changelog: заголовок без битых байтов тире")
-check(joined:find("первое изменение", 1, true) ~= nil, "changelog: строки 1")
-check(joined:find("второе изменение", 1, true) ~= nil, "changelog: строки 2")
-check(joined:find("наше", 1, true) == nil, "changelog: своя версия не попала")
-check(#U.changelogOf(nil) == 0, "changelog: nil → пусто")
-
--- v1.19.233: список изменений живёт В КОДЕ — строка GRND_CHANGELOG,
--- комментарии файлу больше не нужны
-local embBody = table.concat({
-    'GRND_SCRIPT_VERSION = "' .. NEW .. '"',
-    "GRND_CHANGELOG = [[",
-    "v" .. NEW .. " — Тест встроенного списка:",
-    "  1) первая строка.",
-    "  2) вторая строка.",
-    "v" .. V .. " — старое:",
-    "  1) не должно попасть.",
-    "]]",
-}, "\n") .. "\n"
-local embNotes = U.changelogOf(embBody)
-check(#embNotes == 1, "changelog: встроенный блок — только новые версии")
-check(embNotes[1] and embNotes[1].ver == NEW, "changelog: встроенный блок — версия")
-check(embNotes[1].lines[1] == "Тест встроенного списка:",
-    "changelog: встроенный заголовок без мусора")
-check(#embNotes[1].lines == 3, "changelog: встроенный блок — все строки")
-check(embNotes[1].lines[2] == "1) первая строка.", "changelog: встроенная строка 1")
-check(embNotes[1].lines[3] == "2) вторая строка.", "changelog: встроенная строка 2")
-check(#U.changelogOf(embBody, NEW) == 0, "changelog: встроенный блок — своя версия отфильтрована")
-local realNotes = U.changelogOf(src:sub(1, 65536), "1.19.232")
--- версию берём из самого скрипта, чтобы стенд не ломался на каждом выпуске
-local realVer = src:match('GRND_SCRIPT_VERSION%s*=%s*"([^"]+)"')
-check(realNotes[1] ~= nil and realVer ~= nil and realNotes[1].ver == realVer,
-    "changelog: реальная шапка файла парсится")
-
 -- ---------- 3. источники спавна ----------
 resetU()
 _G.grndIsSpawnedSafe = nil
@@ -560,7 +509,6 @@ check(FS[SCRIPT_PATH]:find('GRND_SCRIPT_VERSION = "' .. NEW .. '"', 1, true) ~= 
     "установка: новый файл встал на место")
 check(FS[SCRIPT_PATH .. ".bak"] == nil, "установка: .bak НЕ создаётся")
 check(FS[SCRIPT_PATH .. ".new"] == nil, "установка: .new убран")
-check(#(U.notes or {}) == 1, "установка: список изменений разобран")
 check((gconf.sections.update or ""):find("updatedVer=" .. NEW, 1, true) ~= nil,
     "установка: отметка о новой версии записана в настройки")
 check((gconf.sections.update or ""):find("updatedFrom=" .. V, 1, true) ~= nil,
@@ -759,7 +707,6 @@ U.tick()
 succeed(2, newBody(NEW, "обычная установка"))
 U.tick()
 check(U.state == "ready" and U.installed, "зеркало: обычная установка прошла")
-check(#(U.notes or {}) == 1, "зеркало: изменения разобраны")
 
 -- ---------- 11. заход в игру ----------
 -- проверка при КАЖДОМ заходе + тост
@@ -927,9 +874,6 @@ check(U3.cur == NEW, "после перезапуска: версия — нов
 check(U3.window == true, "после перезапуска: окно изменений открылось само")
 check(U3.justUpdated and U3.justUpdated.from == V and U3.justUpdated.to == NEW,
     "после перезапуска: известно, с какой версии обновились")
-check(#(U3.notes or {}) >= 1, "после перезапуска: список изменений собран")
-check(table.concat(U3.notes[1] and U3.notes[1].lines or {}, " "):find("в окне видно", 1, true) ~= nil,
-    "после перезапуска: в списке — строки новой версии")
 check(hasToast("Обновление " .. NEW .. " включено"),
     "после перезапуска: тост про включённую версию")
 check((gconf.sections.update or ""):find("updatedVer", 1, true) == nil,
@@ -945,8 +889,6 @@ local body = table.concat(im.texts, "\n")
 check(body:find("ОБНОВЛЕНИЕ СКРИПТА", 1, true) ~= nil, "окно: наш заголовок")
 check(body:find("Установлена версия " .. NEW, 1, true) ~= nil, "окно: было/стало")
 check(body:find("Была " .. V, 1, true) ~= nil, "окно: прежняя версия видна")
-check(body:find("ЧТО ИЗМЕНИЛОСЬ", 1, true) ~= nil, "окно: подзаголовок изменений")
-check(body:find("в окне видно", 1, true) ~= nil, "окно: строка изменений")
 check(body:find("v" .. NEW, 1, true) == nil, "окно: строки «v<версия>» нет (только текст изменений)")
 check(body:find("Диагностика", 1, true) == nil, "окно: диагностики нет")
 check(body:find("Канал:", 1, true) == nil, "окно: служебного «Канал:» нет")
@@ -1036,38 +978,8 @@ check(not FS[SCRIPT_PATH]:find("script_name(%s*%(", 1),
 check(#FS[SCRIPT_PATH] < 20000, "байткод: файл без комментариев (короткий)")
 check(FS[SCRIPT_PATH .. ".bak"] == nil, "байткод: .bak не создаётся")
 check(FS[SCRIPT_PATH .. ".new"] == nil, "байткод: .new не остаётся")
-check((gconf.sections.update or ""):find("notesCache=", 1, true) ~= nil,
-    "байткод: список изменений сохранён в настройках")
 check((gconf.sections.update or ""):find("updatedVer=" .. NEW, 1, true) ~= nil,
     "байткод: отметка о версии сохранена")
-
--- после перезапуска (файл — байткод) окно изменений берёт список из настроек
-_G.GRND_SCRIPT_VERSION = NEW
-_G.GRND_UPDATE = nil
-local U4 = mkModule()()
-U4.io = stubIO
-U4.moonDl = downloadStub
-U4.CHANNELS = { CHA, CH1, CH2, CH3 }
-U4.inetLoad = function() return nil end
-U4.inet, U4.inetErr, U4.road = nil, nil, nil
-U4.cfgLoaded = false
-U4.tick()
-check(U4.window == true, "байткод: окно изменений открылось после перезапуска")
-check(#(U4.notes or {}) >= 1, "байткод: список изменений восстановлен из настроек")
-check(table.concat(U4.notes[1] and U4.notes[1].lines or {}, " ")
-    :find("обновление скомпилированной сборки", 1, true) ~= nil,
-    "байткод: в списке — строки из новой версии")
-check((gconf.sections.update or ""):find("notesCache", 1, true) == nil,
-    "байткод: из настроек список убран после показа")
-
--- список изменений переживает кодирование одной строкой
-local enc = U.encodeNotes({ { ver = "1.2.3", lines = { "строка один", "строка|два" } },
-    { ver = "1.2.4", lines = { "ещё строка" } } })
-check(enc:find("\n") == nil, "заметки: переносов строк нет (конфиг однострочный)")
-local dec = U.decodeNotes(enc)
-check(dec and #dec == 2 and dec[2].ver == "1.2.4", "заметки: разбираются обратно")
-check(dec and dec[1].lines[2] == "строка/два", "заметки: «|» внутри текста заменён")
-check(U.decodeNotes(nil) == nil, "заметки: пусто → nil")
 
 -- если байткод собрать нельзя — обновление не ставим (файл остаётся рабочим)
 resetU()
