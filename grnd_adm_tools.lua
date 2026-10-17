@@ -2,10 +2,11 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.275"
+GRND_SCRIPT_VERSION = "1.19.276"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
-v1.19.275 — отклонённая форма не появляется снова (повтор той же строки из чата игнорируется 120 с);
+v1.19.276 — защита от повтора формы: 1,5 с для форм от любого администратора (было 120 с);
+v1.19.275 — отклонённая форма не появляется снова;
 v1.19.274 — окна админ-формы и гос. волны не блокируют кнопки движения;
 v1.19.273 — окно админ-формы не включает курсор (управление клавишами Y / N);
 v1.19.272 — карточки форм берут цвет выбранной темы (вместо фиксированного зелёного);
@@ -35384,7 +35385,7 @@ function grndMainBody()
         if type(forms.queue) ~= "table" then forms.queue = {} end
         local key = grndFormKey(newForm)
         local doneAt = type(forms.done) == "table" and forms.done[key] or nil
-        if doneAt and (now - doneAt) < 120 then return end
+        if doneAt and (now - doneAt) < 1.5 then return end
         if forms.active and grndFormKey(forms.active) == key then return end
         for _, q in ipairs(forms.queue) do
             if grndFormKey(q) == key then return end
