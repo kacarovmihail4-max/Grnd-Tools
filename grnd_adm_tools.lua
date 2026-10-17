@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.345"
+GRND_SCRIPT_VERSION = "1.19.346"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41608,7 +41608,7 @@ function grndMainBody()
                             -- полукольцо постоянной толщины: закрашенные квады из двух треугольников
                             -- U-образная подставка под древком, концы загнуты вверх (как на эталоне)
                             -- скруглённая U: цепочка круглых точек толщиной 1.5, концы и стыки круглые
-                            local U_R, U_CY, U_N = 3.2, cy + 4.2, 60
+                            local U_R, U_CY, U_N = 3.3, cy + 4.2, 120
                             -- концы загнуты вверх и внутрь (дуга заходит за 180° на 0.6 рад с каждой стороны)
                             local U_OVER = 0.6
                             for k = 0, U_N do
