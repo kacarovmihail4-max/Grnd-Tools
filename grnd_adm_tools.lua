@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.311"
+GRND_SCRIPT_VERSION = "1.19.312"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -32945,7 +32945,7 @@ local function grndUpdInit()
             if not c then
                 if U.staleSeen then
                     U.state = "uptodate"
-                    if U.checkReason ~= "spawn" then U.notify("Обновлений нет — версия " .. U.cur, "ok", 2.6) end
+                    U.notify("Обновлений нет — версия " .. U.cur, "ok", 2.6)
                     U.finish()
                     return false
                 end
@@ -33056,7 +33056,7 @@ local function grndUpdInit()
             U.activeId = c.id
             U.saveCfg()
         end
-        if U.checkReason ~= "spawn" then U.notify("Обновлений нет — версия " .. U.cur, "ok", 2.6) end
+        U.notify("Обновлений нет — версия " .. U.cur, "ok", 2.6)
         U.finish()
         return true
     end
