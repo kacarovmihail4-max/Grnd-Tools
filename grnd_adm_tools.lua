@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.342"
+GRND_SCRIPT_VERSION = "1.19.343"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -17168,6 +17168,30 @@ function grndSpecForget(reason)
 end
 local function specConfirm()
     GRND_SPEC.confirmT = os.clock()
+end
+-- Скруглённый прямоугольник построчной заливкой (углы по дуге, без зазоров и швов)
+function grndSpecRR(dl, p1, p2, col, rounding)
+    local V = _G.GRND_IM and _G.GRND_IM.ImVec2
+    local x1, y1, x2, y2 = p1.x, p1.y, p2.x, p2.y
+    local r = math.min(rounding or 0, (x2 - x1) / 2, (y2 - y1) / 2)
+    if not V or r <= 0.5 then
+        pcall(dl.AddRectFilled, dl, p1, p2, col)
+        return
+    end
+    local function inset(d)
+        -- d: расстояние строки от края (0..r); возвращает отступ по x
+        if d >= r then return 0 end
+        return r - math.sqrt(math.max(0, r * r - (r - d) * (r - d)))
+    end
+    local y = y1
+    while y < y2 do
+        local h = math.min(1, y2 - y)
+        local mid = y + h / 2
+        local dTop, dBot = mid - y1, y2 - mid
+        local ins = math.max(inset(dTop), inset(dBot))
+        pcall(dl.AddRectFilled, dl, V(x1 + ins, y), V(x2 - ins, y + h), col)
+        y = y + h
+    end
 end
 function grndSpecInSpec()
     if not GRND_SPEC.active then return false end
@@ -41516,7 +41540,7 @@ function grndMainBody()
                     local bpos = im.GetWindowPos()
                     local bdl = im.GetWindowDrawList()
                     local function bat(x2, y2) return im.ImVec2(bpos.x + x2 * S, bpos.y + y2 * S) end
-                    roundRect(bdl, bat(0, 0), bat(PW, PH), col32(12, 10, 18, 240), 14)
+                    grndSpecRR(bdl, bat(0, 0), bat(PW, PH), col32(12, 10, 18, 240), 14 * S)
                     local ic = col32(245, 245, 250, 245)
                     local bx = PAD
                     for i, kb in ipairs(kinds) do
@@ -41533,7 +41557,7 @@ function grndMainBody()
                         local ac = TH.accent
                         local bgc = (act and col32(ac[1], ac[2], ac[3], 255))
                             or (hov and col32(ac[1], ac[2], ac[3], 190)) or col32(31, 28, 41, 235)
-                        roundRect(bdl, bat(bx, by), bat(bx + bw, by + BH), bgc, 10)
+                        grndSpecRR(bdl, bat(bx, by), bat(bx + bw, by + BH), bgc, 10 * S)
                         local cx, cy = bx + bw / 2, by + BH / 2
                         if key == "back" then
                             local tw = drawnWb("(Q)", 0.80 * S) / S
@@ -41624,8 +41648,8 @@ function grndMainBody()
                     if grndBegin("##grnd_spec_hint", flagsH) then
                         local hpos = im.GetWindowPos()
                         local hdl = im.GetWindowDrawList()
-                        roundRect(hdl, im.ImVec2(hpos.x, hpos.y), im.ImVec2(hpos.x + HW, hpos.y + HH),
-                            col32(12, 10, 18, 235), 10)
+                        grndSpecRR(hdl, im.ImVec2(hpos.x, hpos.y), im.ImVec2(hpos.x + HW, hpos.y + HH),
+                            col32(12, 10, 18, 235), 10 * S)
                         uiText(10 * S, 4 * S, hovHint.text, c4(TH.textHi), 0.80 * S)
                     end
                     if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
