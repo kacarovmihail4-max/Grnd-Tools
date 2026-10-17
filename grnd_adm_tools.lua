@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.278"
+GRND_SCRIPT_VERSION = "1.19.279"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.279 — после Y/N окно формы не остаётся: копии уже решённой формы из очереди удаляются;
 v1.19.278 — команды без проверки синтаксиса: после Y скрипт ждёт ответ сервера;
   ошибка («|Неверный ID игрока», «Используйте: ...») уходит в админ-чат как «>> текст»,
   без «Форма ... принята»; если ошибки нет — «Форма от NICK принята.»;
@@ -12785,7 +12786,13 @@ function grndFormsResolve(action)
     -- запоминаем решённую форму: повтор той же строки из чата не открывает окно заново
     F.done = F.done or {}
     F.done[grndFormKey(form)] = os.clock()
-    local nextForm = table.remove(F.queue or {}, 1)
+    -- копии уже решённой формы (тот же админ и команда) не показываем второй раз
+    local rk = grndFormKey(form)
+    local q = F.queue or {}
+    for i = #q, 1, -1 do
+        if type(q[i]) == "table" and grndFormKey(q[i]) == rk then table.remove(q, i) end
+    end
+    local nextForm = table.remove(q, 1)
     if type(nextForm) == "table" then nextForm.openedAt = os.clock() end
     F.active = nextForm
     F.want = nil
