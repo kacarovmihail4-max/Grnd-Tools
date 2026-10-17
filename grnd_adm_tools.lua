@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.285"
+GRND_SCRIPT_VERSION = "1.19.286"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.286 — в слежке серверное окно закрывается и прокручивается: панель слежки без курсора не захватывает мышь и клавиши;
 v1.19.285 — в слежке серверные окна не блокируют ввод, полёт и открытие чата скрипта;
 v1.19.284 — повтор уже решённой формы (тот же админ и команда) игнорируется 3 с после решения;
 v1.19.283 — решённая форма (тот же админ и команда) не открывается повторно в течение 1 с, как и пауза;
@@ -1352,6 +1353,16 @@ end
 function grndServerWinBlocks()
     if type(grndCamSpectating) == "function" and grndCamSpectating() then return false end
     return grndServerDialogOpen()
+end
+-- Панель слежки (GRND_RC) без курсора — это только показ, ввод ей не нужен.
+-- Раньше она включала захват мыши и клавиш, и открытое серверное окно
+-- нельзя было ни закрыть, ни прокрутить. Пока серверное окно открыто,
+-- захват включается только когда курсор панели реально включён.
+function grndRcWantsUi()
+    local RC = _G.GRND_RC
+    if not (RC and RC.show) then return false end
+    if RC.cursor then return true end
+    return not grndServerDialogOpen()
 end
 GRND_GATE = GRND_GATE or { blockedFrames = 0, suppressed = 0, why = "", unblockAt = 0 }
 GRND_GATE.authSeen = false
@@ -43429,7 +43440,7 @@ function grndMainBody()
             do
                 local wantUi = ((menu and menu.open) or GRND_TAB.open
                     or (GRND_REP and GRND_REP.open)
-                    or (GRND_RC and GRND_RC.show)
+                    or grndRcWantsUi()
                     or (_G.GRND_KL and _G.GRND_KL.moving)
                     or (_G.GRND_AO and _G.GRND_AO.moving)) and true or false
                 if wantUi ~= grndUiControlsOn and not clw.aiming then
