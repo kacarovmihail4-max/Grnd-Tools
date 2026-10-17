@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.314"
+GRND_SCRIPT_VERSION = "1.19.315"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -35438,6 +35438,13 @@ function grndMainBody()
             local maxVisible = math.max(1, math.min(5, math.floor((resY - marginBottom - 22) / 98)))
             local maxWidth = math.min(430, math.max(210, resX - marginX * 2))
             local now = os.clock()
+            for i = 1, #queue do
+                local item = queue[i]
+                if not item.shown then
+                    item.shown, item.start = true, now
+                    if item.force then grndPerfWrite("тост показан: " .. tostring(item.text)) end
+                end
+            end
             for i = #queue, 1, -1 do
                 local item = queue[i]
                 if now - item.start >= item.life then table.remove(queue, i) end
