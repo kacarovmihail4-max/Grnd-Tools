@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.286"
+GRND_SCRIPT_VERSION = "1.19.287"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.287 — формы от Grnd_Bot не открываются (только формы, остальные строки бота не меняются);
 v1.19.286 — в слежке серверное окно закрывается и прокручивается: панель слежки без курсора не захватывает мышь и клавиши;
 v1.19.285 — в слежке серверные окна не блокируют ввод, полёт и открытие чата скрипта;
 v1.19.284 — повтор уже решённой формы (тот же админ и команда) игнорируется 3 с после решения;
@@ -35423,6 +35424,8 @@ function grndMainBody()
         if GRND_ADMIN_CFG and GRND_ADMIN_CFG.autoForms == false then return end
         local nick,adminId,msg=grndFormAdminLine(text)
         if not nick or not adminId or not msg then return end
+        -- формы от бота Grnd_Bot не открываем (только формы; остальные строки бота не трогаем)
+        if tostring(nick):lower() == "grnd_bot" then return end
         -- служебные строки самого скрипта (пример команды, ответы на форму) — не форма
         if msg:find("Пример правильной команды", 1, true) or msg:find("Пропиши форму", 1, true)
             or msg:find("отклонена", 1, true) or msg:find("принята.", 1, true) then
