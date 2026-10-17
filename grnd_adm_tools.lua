@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.318"
+GRND_SCRIPT_VERSION = "1.19.319"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41379,6 +41379,7 @@ function grndMainBody()
             grndPopCol(colorN)
             grndPopStyle(styleN)
             if grndSpecInSpec() and im and im.SetNextWindowPos then
+                local S = 1.3
                 local PAD, GAP, BH = 8, 7, 29
                 local WIDE, NARROW = 60, 30
                 local kinds = {
@@ -41387,8 +41388,18 @@ function grndMainBody()
                 }
                 local PW = 2 * PAD + 2 * WIDE + 3 * NARROW + 4 * GAP
                 local PH = BH + 2 * PAD
-                im.SetNextWindowPos(im.ImVec2(math.floor(resX / 2 - PW / 2), 64), COND_ALWAYS)
-                im.SetNextWindowSize(im.ImVec2(PW, PH), COND_ALWAYS)
+                local SW, SH = PW * S, PH * S
+                RC.specBar = RC.specBar or {}
+                local SB = RC.specBar
+                if not SB.x then
+                    SB.x = math.floor(resX / 2 - SW / 2)
+                    SB.y = 64
+                end
+                SB.x = math.max(0, math.min(resX - SW, SB.x))
+                SB.y = math.max(0, math.min(resY - SH, SB.y))
+                local barRect = { x = SB.x, y = SB.y, w = SW, h = SH }
+                im.SetNextWindowPos(im.ImVec2(SB.x, SB.y), COND_ALWAYS)
+                im.SetNextWindowSize(im.ImVec2(SW, SH), COND_ALWAYS)
                 local stB, clB = 0, 0
                 if grndPushStyleV2(im.StyleVar and im.StyleVar.WindowPadding, 0, 0) then stB = stB + 1 end
                 if grndPushStyleF(im.StyleVar and im.StyleVar.WindowRounding, 0) then stB = stB + 1 end
@@ -41396,36 +41407,38 @@ function grndMainBody()
                 if grndPushCol(im.Col and im.Col.Border, rgba(0, 0, 0, 0)) then clB = clB + 1 end
                 local flagsB = wf("NoTitleBar", "NoResize", "NoMove", "NoScrollbar",
                     "NoCollapse", "NoFocusOnAppearing", "NoBringToFrontOnFocus")
+                local anyHov = false
                 if grndBegin("##grnd_spec_bar", flagsB) then
                     local bpos = im.GetWindowPos()
                     local bdl = im.GetWindowDrawList()
-                    local function bat(x2, y2) return im.ImVec2(bpos.x + x2, bpos.y + y2) end
+                    local function bat(x2, y2) return im.ImVec2(bpos.x + x2 * S, bpos.y + y2 * S) end
                     roundRect(bdl, bat(0, 0), bat(PW, PH), col32(12, 10, 18, 240), 8)
                     local ic = col32(245, 245, 250, 245)
                     local bx = PAD
                     for i, kb in ipairs(kinds) do
                         local key, bw = kb[1], kb[2]
                         local by = PAD
-                        im.SetCursorPos(im.ImVec2(bx, by))
-                        local clicked = im.InvisibleButton("##grnd_spec_btn" .. i, im.ImVec2(bw, BH))
+                        im.SetCursorPos(im.ImVec2(bx * S, by * S))
+                        local clicked = im.InvisibleButton("##grnd_spec_btn" .. i, im.ImVec2(bw * S, BH * S))
                         local hov = (im.IsItemHovered and im.IsItemHovered()) or false
                         local act = (im.IsItemActive and im.IsItemActive()) or false
+                        if hov then anyHov = true end
                         local bgc = (act and col32(60, 56, 76, 245))
                             or (hov and col32(48, 44, 64, 240)) or col32(31, 28, 41, 235)
                         roundRect(bdl, bat(bx, by), bat(bx + bw, by + BH), bgc, 6)
                         local cx, cy = bx + bw / 2, by + BH / 2
                         if key == "back" then
-                            local tw = drawnWb("(Q)", 0.80)
+                            local tw = drawnWb("(Q)", 0.80 * S) / S
                             local gx = cx - (11 + 5 + tw) / 2
                             bdl:AddLine(bat(gx + 5, cy - 5), bat(gx, cy), ic, 1.6)
                             bdl:AddLine(bat(gx, cy), bat(gx + 5, cy + 5), ic, 1.6)
                             bdl:AddLine(bat(gx + 11, cy - 5), bat(gx + 6, cy), ic, 1.6)
                             bdl:AddLine(bat(gx + 6, cy), bat(gx + 11, cy + 5), ic, 1.6)
-                            uiText(gx + 16, cy - 7, "(Q)", c4(TH.textHi), 0.80)
+                            uiText(bpos.x + (gx + 16) * S, bpos.y + (cy - 6) * S, "(Q)", c4(TH.textHi), 0.80 * S)
                         elseif key == "fwd" then
-                            local tw = drawnWb("(E)", 0.80)
+                            local tw = drawnWb("(E)", 0.80 * S) / S
                             local gx = cx - (tw + 5 + 11) / 2
-                            uiText(gx, cy - 7, "(E)", c4(TH.textHi), 0.80)
+                            uiText(bpos.x + gx * S, bpos.y + (cy - 6) * S, "(E)", c4(TH.textHi), 0.80 * S)
                             local x0 = gx + tw + 5
                             bdl:AddLine(bat(x0, cy - 5), bat(x0 + 5, cy), ic, 1.6)
                             bdl:AddLine(bat(x0 + 5, cy), bat(x0, cy + 5), ic, 1.6)
@@ -41439,15 +41452,15 @@ function grndMainBody()
                             bdl:AddLine(bat(cx, cy + 4), bat(cx, cy + 6), ic, 1.8)
                         elseif key == "diamond" then
                             pcall(bdl.AddQuad, bdl, bat(cx, cy - 9), bat(cx + 9, cy), bat(cx, cy + 9), bat(cx - 9, cy), ic, 1.5)
-                            bdl:AddLine(bat(cx - 3, cy + 4), bat(cx - 3, cy - 1), ic, 1.5)
-                            bdl:AddLine(bat(cx - 3, cy - 1), bat(cx + 3, cy - 1), ic, 1.5)
-                            bdl:AddLine(bat(cx + 0.5, cy - 3.5), bat(cx + 3, cy - 1), ic, 1.5)
-                            bdl:AddLine(bat(cx + 3, cy - 1), bat(cx + 0.5, cy + 1.5), ic, 1.5)
+                            bdl:AddLine(bat(cx - 3, cy + 3), bat(cx - 3, cy - 2), ic, 1.5)
+                            bdl:AddLine(bat(cx - 3, cy - 2), bat(cx + 3, cy - 2), ic, 1.5)
+                            bdl:AddLine(bat(cx + 0.5, cy - 4.5), bat(cx + 3, cy - 2), ic, 1.5)
+                            bdl:AddLine(bat(cx + 3, cy - 2), bat(cx + 0.5, cy + 0.5), ic, 1.5)
                         elseif key == "flag" then
-                            bdl:AddLine(bat(cx - 4, cy - 9), bat(cx - 4, cy + 4), ic, 1.5)
-                            bdl:AddLine(bat(cx - 4, cy - 9), bat(cx + 4, cy - 6), ic, 1.5)
-                            bdl:AddLine(bat(cx + 4, cy - 6), bat(cx - 4, cy - 3), ic, 1.5)
-                            bdl:AddCircle(bat(cx - 1, cy + 4), 3, ic, 12, 1.4)
+                            bdl:AddLine(bat(cx - 4, cy - 8), bat(cx - 4, cy + 4), ic, 1.5)
+                            bdl:AddLine(bat(cx - 4, cy - 8), bat(cx + 4, cy - 5), ic, 1.5)
+                            bdl:AddLine(bat(cx + 4, cy - 5), bat(cx - 4, cy - 2), ic, 1.5)
+                            bdl:AddCircle(bat(cx - 1, cy + 4), 3 * S, ic, 12, 1.4)
                         end
                         if clicked then
                             if key == "back" then grndSpecSwitch(-1)
@@ -41461,6 +41474,19 @@ function grndMainBody()
                 if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
                 grndPopCol(clB)
                 grndPopStyle(stB)
+                if RC.cursor and GRND_MOUSE.down then
+                    if not SB.dragging and not anyHov and grndMouseInside(barRect) then
+                        SB.dragging = true
+                        SB.dx = GRND_MOUSE.x - SB.x
+                        SB.dy = GRND_MOUSE.y - SB.y
+                    end
+                else
+                    SB.dragging = false
+                end
+                if SB.dragging then
+                    SB.x = GRND_MOUSE.x - SB.dx
+                    SB.y = GRND_MOUSE.y - SB.dy
+                end
             end
             do
                 if RC.actionsWinOpen and RC.id ~= nil
