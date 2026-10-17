@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.297"
+GRND_SCRIPT_VERSION = "1.19.298"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.298 — до спавна: защёлка спавна не стартует взведённой (isPlayerPlaying на экране входа давал true), окно авторизации распознаётся, тосты скрыты кроме «Скрипт загружен», меню не открывается по M, оверлей админов скрыт;
 v1.19.297 — окно формы, гос. новости, статистика и чекеры в меню тоже скрыты до спавна (гейт grndUiBlocked);
 v1.19.296 — окна скрипта и автообновление не появляются до реального спавна: признак спавна берётся из отправки спавна клиентом (onSendSpawn), а не из sampIsLocalPlayerSpawned, который давал true раньше;
 v1.19.295 — уведомления автообновления («Проверяю обновления…», ошибки, тосты) не появляются до спавна;
@@ -1449,7 +1450,7 @@ function grndAuthDialogOpen()
     -- такие окна не должны отключать окна скрипта.
     if type(sampIsLocalPlayerSpawned) == "function" then
         local okS, sp = pcall(sampIsLocalPlayerSpawned)
-        if okS and sp then return false end
+        if okS and sp and grndSpawnLatched() then return false end
     end
     local caption, text = grndDialogPartsNow()
     if caption == "" and text == "" then return false end
@@ -1551,15 +1552,7 @@ end
 GRND_SPAWN = GRND_SPAWN or { seen = nil, gs = nil }
 function grndSpawnLatched()
     local S = GRND_SPAWN
-    if S.seen == nil then
-        -- при загрузке скрипта: уже в игре, если персонаж управляется
-        local inGame = false
-        if type(isPlayerPlaying) == "function" then
-            local okP, v = pcall(isPlayerPlaying, PLAYER_HANDLE)
-            inGame = okP and v == true
-        end
-        S.seen = inGame
-    end
+    if S.seen == nil then S.seen = false end
     if type(sampGetGamestate) == "function" then
         local ok, st = pcall(sampGetGamestate)
         st = ok and tonumber(st) or nil
@@ -36088,6 +36081,12 @@ function grndMainBody()
                 local item = queue[i]
                 if now - item.start >= item.life then table.remove(queue, i) end
             end
+            if grndUiBlocked() then
+                -- до спавна показываем только системное уведомление о загрузке
+                for i = #queue, 1, -1 do
+                    if not queue[i].force then table.remove(queue, i) end
+                end
+            end
             if #queue == 0 then return end
             local function drawToastIcon(dl, kind, cx, cy, style, alpha)
                 local r, g, b = style.accent[1], style.accent[2], style.accent[3]
@@ -42833,6 +42832,7 @@ function grndMainBody()
                 queue[#queue + 1] = {
                     id = nextId, text = message, kind = kind,
                     life = life, start = now, alpha = 1,
+                    force = force and true or false,
                 }
                 if imKind == "moonimgui" then im.Process = true end
                 return true
@@ -43822,7 +43822,7 @@ function grndMainBody()
                     end
                 end
                 if menu then
-                    if not hotBusy and poll(GRND_MENU_HOTKEY) then
+                    if not hotBusy and poll(GRND_MENU_HOTKEY) and not grndUiBlocked() then
                         menu.open = not menu.open
                         if menu.open then ensureRender() end
                         grndTrace("key", "M(опрос) -> меню " .. (menu.open and "открыто" or "закрыто"))
