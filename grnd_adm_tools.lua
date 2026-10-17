@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.309"
+GRND_SCRIPT_VERSION = "1.19.310"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -16968,6 +16968,7 @@ end
 GRND_ONTERM = GRND_ONTERM or {}
 function grndOnTerm(fn) table.insert(GRND_ONTERM, fn) end
 function onScriptTerminate(scr, quitGame)
+    grndPerfWrite("выгрузка скрипта")
     if scr and type(thisScript)=="function" and scr~=thisScript() then return end
     if type(grndConfigSnapshot)=="function" then pcall(grndConfigSnapshot,true) end
     pcall(grndCamDiagStop,"script unload")
@@ -32928,6 +32929,7 @@ local function grndUpdInit()
         end
     end
     function U.finish(msg, kind)
+        grndPerfWrite("проверка обновлений завершена: " .. tostring(msg or "ок"))
         if msg then U.state, U.err = "error", msg end
         if msg then failToast("Обновления: " .. tostring(msg)) end
         U.job = nil
@@ -33193,6 +33195,7 @@ local function grndUpdInit()
     end
     function U.check(reason)
         U.checkReason = reason or "manual"
+        grndPerfWrite("проверка обновлений начата: " .. tostring(U.checkReason))
         U.loadCfg()
         if U.probing or U.job then return false, "уже проверяю" end
         U.state, U.err = "checking", nil
@@ -33272,6 +33275,7 @@ local function grndUpdInit()
         return okP and playing == true
     end
     function U.reload()
+        grndPerfWrite("перезапуск скрипта для обновления")
         local seen = rawget(_G, "GRND_SPAWN")
         if type(seen) == "table" and seen.seen == true then
             U.keepSpawnAt = os.time()
@@ -42904,83 +42908,101 @@ function grndMainBody()
     grndConfigSnapshot(true)
     while true do
         wait(0)
-        pcall(grndConfigSnapshot,false)
-        if not (GRND_AFK and GRND_AFK.threadStarted) then pcall(grndAntiAfkTick) end
+        do
+            local nowMs = grndPerfMs()
+            local P = GRND_PERF
+            if P.lastMs and nowMs - P.lastMs >= 100 then
+                grndPerfWrite(("пауза кадра %d мс"):format(nowMs - P.lastMs))
+            end
+            P.lastMs = nowMs
+            local okS, ready = grndPerfRun("grndSessionReady", grndSessionReady)
+            if okS and ready ~= P.ready then
+                if P.ready ~= nil then grndPerfWrite("готовность сессии: " .. tostring(ready)) end
+                P.ready = ready
+            end
+            local okA, auth = grndPerfRun("grndAuthDialogOpen", grndAuthDialogOpen)
+            if okA and auth ~= P.auth then
+                if P.auth ~= nil then grndPerfWrite("окно авторизации: " .. (auth and "открыто" or "закрыто")) end
+                P.auth = auth
+            end
+        end
+        grndPerfRun("grndConfigSnapshot", grndConfigSnapshot, false)
+        if not (GRND_AFK and GRND_AFK.threadStarted) then grndPerfRun("grndAntiAfkTick", grndAntiAfkTick) end
         repeat
             if grndAfkSuspendFrame() then
-                pcall(grndStickyKeysTick)
-                if _G.MP then pcall(_G.MP.tick) end
+                grndPerfRun("grndStickyKeysTick", grndStickyKeysTick)
+                if _G.MP then grndPerfRun("_G.MP.tick", _G.MP.tick) end
                 wait(20)
                 break
             end
-            pcall(grndKeysTick)
-            pcall(GRND_INPUT.tick)
-            pcall(grndRepPoll)
-            pcall(grndRepHudPrune)
-            if _G.GRND_QR and type(_G.GRND_QR.punPoll) == "function" then pcall(_G.GRND_QR.punPoll) end
-            pcall(grndRepQueueTick)
-            if _G.MP then pcall(_G.MP.tick) end
-            pcall(grndKlTick)
-            pcall(grndAoTick)
-            pcall(grndRcTick)
-            pcall(grndSpecAutoRefreshTick)
-            pcall(grndStatsTick)
-            pcall(grndFormWatchTick)
-            pcall(grndFormsKeyTick)
-            if _G.grndBinderTick then pcall(_G.grndBinderTick) end
+            grndPerfRun("grndKeysTick", grndKeysTick)
+            grndPerfRun("GRND_INPUT.tick", GRND_INPUT.tick)
+            grndPerfRun("grndRepPoll", grndRepPoll)
+            grndPerfRun("grndRepHudPrune", grndRepHudPrune)
+            if _G.GRND_QR and type(_G.GRND_QR.punPoll) == "function" then grndPerfRun("_G.GRND_QR.punPoll", _G.GRND_QR.punPoll) end
+            grndPerfRun("grndRepQueueTick", grndRepQueueTick)
+            if _G.MP then grndPerfRun("_G.MP.tick", _G.MP.tick) end
+            grndPerfRun("grndKlTick", grndKlTick)
+            grndPerfRun("grndAoTick", grndAoTick)
+            grndPerfRun("grndRcTick", grndRcTick)
+            grndPerfRun("grndSpecAutoRefreshTick", grndSpecAutoRefreshTick)
+            grndPerfRun("grndStatsTick", grndStatsTick)
+            grndPerfRun("grndFormWatchTick", grndFormWatchTick)
+            grndPerfRun("grndFormsKeyTick", grndFormsKeyTick)
+            if _G.grndBinderTick then grndPerfRun("_G.grndBinderTick", _G.grndBinderTick) end
             do
-                local okBulk, errBulk = pcall(GRND_BULK.tick)
+                local okBulk, errBulk = grndPerfRun("GRND_BULK.tick", GRND_BULK.tick)
                 if not okBulk then GRND_BULK.stop("Ошибка очереди: " .. tostring(errBulk)) end
             end
-            pcall(grndRingTick)
+            grndPerfRun("grndRingTick", grndRingTick)
             if type(grndAirBreakTick) == "function" then
-                pcall(grndAirBreakTick)
+                grndPerfRun("grndAirBreakTick", grndAirBreakTick)
             end
             local gateOverlays = type(grndUiBlocked) == "function" and grndUiBlocked()
             if not gateOverlays then
                 if type(_G.grndReconFallback) == "function" then
-                    pcall(_G.grndReconFallback)
+                    grndPerfRun("_G.grndReconFallback", _G.grndReconFallback)
                 end
                 if type(_G.drawReconHintDx) == "function" then
-                    pcall(_G.drawReconHintDx)
+                    grndPerfRun("_G.drawReconHintDx", _G.drawReconHintDx)
                 end
             end
             do
-                local okWh,errWh=pcall(GRND_WH.frame)
+                local okWh,errWh=grndPerfRun("GRND_WH.frame", GRND_WH.frame)
                 if not okWh then
                     GRND_WH.frameError=tostring(errWh)
                     GRND_WH.nativeStatus='Ошибка WH: '..tostring(errWh)
-                    pcall(GRND_WH.diagnose)
+                    grndPerfRun("GRND_WH.diagnose", GRND_WH.diagnose)
                 end
             end
-            pcall(GRND_TRACER.frame)
-            pcall(grndTargetRingFrame)
-            pcall(grndTraceTick)
-            pcall(grndRegisterCmds)
-            pcall(F1H.tick)
+            grndPerfRun("GRND_TRACER.frame", GRND_TRACER.frame)
+            grndPerfRun("grndTargetRingFrame", grndTargetRingFrame)
+            grndPerfRun("grndTraceTick", grndTraceTick)
+            grndPerfRun("grndRegisterCmds", grndRegisterCmds)
+            grndPerfRun("F1H.tick", F1H.tick)
             do
-                local okCamera,errCamera=pcall(grndCamTick)
+                local okCamera,errCamera=grndPerfRun("grndCamTick", grndCamTick)
                 if not okCamera then
-                    pcall(grndCamUiEnd,false)
-                    pcall(grndCamLookRestore)
+                    grndPerfRun("grndCamUiEnd", grndCamUiEnd, false)
+                    grndPerfRun("grndCamLookRestore", grndCamLookRestore)
                     grndCamReportError('normal',errCamera)
                 end
-                pcall(grndCamDiagTick,not okCamera and errCamera or nil)
+                grndPerfRun("grndCamDiagTick", grndCamDiagTick, not okCamera and errCamera or nil)
             end
-            pcall(grndChatStampApply)
+            grndPerfRun("grndChatStampApply", grndChatStampApply)
             GRND_KEYS.uiBusy = (((menu ~= nil) and menu.open)
                 or GRND_TAB.open or (GRND_REP and GRND_REP.open)
                 or (GRND_RC and GRND_RC.show)
                 or (_G.GRND_KL and _G.GRND_KL.moving)
                 or (_G.GRND_AO and _G.GRND_AO.moving)) and true or false
             GRND_KEYS.aiming = ((clw ~= nil) and clw.aiming) and true or false
-            pcall(grndUiMouseUpdate)
-            pcall(grndUiMovementGuardTick)
-            pcall(grndStickyKeysTick)
-            if type(_G.grndQrAutoTick) == "function" then pcall(_G.grndQrAutoTick) end
-            if type(_G.grndPunAutoTick) == "function" then pcall(_G.grndPunAutoTick) end
-            if type(_G.grndRadTick) == "function" then pcall(_G.grndRadTick) end
-            if type(_G.grndUpdTick) == "function" then pcall(_G.grndUpdTick) end
+            grndPerfRun("grndUiMouseUpdate", grndUiMouseUpdate)
+            grndPerfRun("grndUiMovementGuardTick", grndUiMovementGuardTick)
+            grndPerfRun("grndStickyKeysTick", grndStickyKeysTick)
+            if type(_G.grndQrAutoTick) == "function" then grndPerfRun("_G.grndQrAutoTick", _G.grndQrAutoTick) end
+            if type(_G.grndPunAutoTick) == "function" then grndPerfRun("_G.grndPunAutoTick", _G.grndPunAutoTick) end
+            if type(_G.grndRadTick) == "function" then grndPerfRun("_G.grndRadTick", _G.grndRadTick) end
+            if type(_G.grndUpdTick) == "function" then grndPerfRun("_G.grndUpdTick", _G.grndUpdTick) end
             do
                 local wantUi = ((menu and menu.open) or GRND_TAB.open
                     or (GRND_REP and GRND_REP.open)
@@ -43026,7 +43048,7 @@ function grndMainBody()
                 local now = os.clock()
                 if now - specWatchT >= 0.5 then
                     specWatchT = now
-                    local okS, st = pcall(specProbeState)
+                    local okS, st = grndPerfRun("specProbeState", specProbeState)
                     if not okS then st = nil end
                     if st == false and manualExitMain then
                         grndSpecForget("state")
@@ -43034,9 +43056,9 @@ function grndMainBody()
                         if GRND_SPEC.active then
                             specConfirm()
                         else
-                            local okI, tid = pcall(specProbeSpectId)
+                            local okI, tid = grndPerfRun("specProbeSpectId", specProbeSpectId)
                             if okI and tid then
-                                pcall(grndSpecTrackCommand, "/sp " .. tid)
+                                grndPerfRun("grndSpecTrackCommand", grndSpecTrackCommand,  "/sp " .. tid)
                             end
                         end
                     end
@@ -43072,7 +43094,7 @@ function grndMainBody()
                     local failFromChat = false
                     if not failFromHook and not dialogActive and now - (AUTH.failScanAt or 0) >= 0.15 then
                         AUTH.failScanAt = now
-                        local okCount, failCount = pcall(countAuthFailInChat)
+                        local okCount, failCount = grndPerfRun("countAuthFailInChat", countAuthFailInChat)
                         failFromChat = okCount and type(failCount) == "number"
                             and failCount > (AUTH.failCountBase or 0)
                     end
@@ -43113,7 +43135,7 @@ function grndMainBody()
                 end
                 local function pollRelease(k)
                     if type(isKeyDown) == "function" then
-                        local ok, d = pcall(isKeyDown, k)
+                        local ok, d = grndPerfRun("isKeyDown", isKeyDown,  k)
                         if (not ok) or not d then grndTapEnd(k) end
                     else
                         grndTapEnd(k)
@@ -43140,11 +43162,11 @@ function grndMainBody()
                         if isT then
                             if os.clock() - GRND_CHAT.wantOpen > 0.05 then
                                 GRND_CHAT.wantOpen = nil
-                                if not busy then pcall(grndChatOpen, true) end
+                                if not busy then grndPerfRun("grndChatOpen", grndChatOpen,  true) end
                             end
                         else
                             GRND_CHAT.wantOpen = nil
-                            if not busy then pcall(grndChatOpen, false) end
+                            if not busy then grndPerfRun("grndChatOpen", grndChatOpen,  false) end
                         end
                     end
                 end
@@ -43190,14 +43212,14 @@ function grndMainBody()
                 end
             end
             grndGMFrame()
-            pcall(grndInvisFrame)
-            pcall(grndRunFrame)
-            pcall(grndOxyFrame)
-            pcall(grndGetupFrame)
-            if GRND_AIR.frame then pcall(GRND_AIR.frame) end
+            grndPerfRun("grndInvisFrame", grndInvisFrame)
+            grndPerfRun("grndRunFrame", grndRunFrame)
+            grndPerfRun("grndOxyFrame", grndOxyFrame)
+            grndPerfRun("grndGetupFrame", grndGetupFrame)
+            if GRND_AIR.frame then grndPerfRun("GRND_AIR.frame", GRND_AIR.frame) end
             local gmSpawned = false
             if type(grndIsSpawned) == "function" then
-                local okS, sp = pcall(grndIsSpawned)
+                local okS, sp = grndPerfRun("grndIsSpawned", grndIsSpawned)
                 if okS then gmSpawned = sp and true or false end
             end
             if not gmSpawned then
@@ -43214,7 +43236,7 @@ function grndMainBody()
             if clw then
                 local clwTyping = false
                 if sampIsChatInputActive then
-                    local ok, r = pcall(sampIsChatInputActive)
+                    local ok, r = grndPerfRun("sampIsChatInputActive", sampIsChatInputActive)
                     if ok and r then clwTyping = true end
                 end
                 if GRND_KEYS.typing then clwTyping = true end
@@ -43259,7 +43281,7 @@ function grndMainBody()
                     grndPlainCursorShow(false)
                 end
                 if clw.aiming then
-                    pcall(clwAimFrame)
+                    grndPerfRun("clwAimFrame", clwAimFrame)
                 end
             end
         until true
@@ -43304,10 +43326,65 @@ function grndConfigSnapshot(force)
     C.extraSnapshot();C.collecting=false
     C.flush()
 end
+GRND_PERF = { path = nil, t0 = 0, bytes = 0, cap = 300000, lastMs = nil, ready = nil, auth = nil, tick = nil }
+function grndPerfMs()
+    local P = GRND_PERF
+    if P.tick == nil then
+        P.tick = false
+        local okF, ffi = pcall(require, "ffi")
+        if okF then
+            pcall(ffi.cdef, "unsigned long GetTickCount(void);")
+            local okK, k32 = pcall(ffi.load, "kernel32")
+            if okK and k32 then P.tick = k32.GetTickCount end
+        end
+    end
+    if P.tick then return tonumber(P.tick()) or 0 end
+    return math.floor(os.clock() * 1000)
+end
+function grndPerfWrite(msg)
+    local P = GRND_PERF
+    if P.bytes > P.cap then return end
+    local line = os.date("%d.%m %H:%M:%S") .. (" +%d мс  "):format(grndPerfMs() - (P.t0 or 0))
+        .. tostring(msg) .. "\n"
+    P.bytes = P.bytes + #line
+    local path = P.path
+    if not path then
+        local okP, v = pcall(grndStoragePath, "logs", "grnd_perf.txt")
+        if not okP or type(v) ~= "string" then return end
+        path = v
+        P.path = v
+    end
+    local okO, f = pcall(io.open, path, "ab")
+    if okO and f then f:write(line) f:close() end
+end
+function grndPerfStart()
+    local P = GRND_PERF
+    local okP, path = pcall(grndStoragePath, "logs", "grnd_perf.txt")
+    if not okP or type(path) ~= "string" then return end
+    P.path = path
+    P.t0 = grndPerfMs()
+    P.bytes = 0
+    local okR, f = pcall(io.open, P.path, "rb")
+    local size = 0
+    if okR and f then size = f:seek("end") or 0 f:close() end
+    if size > P.cap then
+        local okW, w = pcall(io.open, P.path, "wb")
+        if okW and w then w:close() end
+    end
+    grndPerfWrite("=== запуск скрипта, версия " .. tostring(GRND_SCRIPT_VERSION) .. " ===")
+end
+function grndPerfRun(name, fn, ...)
+    local t0 = grndPerfMs()
+    local ok, a, b = pcall(fn, ...)
+    local dt = grndPerfMs() - t0
+    if dt >= 30 then grndPerfWrite(("шаг «%s» занял %d мс"):format(tostring(name), dt)) end
+    return ok, a, b
+end
 function main()
     GRND_CONFIG.ensure()
     GRND_CONFIG.restoreHotkeys()
     GRND_LOG.init()
+    grndPerfStart()
     GRND_CONFIG.flush()
     local ok, err = pcall(grndMainBody)
     if not ok then

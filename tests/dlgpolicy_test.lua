@@ -302,7 +302,7 @@ ok("gm.auto.silent", src:find("grndGMToast(true)", 1, true) == nil)
 ok("run.native", src:find("setPlayerNeverGetsTired", 1, true) ~= nil)
 ok("run.card", src:find('tag = "run"', 1, true) ~= nil)
 ok("run.cfg", src:find('f:write("runOn="', 1, true) ~= nil and src:find('k == "runOn"', 1, true) ~= nil)
-ok("run.frame", src:find("pcall(grndRunFrame)", 1, true) ~= nil)
+ok("run.frame", src:find("grndPerfRun(\"grndRunFrame\", grndRunFrame)", 1, true) ~= nil)
 -- шрифт подписей чата увеличен
 ok("font.meta", src:find("metaScale=1.60", 1, true) ~= nil)
 ok("font.hint", src:find("fit(hint,r.w-28,measureFont,1.8)", 1, true) ~= nil)
@@ -314,7 +314,7 @@ ok("getup.natives", src:find("pcall(clearCharTasksImmediately, PLAYER_PED)", 1, 
 ok("getup.everyFrame", src:find("if now - (G.at or 0) < 0.25 then return end", 1, true) == nil)
 ok("getup.fallAnims", src:find('"FALL_FRONT", "FALL_BACK"', 1, true) ~= nil)
 ok("getup.card", src:find('tag = "getup"', 1, true) ~= nil and src:find('f:write("getupOn="', 1, true) ~= nil)
-ok("cheats.frames", src:find("pcall(grndOxyFrame)", 1, true) ~= nil and src:find("pcall(grndGetupFrame)", 1, true) ~= nil)
+ok("cheats.frames", src:find("grndPerfRun(\"grndOxyFrame\", grndOxyFrame)", 1, true) ~= nil and src:find("grndPerfRun(\"grndGetupFrame\", grndGetupFrame)", 1, true) ~= nil)
 
 -- крупные подписи чата: лестница шрифтов доходит до размера, нужного для metaScale
 ok("font.ladder.46", src:find("38, 40, 42, 44, 46, 48, 52 }", 1, true) ~= nil)

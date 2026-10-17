@@ -97,6 +97,7 @@ end
 local logs = {} -- строки, реально попавшие в grnd_update.log
 local now = 1000           -- секунды процесса (таймауты загрузки)
 local wallNow = 1700000000 -- настенные часы, как os.time() (cfg: last=)
+_G.grndPerfWrite = _G.grndPerfWrite or function() end
 local stubIO = {
     clock  = function() return now end,
     time   = function() return wallNow end,
