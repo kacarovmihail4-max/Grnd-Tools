@@ -874,7 +874,7 @@ check(U3.cur == NEW, "после перезапуска: версия — нов
 check(U3.window == true, "после перезапуска: окно изменений открылось само")
 check(U3.justUpdated and U3.justUpdated.from == V and U3.justUpdated.to == NEW,
     "после перезапуска: известно, с какой версии обновились")
-check(hasToast("Обновление " .. NEW .. " включено"),
+check(hasToast("Обновление завершено"),
     "после перезапуска: тост про включённую версию")
 check((gconf.sections.update or ""):find("updatedVer", 1, true) == nil,
     "после перезапуска: отметка снята (окно покажем один раз)")

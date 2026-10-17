@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.300"
+GRND_SCRIPT_VERSION = "1.19.301"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -32970,7 +32970,7 @@ local function grndUpdInit()
         U.updatedVer, U.updatedFrom = nil, nil
         U.lastAt = math.floor(U.io.time())
         U.saveCfg()
-        U.notify("Обновление " .. to .. " включено", "ok", 3)
+        U.notify("Обновление завершено", "ok", 3)
         U.refreshFrame()
     end
     local function finishVersion(job)
@@ -37794,8 +37794,14 @@ function grndMainBody()
                             line,c4(TH.textHi),scale)
                     end
                 end
-                dl:AddRectFilled(at(16,142),at(SB-16,143),c32(TH.line))
-                local tabsY = 154
+                do
+                    local verText = "v" .. tostring(GRND_SCRIPT_VERSION or "")
+                    local sc = math.min(0.85, (SB-32)/math.max(1,tsize(verText)))
+                    local mw = drawnWb(verText, sc)
+                    uiText(math.max(12,(SB-mw)/2),136,verText,c4(TH.textDim),sc)
+                end
+                dl:AddRectFilled(at(16,152),at(SB-16,153),c32(TH.line))
+                local tabsY = 162
                 local styleHeight = GRND_UIKIT.pickerOpen and 256 or 88
                 local tabsH = H - tabsY - styleHeight - 12
                 if tabsH < BH then tabsH = BH end
@@ -37939,6 +37945,12 @@ function grndMainBody()
                 grndUiStylePanel({im=im,dl=dl,at=at,col32=col32,rgba=rgba,
                     roundRect=roundRect,uiText=uiText,tsize=tsize,slider=menuSlider,
                     x=BPAD,y=H-styleHeight,w=SB-BPAD*2,h=styleHeight})
+                if not GRND_UIKIT.pickerOpen then
+                    local supText = "Support - Discord: m1sha009"
+                    local sc = math.min(0.85, (SB-32)/math.max(1,tsize(supText)))
+                    local mw = drawnWb(supText, sc)
+                    uiText(math.max(12,(SB-mw)/2),H-19,supText,c4(TH.textDim),sc)
+                end
                 local tab = MENU_TABS[tabIdx] or MENU_TABS[1]
                 local CX, px, py = SB, SB + 26, 26
                 dl:AddRectFilled(at(CX, 16), at(CX + 1, H - 16), c32(TH.line))
