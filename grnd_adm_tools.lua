@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.284"
+GRND_SCRIPT_VERSION = "1.19.285"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.285 — в слежке серверные окна не блокируют ввод, полёт и открытие чата скрипта;
 v1.19.284 — повтор уже решённой формы (тот же админ и команда) игнорируется 3 с после решения;
 v1.19.283 — решённая форма (тот же админ и команда) не открывается повторно в течение 1 с, как и пауза;
 v1.19.282 — пауза между формами 1 с;
@@ -1346,6 +1347,11 @@ function grndServerDialogOpen()
     if type(sampIsDialogActive) ~= "function" then return false end
     local ok, res = pcall(sampIsDialogActive)
     return (ok and res) and true or false
+end
+-- серверные окна не блокируют ввод и закрытие окон скрипта, пока идёт слежка
+function grndServerWinBlocks()
+    if type(grndCamSpectating) == "function" and grndCamSpectating() then return false end
+    return grndServerDialogOpen()
 end
 GRND_GATE = GRND_GATE or { blockedFrames = 0, suppressed = 0, why = "", unblockAt = 0 }
 GRND_GATE.authSeen = false
@@ -8573,7 +8579,7 @@ function grndAirBreakTick()
     end
     -- Пока открыто серверное окно, полёт не включается и камера стоит:
     -- это было задумано, но переменная всегда была false.
-    local nativeDialogOpen = grndServerDialogOpen()
+    local nativeDialogOpen = grndServerWinBlocks()
     local typing = (type(grndIsTyping) == "function") and grndIsTyping() or false
     typing = typing or nativeDialogOpen
     if not (PLAYER_PED and type(doesCharExist) == "function"
@@ -10993,7 +10999,7 @@ function onWindowMessage(msg, wparam, lparam)
             pcall(logRenderErr,'native_input',handled)
             if GRND_INPUT.enabled
                 and ((isDown and wp==0x0D) or (msgN==0x0102 and wp==0x0D))
-                and grndNativeChatInputActive() and not grndServerDialogOpen() then
+                and grndNativeChatInputActive() and not grndServerWinBlocks() then
                 grndConsumeMsg(false);return
             end
         end
@@ -11291,7 +11297,7 @@ function onWindowMessage(msg, wparam, lparam)
         local uiBusy = (GRND_REF.menu and GRND_REF.menu.open)
             or (GRND_TAB and GRND_TAB.open)
             or (GRND_REP and GRND_REP.open)
-            or grndServerDialogOpen()
+            or grndServerWinBlocks()
         if GRND_CHAT.key == 0x54 then
             if wp == 0x54 and isDown and not uiBusy then
                 GRND_CHAT.wantOpen = os.clock()
