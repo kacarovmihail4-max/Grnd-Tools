@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.328"
+GRND_SCRIPT_VERSION = "1.19.329"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -17273,7 +17273,7 @@ function grndSpecRoadTp(withCars)
     end
     if inInt == nil then inInt = grndSpecPedInterior(ped) end
     if inInt and inInt ~= 0 then
-        notify.add(("ТП на дорогу отменена: игрок #%d в интерьере (%d)"):format(pid, inInt), "warn", 4)
+        notify.add("Скрипт не нашел ближайшую дорогу", "warn", 3)
         return false
     end
     local okC, px, py, pz = pcall(getCharCoordinates, ped)
