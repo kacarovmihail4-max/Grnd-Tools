@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.322"
+GRND_SCRIPT_VERSION = "1.19.323"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -41415,6 +41415,19 @@ function grndMainBody()
                 SB.x = math.max(0, math.min(resX - SW, SB.x))
                 SB.y = math.max(0, math.min(resY - SH, SB.y))
                 local barRect = { x = SB.x, y = SB.y, w = SW, h = SH }
+                if RC.cursor and GRND_MOUSE.down then
+                    if not SB.dragging and not SB.hov and grndMouseInside(barRect) then
+                        SB.dragging = true
+                        SB.dx = GRND_MOUSE.x - SB.x
+                        SB.dy = GRND_MOUSE.y - SB.y
+                    end
+                else
+                    SB.dragging = false
+                end
+                if SB.dragging then
+                    SB.x = math.max(0, math.min(resX - SW, GRND_MOUSE.x - SB.dx))
+                    SB.y = math.max(0, math.min(resY - SH, GRND_MOUSE.y - SB.dy))
+                end
                 im.SetNextWindowPos(im.ImVec2(SB.x, SB.y), COND_ALWAYS)
                 im.SetNextWindowSize(im.ImVec2(SW, SH), COND_ALWAYS)
                 local stB, clB = 0, 0
@@ -41479,12 +41492,18 @@ function grndMainBody()
                             bdl:AddLine(bat(cx - 4, cy - 8), bat(cx + 4, cy - 5), ic, 1.5)
                             bdl:AddLine(bat(cx + 4, cy - 5), bat(cx - 4, cy - 2), ic, 1.5)
                             local hx, hy = cx - 4, cy + 1
-                            local prevX, prevY = hx - 3.2, hy
-                            for k = 1, 12 do
-                                local ang = math.pi * k / 12
-                                local nx2, ny2 = hx - 3.2 * math.cos(ang), hy + 3.2 * math.sin(ang)
-                                bdl:AddLine(bat(prevX, prevY), bat(nx2, ny2), ic, 1.5)
-                                prevX, prevY = nx2, ny2
+                            local okArc = pcall(function()
+                                bdl:PathArcTo(bat(hx, hy), 3.2 * S, 0, math.pi, 32)
+                                bdl:PathStroke(ic, 0, 1.5)
+                            end)
+                            if not okArc then
+                                local prevX, prevY = hx + 3.2, hy
+                                for k = 1, 24 do
+                                    local ang = math.pi * k / 24
+                                    local nx2, ny2 = hx + 3.2 * math.cos(ang), hy + 3.2 * math.sin(ang)
+                                    bdl:AddLine(bat(prevX, prevY), bat(nx2, ny2), ic, 1.5)
+                                    prevX, prevY = nx2, ny2
+                                end
                             end
                         end
                         if clicked then
@@ -41501,19 +41520,7 @@ function grndMainBody()
                 if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
                 grndPopCol(clB)
                 grndPopStyle(stB)
-                if RC.cursor and GRND_MOUSE.down then
-                    if not SB.dragging and not anyHov and grndMouseInside(barRect) then
-                        SB.dragging = true
-                        SB.dx = GRND_MOUSE.x - SB.x
-                        SB.dy = GRND_MOUSE.y - SB.y
-                    end
-                else
-                    SB.dragging = false
-                end
-                if SB.dragging then
-                    SB.x = GRND_MOUSE.x - SB.dx
-                    SB.y = GRND_MOUSE.y - SB.dy
-                end
+                SB.hov = anyHov
             end
             do
                 if RC.actionsWinOpen and RC.id ~= nil
