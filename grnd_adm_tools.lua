@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.330"
+GRND_SCRIPT_VERSION = "1.19.331"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -1851,6 +1851,11 @@ function grndUiCfgSave()
     if GRND_FONT.fontPath then
         f:write("fontPath=" .. tostring(GRND_FONT.fontPath) .. "\n")
     end
+    local sbSave = _G.GRND_RC and _G.GRND_RC.specBar
+    if sbSave and sbSave.x and sbSave.y then
+        f:write("barX=" .. tostring(math.floor(sbSave.x + 0.5)) .. "\n")
+        f:write("barY=" .. tostring(math.floor(sbSave.y + 0.5)) .. "\n")
+    end
     pcall(f.close, f)
     GRND_FONT.cfgDirty = false
     GRND_FONT.cfgSavedAt = os.clock()
@@ -1893,6 +1898,12 @@ function grndUiCfgLoad()
                 local num = tonumber(v)
                 if num then
                     GRND_FONT.fontSize = math.max(9, math.min(40, math.floor(num + 0.5)))
+                end
+            elseif k == "barX" or k == "barY" then
+                local num = tonumber(v)
+                if num then
+                    _G.GRND_UI_BAR_SAVED = _G.GRND_UI_BAR_SAVED or {}
+                    _G.GRND_UI_BAR_SAVED[k] = num
                 end
             end
         end
@@ -41462,8 +41473,13 @@ function grndMainBody()
                 RC.specBar = RC.specBar or {}
                 local SB = RC.specBar
                 if not SB.x then
-                    SB.x = math.floor(resX / 2 - SW / 2)
-                    SB.y = 64
+                    local sv = _G.GRND_UI_BAR_SAVED
+                    if sv and sv.barX and sv.barY then
+                        SB.x, SB.y = sv.barX, sv.barY
+                    else
+                        SB.x = math.floor(resX / 2 - SW / 2)
+                        SB.y = 64
+                    end
                 end
                 SB.x = math.max(0, math.min(resX - SW, SB.x))
                 SB.y = math.max(0, math.min(resY - SH, SB.y))
@@ -41480,6 +41496,10 @@ function grndMainBody()
                 if SB.dragging then
                     SB.x = math.max(0, math.min(resX - SW, GRND_MOUSE.x - SB.dx))
                     SB.y = math.max(0, math.min(resY - SH, GRND_MOUSE.y - SB.dy))
+                    SB.posDirty = true
+                elseif SB.posDirty then
+                    SB.posDirty = false
+                    GRND_FONT.cfgDirty = true
                 end
                 im.SetNextWindowPos(im.ImVec2(SB.x, SB.y), COND_ALWAYS)
                 im.SetNextWindowSize(im.ImVec2(SW, SH), COND_ALWAYS)
@@ -41549,18 +41569,13 @@ function grndMainBody()
                             bdl:AddLine(bat(px, cy - 8), bat(px, cy + 7), ic, 1.5)
                             bdl:AddLine(bat(px, cy - 8), bat(px + 8, cy - 5), ic, 1.5)
                             bdl:AddLine(bat(px + 8, cy - 5), bat(px, cy - 2), ic, 1.5)
-                            local okArc = pcall(function()
-                                bdl:PathArcTo(bat(px, cy + 3.5), 3.5 * S, 0, math.pi, 40)
-                                bdl:PathStroke(ic, 0, 1.5)
-                            end)
-                            if not okArc then
-                                local prevX, prevY = px + 3.5, cy + 3.5
-                                for k = 1, 30 do
-                                    local ang = math.pi * k / 30
-                                    local nx2, ny2 = px + 3.5 * math.cos(ang), cy + 3.5 + 3.5 * math.sin(ang)
-                                    bdl:AddLine(bat(prevX, prevY), bat(nx2, ny2), ic, 1.5)
-                                    prevX, prevY = nx2, ny2
-                                end
+                            local ARC_R, ARC_CY = 4.5, cy + 2.5
+                            local prevX, prevY = px - ARC_R, ARC_CY
+                            for k = 1, 48 do
+                                local ang = math.pi * k / 48
+                                local nx2, ny2 = px - ARC_R * math.cos(ang), ARC_CY + ARC_R * math.sin(ang)
+                                bdl:AddLine(bat(prevX, prevY), bat(nx2, ny2), ic, 1.5)
+                                prevX, prevY = nx2, ny2
                             end
                         end
                         if clicked then
