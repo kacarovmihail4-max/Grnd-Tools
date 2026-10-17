@@ -2,9 +2,10 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.291"
+GRND_SCRIPT_VERSION = "1.19.292"
 script_version(GRND_SCRIPT_VERSION)
 GRND_CHANGELOG = [[
+v1.19.292 — окно «Форма на Гос. Новости» как у админ-формы: та же позиция и перетаскивание, Y/N по нажатию клавиши;
 v1.19.291 — в меню «Репорт» подраздел «Настройки» в стиле общих настроек: переключатели «Репорты на экране» и «Ловля репорта», шестерёнки открывают окна настроек (размер, клавиша ловли);
 v1.19.290 — в меню «Репорт» новый подраздел «Оверлеи»: переключатели «Репорты на экране» и «Ловля репорта», назначение клавиши ловли;
 v1.19.289 — при открытом серверном окне с полем ввода буквы, цифры, Enter и Backspace идут в это поле, а не в горячие клавиши скрипта (T, M, R, E и др.); Esc, F-клавиши и Tab работают как раньше;
@@ -40393,16 +40394,28 @@ function grndMainBody()
                 local okC, isC = pcall(sampIsChatInputActive)
                 if okC and isC then typing = true end
             end
-            if not typing and type(wasKeyTapped) == "function" then
-                if wasKeyTapped(0x59) then
-                    wantAccept = true
-                elseif wasKeyTapped(0x4E) then
-                    wantReject = true
-                end
+            -- Y/N как у админ-формы: фронт нажатия клавиши, пока не печатаем в чат
+            local K = _G.GRND_GNEWS_KEYS or { y = false, n = false }
+            _G.GRND_GNEWS_KEYS = K
+            local okY, dY = pcall(isKeyDown, 0x59)
+            local okN, dN = pcall(isKeyDown, 0x4E)
+            local yNow = (okY and dY) and true or false
+            local nNow = (okN and dN) and true or false
+            local yEdge, nEdge = yNow and not K.y, nNow and not K.n
+            K.y, K.n = yNow, nNow
+            if not typing and yEdge then
+                wantAccept = true
+            elseif not typing and nEdge then
+                wantReject = true
             end
+            -- позиция и перетаскивание — те же, что у окна админ-формы
             local resX, resY = getScreenResolution()
             local FW, FH = 400, 96
-            local fx, fy = math.floor((resX - FW) / 2), math.floor(resY * 0.18)
+            local fx, fy = grndFormUiPos(resX, resY, FW, FH)
+            local R = grndFormUiRects(fx, fy)
+            if type(R) == "table" then
+                fx, fy = grndFormUiDrag(G, fx, fy, FW, FH, resX, resY, R.head, R.close)
+            end
             im.SetNextWindowPos(im.ImVec2(fx, fy), COND_ALWAYS)
             im.SetNextWindowSize(im.ImVec2(FW, FH), COND_ALWAYS)
             if im.SetNextWindowFocus then pcall(im.SetNextWindowFocus) end
