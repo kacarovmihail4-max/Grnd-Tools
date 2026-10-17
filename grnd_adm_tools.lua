@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.316"
+GRND_SCRIPT_VERSION = "1.19.317"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -17167,6 +17167,130 @@ function grndSpecInSpec()
         end
     end
     return true
+end
+do
+local SPEC_ROAD_RADIUS = 20.0
+local SPEC_ROAD_FNAMES = { "getNearCarNodeInfo", "getNthClosestCarNodeInfo" }
+local SPEC_VEH_HANDLE_NAMES = {
+    "sampGetCarHandleBySampVehicleId", "getCarHandleBySampVehicleId",
+    "sampGetVehicleHandleBySampVehicleId",
+}
+local function grndSpecCarNodeNear(x, y, z)
+    for _, fname in ipairs(SPEC_ROAD_FNAMES) do
+        local f = _G[fname]
+        if type(f) == "function" then
+            local res = { pcall(f, x, y, z) }
+            if res[1] then
+                local idx = 2
+                local okFlag = true
+                if type(res[2]) == "boolean" then
+                    okFlag = res[2]
+                    idx = 3
+                end
+                if okFlag and type(res[idx]) == "number" and type(res[idx + 1]) == "number"
+                    and type(res[idx + 2]) == "number" then
+                    return res[idx], res[idx + 1], res[idx + 2]
+                end
+            end
+        end
+    end
+    return nil
+end
+local function grndSpecSampVehHandle(vid)
+    for _, fname in ipairs(SPEC_VEH_HANDLE_NAMES) do
+        local f = _G[fname]
+        if type(f) == "function" then
+            local res = { pcall(f, vid) }
+            if res[1] then
+                for i = 2, #res do
+                    if type(res[i]) == "number" and res[i] ~= 0 then return res[i] end
+                end
+            end
+        end
+    end
+    return nil
+end
+function grndSpecSwitch(step)
+    if not grndSpecInSpec() then return false end
+    local cur = tonumber(GRND_SPEC.id)
+    if not cur then return false end
+    local found = nil
+    for cand = cur + step, (step > 0 and 1003 or 0), step do
+        if specConnected(cand) then found = cand; break end
+    end
+    if not found then
+        notify.add("Слежка: другого игрока в этом направлении нет", "warn", 2)
+        return false
+    end
+    if type(sampSendChat) ~= "function" then return false end
+    pcall(sampSendChat, "/sp " .. tostring(found))
+    GRND_SPEC.active = true
+    GRND_SPEC.id = found
+    GRND_SPEC.manualExit = false
+    GRND_SPEC.confirmT = os.clock()
+    local okN, nick = pcall(sampGetPlayerNickname, found)
+    GRND_SPEC.nick = (okN and type(nick) == "string") and nick or ("ID " .. found)
+    if _G.GRND_RC then
+        _G.GRND_RC.id = found
+        _G.GRND_RC.reconHidden = false
+    end
+    notify.add(("Слежка: #%d"):format(found), "ok", 2)
+    return true
+end
+function grndSpecRoadTp()
+    if not grndSpecInSpec() then
+        notify.add("ТП на дорогу: слежка не активна", "warn", 3)
+        return false
+    end
+    local pid = tonumber(GRND_SPEC.id)
+    if not pid or type(sampGetCharHandleBySampPlayerId) ~= "function" then return false end
+    local okP, res = pcall(function() return { sampGetCharHandleBySampPlayerId(pid) } end)
+    local ped = nil
+    if okP then
+        for i = 1, #res do
+            if type(res[i]) == "number" and res[i] ~= 0 then ped = res[i]; break end
+        end
+    end
+    if not ped or type(getCharCoordinates) ~= "function" then
+        notify.add(("ТП на дорогу: игрок #%d не в зоне видимости"):format(pid), "warn", 3)
+        return false
+    end
+    local okC, px, py, pz = pcall(getCharCoordinates, ped)
+    if not okC or type(px) ~= "number" then return false end
+    local pnx, pny, pnz = grndSpecCarNodeNear(px, py, pz)
+    if not pnx then
+        notify.add("ТП на дорогу: дорога рядом не найдена", "warn", 3)
+        return false
+    end
+    local cars = {}
+    if type(getCarCoordinates) == "function" then
+        for vid = 0, 2000 do
+            local h = grndSpecSampVehHandle(vid)
+            if h then
+                local okV, cx, cy, cz = pcall(getCarCoordinates, h)
+                if okV and type(cx) == "number" then
+                    local dx, dy, dz = cx - px, cy - py, cz - pz
+                    if dx * dx + dy * dy + dz * dz <= SPEC_ROAD_RADIUS * SPEC_ROAD_RADIUS then
+                        cars[#cars + 1] = { vid = vid, x = cx, y = cy, z = cz }
+                    end
+                end
+            end
+        end
+    end
+    notify.add(("ТП на дорогу: #%d и т/с: %d"):format(pid, #cars), "ok", 3)
+    if lua_thread == nil or type(lua_thread.create) ~= "function" then return false end
+    lua_thread.create(function()
+        pcall(sampSendChat, string.format(GRND_SPEC_PLAYER_CMD, pid, pnx, pny, pnz + 1.0))
+        for _, car in ipairs(cars) do
+            local rx, ry, rz = grndSpecCarNodeNear(car.x, car.y, car.z)
+            if rx then
+                wait(300)
+                pcall(sampSendChat, string.format(GRND_SPEC_VEH_CMD, car.vid, rx, ry, rz + 1.0))
+            end
+        end
+    end)
+    return true
+end
 end
 local SPEC_ON_CMDS = { sp = true, spec = true, spectate = true, recon = true }
 local SPEC_OFF_CMDS = { spoff = true, specoff = true, stopspec = true, specstop = true,
@@ -41254,6 +41378,78 @@ function grndMainBody()
             if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
             grndPopCol(colorN)
             grndPopStyle(styleN)
+            if grndSpecInSpec() and im and im.SetNextWindowPos then
+                local BW, BH, GAP = 44, 30, 8
+                local PW = 5 * BW + 4 * GAP + 16
+                local PH = BH + 16
+                im.SetNextWindowPos(im.ImVec2(math.floor(resX / 2 - PW / 2), 64), COND_ALWAYS)
+                im.SetNextWindowSize(im.ImVec2(PW, PH), COND_ALWAYS)
+                local stB, clB = 0, 0
+                if grndPushStyleV2(im.StyleVar and im.StyleVar.WindowPadding, 0, 0) then stB = stB + 1 end
+                if grndPushStyleF(im.StyleVar and im.StyleVar.WindowRounding, 0) then stB = stB + 1 end
+                if grndPushCol(im.Col and im.Col.WindowBg, rgba(0, 0, 0, 0)) then clB = clB + 1 end
+                if grndPushCol(im.Col and im.Col.Border, rgba(0, 0, 0, 0)) then clB = clB + 1 end
+                local flagsB = wf("NoTitleBar", "NoResize", "NoMove", "NoScrollbar",
+                    "NoCollapse", "NoFocusOnAppearing", "NoBringToFrontOnFocus")
+                if grndBegin("##grnd_spec_bar", flagsB) then
+                    local bpos = im.GetWindowPos()
+                    local bdl = im.GetWindowDrawList()
+                    local function bat(x2, y2) return im.ImVec2(bpos.x + x2, bpos.y + y2) end
+                    local keys = { "back", "road", "diamond", "person", "fwd" }
+                    local iconCol = col32(226, 232, 242, 240)
+                    for i, key in ipairs(keys) do
+                        local bx, by = 8 + (i - 1) * (BW + GAP), 8
+                        im.SetCursorPos(im.ImVec2(bx, by))
+                        local clicked = im.InvisibleButton("##grnd_spec_btn" .. i, im.ImVec2(BW, BH))
+                        local hov = (im.IsItemHovered and im.IsItemHovered()) or false
+                        local act = (im.IsItemActive and im.IsItemActive()) or false
+                        local bgc = (act and col32(44, 52, 66, 245))
+                            or (hov and col32(34, 41, 54, 240)) or col32(20, 24, 33, 225)
+                        roundRect(bdl, bat(bx, by), bat(bx + BW, by + BH), bgc, 6)
+                        local cx, cy = bx + BW / 2, by + BH / 2
+                        if key == "back" then
+                            bdl:AddLine(bat(cx - 2, cy - 6), bat(cx - 7, cy), iconCol, 1.6)
+                            bdl:AddLine(bat(cx - 7, cy), bat(cx - 2, cy + 6), iconCol, 1.6)
+                            bdl:AddLine(bat(cx + 6, cy - 6), bat(cx + 1, cy), iconCol, 1.6)
+                            bdl:AddLine(bat(cx + 1, cy), bat(cx + 6, cy + 6), iconCol, 1.6)
+                            local tw = drawnWb("(Q)", 0.80)
+                            uiText(cx - tw / 2 + 12, cy - 8, "(Q)", c4(TH.textHi), 0.80)
+                        elseif key == "fwd" then
+                            local tw = drawnWb("(E)", 0.80)
+                            uiText(cx - tw / 2 - 12, cy - 8, "(E)", c4(TH.textHi), 0.80)
+                            bdl:AddLine(bat(cx + 2, cy - 6), bat(cx + 7, cy), iconCol, 1.6)
+                            bdl:AddLine(bat(cx + 7, cy), bat(cx + 2, cy + 6), iconCol, 1.6)
+                            bdl:AddLine(bat(cx - 6, cy - 6), bat(cx - 1, cy), iconCol, 1.6)
+                            bdl:AddLine(bat(cx - 1, cy), bat(cx - 6, cy + 6), iconCol, 1.6)
+                        elseif key == "road" then
+                            if type(_G.grndDrawActIcon) == "function" then
+                                _G.grndDrawActIcon(bdl, bat, "tproad", cx, cy, BH - 10, iconCol)
+                            end
+                        elseif key == "diamond" then
+                            bdl:AddLine(bat(cx, cy - 8), bat(cx + 8, cy), iconCol, 1.5)
+                            bdl:AddLine(bat(cx + 8, cy), bat(cx, cy + 8), iconCol, 1.5)
+                            bdl:AddLine(bat(cx, cy + 8), bat(cx - 8, cy), iconCol, 1.5)
+                            bdl:AddLine(bat(cx - 8, cy), bat(cx, cy - 8), iconCol, 1.5)
+                            bdl:AddLine(bat(cx - 3, cy + 3), bat(cx + 3, cy - 3), iconCol, 1.5)
+                        elseif key == "person" then
+                            bdl:AddCircle(bat(cx, cy - 6), 3, iconCol, 16, 1.5)
+                            bdl:AddLine(bat(cx, cy - 2), bat(cx, cy + 4), iconCol, 1.5)
+                            bdl:AddLine(bat(cx - 5, cy), bat(cx + 5, cy), iconCol, 1.5)
+                            bdl:AddLine(bat(cx, cy + 4), bat(cx - 4, cy + 9), iconCol, 1.5)
+                            bdl:AddLine(bat(cx, cy + 4), bat(cx + 4, cy + 9), iconCol, 1.5)
+                        end
+                        if clicked then
+                            if key == "back" then grndSpecSwitch(-1)
+                            elseif key == "fwd" then grndSpecSwitch(1)
+                            elseif key == "road" then grndSpecRoadTp()
+                            end
+                        end
+                    end
+                end
+                if endDepth > 0 then endDepth = endDepth - 1; pcall(im.End) end
+                grndPopCol(clB)
+                grndPopStyle(stB)
+            end
             do
                 if RC.actionsWinOpen and RC.id ~= nil
                    and RC.actionsWinRcId ~= nil and tonumber(RC.id) ~= RC.actionsWinRcId then
@@ -42885,11 +43081,15 @@ function grndMainBody()
                 local hotBusy = GRND_KEYS.blocked
                     or (BLOCK_KEYS_ON_ANY_DIALOG and GRND_KEYS.dlgActive)
                     or grndIsTyping()
+                if not hotBusy and grndSpecInSpec() then
+                    if poll(0x51) then grndSpecSwitch(-1) end
+                    if poll(0x45) then grndSpecSwitch(1) end
+                end
                 if not hotBusy then
                     if grndTargetRingCanUseKey(0x52) and poll(0x52) then
                         grndTargetRingUseKey(0x52)
                     end
-                    if grndTargetRingCanUseKey(0x45) and poll(0x45) then
+                    if not grndSpecInSpec() and grndTargetRingCanUseKey(0x45) and poll(0x45) then
                         grndTargetRingUseKey(0x45)
                     end
                 end
