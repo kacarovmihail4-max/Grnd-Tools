@@ -1,7 +1,7 @@
 function isFnV(f) local t = type(f) return t == "function" or t == "cdata" end
 function typeFnV(f) local t = type(f) if t == "cdata" then return "function" end return t end
 script_name("grnd_adm_tools")
-GRND_SCRIPT_VERSION = "1.19.321"
+GRND_SCRIPT_VERSION = "1.19.322"
 script_version(GRND_SCRIPT_VERSION)
 script_dependencies("SAMPFUNCS")
 require "lib.moonloader"
@@ -17237,7 +17237,7 @@ function grndSpecSwitch(step)
     notify.add(("Слежка: #%d"):format(found), "ok", 2)
     return true
 end
-function grndSpecRoadTp()
+function grndSpecRoadTp(withCars)
     if not grndSpecInSpec() then
         notify.add("ТП на дорогу: слежка не активна", "warn", 3)
         return false
@@ -17263,7 +17263,7 @@ function grndSpecRoadTp()
         return false
     end
     local cars = {}
-    if type(getCarCoordinates) == "function" then
+    if withCars and type(getCarCoordinates) == "function" then
         for vid = 0, 2000 do
             local h = grndSpecSampVehHandle(vid)
             if h then
@@ -17277,7 +17277,9 @@ function grndSpecRoadTp()
             end
         end
     end
-    notify.add(("ТП на дорогу: #%d и т/с: %d"):format(pid, #cars), "ok", 3)
+    local msg = withCars and ("ТП на дорогу: #%d и т/с: %d"):format(pid, #cars)
+        or ("ТП игрока на дорогу: #%d"):format(pid)
+    notify.add(msg, "ok", 3)
     if lua_thread == nil or type(lua_thread.create) ~= "function" then return false end
     lua_thread.create(function()
         pcall(sampSendChat, string.format(GRND_SPEC_PLAYER_CMD, pid, pnx, pny, pnz + 1.0))
@@ -17289,6 +17291,21 @@ function grndSpecRoadTp()
             end
         end
     end)
+    return true
+end
+function grndSpecGotoTp()
+    if not grndSpecInSpec() then
+        notify.add("ТП к игроку: слежка не активна", "warn", 3)
+        return false
+    end
+    local pid = tonumber(GRND_SPEC.id)
+    if not pid or lua_thread == nil or type(lua_thread.create) ~= "function" then return false end
+    lua_thread.create(function()
+        pcall(sampSendChat, "/spoff")
+        wait(1000)
+        pcall(sampSendChat, "/goto " .. tostring(pid))
+    end)
+    grndSpecForget("key")
     return true
 end
 end
@@ -41423,8 +41440,9 @@ function grndMainBody()
                         local hov = (im.IsItemHovered and im.IsItemHovered()) or false
                         local act = (im.IsItemActive and im.IsItemActive()) or false
                         if hov then anyHov = true end
-                        local bgc = (act and col32(60, 56, 76, 245))
-                            or (hov and col32(48, 44, 64, 240)) or col32(31, 28, 41, 235)
+                        local ac = TH.accent
+                        local bgc = (act and col32(ac[1], ac[2], ac[3], 255))
+                            or (hov and col32(ac[1], ac[2], ac[3], 190)) or col32(31, 28, 41, 235)
                         roundRect(bdl, bat(bx, by), bat(bx + bw, by + BH), bgc, 6)
                         local cx, cy = bx + bw / 2, by + BH / 2
                         if key == "back" then
@@ -41457,15 +41475,24 @@ function grndMainBody()
                             bdl:AddLine(bat(cx + 0.5, cy - 4.5), bat(cx + 3, cy - 2), ic, 1.5)
                             bdl:AddLine(bat(cx + 3, cy - 2), bat(cx + 0.5, cy + 0.5), ic, 1.5)
                         elseif key == "flag" then
-                            bdl:AddLine(bat(cx - 4, cy - 8), bat(cx - 4, cy + 0.8), ic, 1.5)
+                            bdl:AddLine(bat(cx - 4, cy - 8), bat(cx - 4, cy + 4.2), ic, 1.5)
                             bdl:AddLine(bat(cx - 4, cy - 8), bat(cx + 4, cy - 5), ic, 1.5)
                             bdl:AddLine(bat(cx + 4, cy - 5), bat(cx - 4, cy - 2), ic, 1.5)
-                            bdl:AddCircle(bat(cx - 4, cy + 4), 3.2 * S, ic, 32, 1.5)
+                            local hx, hy = cx - 4, cy + 1
+                            local prevX, prevY = hx - 3.2, hy
+                            for k = 1, 12 do
+                                local ang = math.pi * k / 12
+                                local nx2, ny2 = hx - 3.2 * math.cos(ang), hy + 3.2 * math.sin(ang)
+                                bdl:AddLine(bat(prevX, prevY), bat(nx2, ny2), ic, 1.5)
+                                prevX, prevY = nx2, ny2
+                            end
                         end
                         if clicked then
                             if key == "back" then grndSpecSwitch(-1)
                             elseif key == "fwd" then grndSpecSwitch(1)
-                            elseif key == "road" then grndSpecRoadTp()
+                            elseif key == "road" then grndSpecRoadTp(true)
+                            elseif key == "diamond" then grndSpecRoadTp(false)
+                            elseif key == "flag" then grndSpecGotoTp()
                             end
                         end
                         bx = bx + bw + GAP
